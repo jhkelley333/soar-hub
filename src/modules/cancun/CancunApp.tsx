@@ -1,7 +1,12 @@
 // CMG Cancun Convention 2026 — in-app port of the PWA prototype, incubated
 // under System Settings → Beta Test. Faithful to the design handoff: exact
-// tokens, copy, tabs/sub-nav, gated Support, checklist, FAQ, photo wall. State
-// is local (localStorage) for now — Supabase auth/tables/storage and the
+// tokens, copy, tabs/sub-nav, gated Support, checklist, FAQ, photo wall.
+//
+// Identity is the signed-in SoarHub user: a convention "registration"
+// (cancun_profiles.brand) is keyed to auth.uid(). The leadership crew
+// (cancun_contacts) is RLS-gated — the client only receives rows once
+// registered — so the Support gate is enforced server-side, not just in the UI.
+// Checklist + passport flag persist to cancun_profiles. Photo files and the
 // service-worker/offline layer land in follow-up PRs. Inline styles (raw hex/px)
 // are intentional here to match the high-fidelity handoff 1:1.
 //
@@ -9,6 +14,8 @@
 // not part of the code bundle; image slots render labeled placeholders until the
 // binaries are dropped into ./assets and wired.
 import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/auth/AuthProvider";
+import { supabase } from "@/lib/supabase";
 
 const ARCH = "'Archivo', system-ui, sans-serif";
 const SANS = "'Source Sans 3', system-ui, sans-serif";
@@ -16,8 +23,7 @@ const ACCENT = "#0A5F73";
 const CREAM = "#FFF6E9";
 
 type Brand = "Apricus QSR" | "Mitra QSR" | "Prime QSR" | "SOAR QSR";
-interface User { name: string; first: string; brand: Brand; email: string }
-type ScreenId = "home" | "photos" | "checklist" | "travel" | "arriving" | "resort" | "dining" | "map" | "agenda" | "attire" | "faq" | "support";
+type ScreenId ="home" | "photos" | "checklist" | "travel" | "arriving" | "resort" | "dining" | "map" | "agenda" | "attire" | "faq" | "support";
 
 const NAV: Record<ScreenId, { tab: string; title: string; sub: string }> = {
   home: { tab: "home", title: "Convention Home", sub: "Cancun Convention 2026" },
@@ -97,13 +103,7 @@ const PERKS: [string, string][] = [
   ["Your room and roommate", "As soon as your Direct Supervisor publishes the list"],
 ];
 const BRANDS: Brand[] = ["Apricus QSR", "Mitra QSR", "Prime QSR", "SOAR QSR"];
-const CREWS: Record<Brand, [string, string, string][]> = {
-  "SOAR QSR": [["1", "Dana Whitfield", "Direct Supervisor"], ["2", "Marcus Reyes", "Senior Leadership"], ["3", "SOAR Leadership Line", "24-hour escalation"]],
-  "Mitra QSR": [["1", "Priya Anand", "Direct Supervisor"], ["2", "Tom Bex", "Senior Leadership"], ["3", "Mitra Leadership Line", "24-hour escalation"]],
-  "Apricus QSR": [["1", "Luis Ortega", "Direct Supervisor"], ["2", "Karen Doss", "Senior Leadership"], ["3", "Apricus Leadership Line", "24-hour escalation"]],
-  "Prime QSR": [["1", "Renee Colbert", "Direct Supervisor"], ["2", "Andre Salas", "Senior Leadership"], ["3", "Prime Leadership Line", "24-hour escalation"]],
-};
-const CHEER = ["Let us begin", "Off to a start", "Rolling now", "Halfway there", "Nearly packed", "Beach ready"];
+const CHEER =["Let us begin", "Off to a start", "Rolling now", "Halfway there", "Nearly packed", "Beach ready"];
 const PROMPTS = ["Your crew at the kick-off", "Best plate of the trip", "Sunrise from your balcony", "Awards night fit", "Someone mid-churro"];
 
 // Load the display fonts once (self-hosting comes with the offline PR).
@@ -130,79 +130,102 @@ function Slot({ label, ratio = "16 / 9" }: { label: string; ratio?: string }) {
   );
 }
 
+interface CxProfile { brand: Brand | null; full_name: string | null; checklist: Record<string, boolean>; passport_uploaded: boolean }
+interface Contact { step: string; name: string; role: string; phone: string }
+
 export function CancunApp() {
   useFonts();
+  const { profile: sbProfile } = useAuth();
+  const uid = sbProfile?.id;
   const [view, setView] = useState<ScreenId>("home");
-  const [done, setDone] = useState<Record<string, boolean>>({});
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [photos, setPhotos] = useState<{ url: string; by: string }[]>([]);
-  const [user, setUser] = useState<User | null>(null);
-  const [authMode, setAuthMode] = useState<"gate" | "register" | "signin">("gate");
-  const [passport, setPassport] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", username: "", password: "", brand: "Apricus QSR" as Brand });
+  const [cx, setCx] = useState<CxProfile | null>(null);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [authMode, setAuthMode] = useState<"gate" | "register">("gate");
+  const [form, setForm] = useState({ name: "", brand: "SOAR QSR" as Brand });
   const [error, setError] = useState("");
   const [now, setNow] = useState(() => new Date());
 
+  // Load this user's convention profile (brand + checklist + passport flag).
   useEffect(() => {
-    try {
-      const c = localStorage.getItem("cmg-retreat-checklist"); if (c) setDone(JSON.parse(c));
-      const u = localStorage.getItem("cmg-retreat-user"); if (u) setUser(JSON.parse(u));
-      if (localStorage.getItem("cmg-retreat-passport") === "1") setPassport(true);
-    } catch { /* ignore */ }
-    const t = setInterval(() => setNow(new Date()), 30000);
-    return () => clearInterval(t);
-  }, []);
+    if (!uid) return;
+    let live = true;
+    supabase.from("cancun_profiles").select("brand, full_name, checklist, passport_uploaded").eq("user_id", uid).maybeSingle()
+      .then(({ data }) => { if (live && data) setCx({ ...data, checklist: (data.checklist as Record<string, boolean>) || {} }); });
+    return () => { live = false; };
+  }, [uid]);
 
+  const registered = !!cx?.brand;
+  const firstName = (cx?.full_name || sbProfile?.full_name || "there").trim().split(" ")[0];
+  const email = sbProfile?.email || "";
+  const checklist = cx?.checklist ?? {};
+
+  // The leadership crew is RLS-gated: this returns rows only once registered.
+  useEffect(() => {
+    if (!uid || !registered) { setContacts([]); return; }
+    let live = true;
+    supabase.from("cancun_contacts").select("step, name, role, phone").order("step")
+      .then(({ data }) => { if (live) setContacts((data as Contact[]) || []); });
+    return () => { live = false; };
+  }, [uid, registered]);
+
+  useEffect(() => { const t = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(t); }, []);
+
+  const patch = (p: Partial<CxProfile>) => setCx((c) => ({ brand: null, full_name: null, checklist: {}, passport_uploaded: false, ...c, ...p }));
   const go = (v: ScreenId) => { setView(v); setOpenFaq(null); setError(""); };
-  const toggle = (id: string) => setDone((d) => {
-    const next = { ...d, [id]: !d[id] };
-    try { localStorage.setItem("cmg-retreat-checklist", JSON.stringify(next)); } catch { /* ignore */ }
-    return next;
-  });
+  const toggleCheck = async (id: string) => {
+    if (!uid) return;
+    const next = { ...checklist, [id]: !checklist[id] };
+    patch({ checklist: next });
+    await supabase.from("cancun_profiles").upsert({ user_id: uid, checklist: next, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+  };
   const addPhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
-    const by = user?.first || "You";
+    const by = registered ? firstName : "You";
     setPhotos((p) => files.map((f) => ({ url: URL.createObjectURL(f), by })).concat(p));
     e.target.value = "";
   };
   const setField = (k: keyof typeof form, v: string) => { setForm((s) => ({ ...s, [k]: v })); setError(""); };
-  const submitAuth = () => {
-    const reg = authMode === "register";
-    if (!form.username.trim() || !form.password.trim() || (reg && !form.name.trim())) {
-      setError(reg ? "Add your name, a username and a password to finish registering." : "Enter your username and password.");
-      return;
-    }
-    const first = (form.name.trim() || form.username).split(" ")[0];
-    const u: User = { name: form.name.trim() || form.username, first, brand: form.brand, email: form.email.trim() || `${form.username.toLowerCase()}@cmgcompanies.com` };
-    try { localStorage.setItem("cmg-retreat-user", JSON.stringify(u)); } catch { /* ignore */ }
-    setUser(u); setView("support"); setError("");
+  const register = async () => {
+    if (!uid) return;
+    const full_name = form.name.trim() || sbProfile?.full_name || "";
+    if (!full_name) { setError("Add your name to finish registering."); return; }
+    const { data, error: err } = await supabase.from("cancun_profiles")
+      .upsert({ user_id: uid, brand: form.brand, full_name, registered_at: new Date().toISOString(), updated_at: new Date().toISOString() }, { onConflict: "user_id" })
+      .select("brand, full_name, checklist, passport_uploaded").single();
+    if (err) { setError(err.message); return; }
+    setCx({ ...(data as CxProfile), checklist: (data?.checklist as Record<string, boolean>) || {} });
+    setView("support"); setError("");
   };
-  const signOut = () => {
-    try { localStorage.removeItem("cmg-retreat-user"); localStorage.removeItem("cmg-retreat-passport"); } catch { /* ignore */ }
-    setUser(null); setPassport(false); setView("support"); setAuthMode("gate");
+  const leave = async () => {
+    if (!uid) return;
+    patch({ brand: null });
+    setAuthMode("gate"); setView("support");
+    await supabase.from("cancun_profiles").update({ brand: null, registered_at: null, updated_at: new Date().toISOString() }).eq("user_id", uid);
   };
-  const uploadPassport = () => {
-    const next = !passport;
-    try { next ? localStorage.setItem("cmg-retreat-passport", "1") : localStorage.removeItem("cmg-retreat-passport"); } catch { /* ignore */ }
-    setPassport(next);
+  const togglePassport = async () => {
+    if (!uid) return;
+    const next = !cx?.passport_uploaded;
+    patch({ passport_uploaded: next });
+    await supabase.from("cancun_profiles").upsert({ user_id: uid, passport_uploaded: next, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
   };
 
-  const authed = !!user;
-  const gated = view === "support" && !authed;
+  const authed = registered;
+  const gated = view === "support" && !registered;
   const effView = gated ? (authMode === "gate" ? "gate" : "auth") : view;
   const cur = NAV[view] || NAV.home;
   const tabId = cur.tab;
   const sub = SUB[tabId] || [];
-  const reg = authMode === "register";
 
   const daysOut = useMemo(() => Math.max(0, Math.round((new Date(2026, 11, 7).getTime() - now.getTime()) / 86400000)), [now]);
-  const doneCount = CHECK.filter((c) => done[c[0]]).length;
+  const doneCount = CHECK.filter((c) => checklist[c[0]]).length;
   const pct = Math.round((doneCount / CHECK.length) * 100);
   const clock = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
-  const screenTitle = effView === "gate" ? "Members Only" : effView === "auth" ? (reg ? "Create Account" : "Sign In") : cur.title;
-  const headerSub = authed && view === "support" ? user!.brand : cur.sub;
+  const screenTitle = effView === "gate" ? "Members Only" : effView === "auth" ? "Register" : cur.title;
+  const headerSub = registered && view === "support" ? cx!.brand! : cur.sub;
   const tagPill = (bg: string, fg: string): React.CSSProperties => ({ fontFamily: ARCH, fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", margin: 0, background: bg, color: fg, borderRadius: 999, padding: "4px 9px", whiteSpace: "nowrap" });
 
   return (
@@ -247,7 +270,7 @@ export function CancunApp() {
               <div style={{ position: "relative", overflow: "hidden", background: "#0E8C93", borderRadius: 20, padding: "22px 20px" }}>
                 <span style={{ position: "absolute", top: -40, right: -30, width: 130, height: 130, borderRadius: "50%", background: "#FFB13B", opacity: 0.85 }} />
                 <span style={{ position: "absolute", top: 14, right: 14, width: 48, height: 48, borderRadius: "50%", background: "#FF6B4A" }} />
-                <p style={{ position: "relative", ...eyebrow("#BDEDEF"), letterSpacing: "0.16em" }}>{authed ? `Hola, ${user!.first}` : "Hola CMG"}</p>
+                <p style={{ position: "relative", ...eyebrow("#BDEDEF"), letterSpacing: "0.16em" }}>{registered ? `Hola, ${firstName}` : "Hola CMG"}</p>
                 <p style={{ position: "relative", fontFamily: ARCH, fontSize: 58, fontWeight: 800, lineHeight: 0.95, letterSpacing: "-0.03em", color: "#FFFFFF", margin: 0 }}>{daysOut}</p>
                 <p style={{ position: "relative", fontFamily: ARCH, fontSize: 17, fontWeight: 700, color: CREAM, margin: "6px 0 0" }}>days till Cancun</p>
                 <p style={{ position: "relative", fontFamily: SANS, fontSize: 13.5, lineHeight: 1.45, color: "#BDEDEF", margin: "6px 0 0" }}>Primary travel: Monday, December 7 to Thursday, December 10</p>
@@ -257,7 +280,7 @@ export function CancunApp() {
                   { label: "Before You Go", note: `${doneCount} of ${CHECK.length} done`, go: "checklist" as ScreenId, accent: false },
                   { label: "Dining", note: "9 venues, menus offline", go: "dining" as ScreenId, accent: false },
                   { label: "Photo Wall", note: "Share the trip", go: "photos" as ScreenId, accent: false },
-                  { label: authed ? "My Support" : "Unlock Support", note: authed ? `${user!.brand} crew` : "Register to see leadership", go: "support" as ScreenId, accent: true },
+                  { label: authed ? "My Support" : "Unlock Support", note: registered ? `${cx!.brand} crew` : "Register to see leadership", go: "support" as ScreenId, accent: true },
                 ].map((t) => (
                   <button key={t.label} type="button" onClick={() => go(t.go)} style={{ textAlign: "left", background: t.accent ? "#FF6B4A" : "#FFFFFF", border: "none", borderRadius: 18, padding: 16, cursor: "pointer", boxShadow: t.accent ? "0 2px 8px rgba(196,50,20,0.22)" : "0 2px 8px rgba(10,60,70,0.09)" }}>
                     <span style={{ display: "block", fontFamily: ARCH, fontSize: 16, fontWeight: 800, color: t.accent ? "#FFFFFF" : ACCENT, marginBottom: 3 }}>{t.label}</span>
@@ -305,9 +328,9 @@ export function CancunApp() {
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {CHECK.map(([id, label]) => {
-                  const on = !!done[id];
+                  const on = !!checklist[id];
                   return (
-                    <button key={id} type="button" onClick={() => toggle(id)} style={{ display: "flex", alignItems: "flex-start", gap: 12, background: on ? "#EAF7EF" : "#FFFFFF", border: `1.5px solid ${on ? "#B4E0C4" : "transparent"}`, borderRadius: 14, padding: "13px 14px", cursor: "pointer", boxShadow: "0 2px 8px rgba(10,60,70,0.07)" }}>
+                    <button key={id} type="button" onClick={() => toggleCheck(id)} style={{ display: "flex", alignItems: "flex-start", gap: 12, background: on ? "#EAF7EF" : "#FFFFFF", border: `1.5px solid ${on ? "#B4E0C4" : "transparent"}`, borderRadius: 14, padding: "13px 14px", cursor: "pointer", boxShadow: "0 2px 8px rgba(10,60,70,0.07)" }}>
                       <span style={{ flex: "none", width: 23, height: 23, borderRadius: 8, display: "grid", placeItems: "center", fontFamily: ARCH, fontSize: 13, fontWeight: 700, color: "#FFFFFF", background: on ? "#2FA36A" : "#DCE7E8" }}>{on ? "✓" : ""}</span>
                       <span style={{ flex: 1, fontFamily: SANS, fontSize: 14.5, lineHeight: 1.45, textAlign: "left", color: "#21313C" }}>{label}</span>
                     </button>
@@ -492,7 +515,7 @@ export function CancunApp() {
               </div>
               <label style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center", textAlign: "center", background: "#FFFFFF", border: "1.5px dashed #BBD0D3", borderRadius: 18, padding: "22px 18px", cursor: "pointer", boxShadow: "0 2px 8px rgba(10,60,70,0.07)" }}>
                 <span style={{ fontFamily: ARCH, fontSize: 16, fontWeight: 800, color: ACCENT }}>{authed ? "Add photos" : "Add photos as a guest"}</span>
-                <span style={{ fontFamily: SANS, fontSize: 12.5, lineHeight: 1.45, color: "#8B9AA3" }}>{authed ? `Posting as ${user!.first} · ${user!.brand}` : "Register to have your name on your photos"}</span>
+                <span style={{ fontFamily: SANS, fontSize: 12.5, lineHeight: 1.45, color: "#8B9AA3" }}>{registered ? `Posting as ${firstName} · ${cx!.brand}` : "Register to have your name on your photos"}</span>
                 <input type="file" accept="image/*" multiple onChange={addPhotos} style={{ display: "none" }} />
               </label>
               {photos.length > 0 && (
@@ -538,40 +561,32 @@ export function CancunApp() {
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <button type="button" onClick={() => { setAuthMode("register"); setError(""); }} style={{ background: "#FF6B4A", color: "#FFFFFF", border: "none", borderRadius: 14, padding: 15, cursor: "pointer", fontFamily: ARCH, fontSize: 15, fontWeight: 700 }}>Create my account</button>
-                <button type="button" onClick={() => { setAuthMode("signin"); setError(""); }} style={{ background: "#E7F1F2", color: ACCENT, border: "none", borderRadius: 14, padding: 15, cursor: "pointer", fontFamily: ARCH, fontSize: 15, fontWeight: 700 }}>I already registered</button>
+                <button type="button" onClick={() => { setAuthMode("register"); setError(""); }} style={{ background: "#FF6B4A", color: "#FFFFFF", border: "none", borderRadius: 14, padding: 15, cursor: "pointer", fontFamily: ARCH, fontSize: 15, fontWeight: 700 }}>Register for the convention</button>
               </div>
             </div>
           )}
 
           {effView === "auth" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <p style={{ fontFamily: SANS, fontSize: 14, lineHeight: 1.55, color: "#6B7C86", margin: 0 }}>{reg ? "Registering verifies you against the CMG traveler list and unlocks your leadership contacts, passport upload and personalized email." : "Welcome back. Sign in to see your leadership crew and trip details."}</p>
+              <p style={{ fontFamily: SANS, fontSize: 14, lineHeight: 1.55, color: "#6B7C86", margin: 0 }}>Registering ties your CMG convention profile to your SoarHub sign-in and unlocks your leadership contacts, passport upload and personalized email.</p>
               <div style={{ ...card, display: "flex", flexDirection: "column", gap: 13 }}>
-                {(reg
-                  ? [["name", "Full name", "text", "Dana Whitfield"], ["email", "Work email", "email", "you@cmgcompanies.com"], ["username", "Username", "text", "dwhitfield"], ["password", "Password", "password", "At least 8 characters"]]
-                  : [["username", "Username", "text", "dwhitfield"], ["password", "Password", "password", "Your password"]]
-                ).map(([key, label, type, ph]) => (
-                  <label key={key} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <span style={{ fontFamily: ARCH, fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: ACCENT }}>{label}</span>
-                    <input type={type} value={form[key as keyof typeof form]} onChange={(e) => setField(key as keyof typeof form, e.target.value)} placeholder={ph} style={{ border: "1.5px solid #DCE7E8", borderRadius: 11, padding: "12px 13px", fontFamily: SANS, fontSize: 15, color: "#21313C", background: "#FBFDFD" }} />
-                  </label>
-                ))}
-                {reg && (
-                  <div>
-                    <span style={{ display: "block", fontFamily: ARCH, fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: ACCENT, marginBottom: 8 }}>Your brand</span>
-                    <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
-                      {BRANDS.map((b) => {
-                        const on = form.brand === b;
-                        return <button key={b} type="button" onClick={() => setField("brand", b)} style={{ background: on ? "#0E8C93" : "#F1F7F8", color: on ? "#FFFFFF" : ACCENT, border: `1.5px solid ${on ? "#0E8C93" : "#DCE7E8"}`, borderRadius: 999, padding: "9px 13px", cursor: "pointer", fontFamily: ARCH, fontSize: 12.5, fontWeight: 700 }}>{b}</button>;
-                      })}
-                    </div>
+                <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <span style={{ fontFamily: ARCH, fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: ACCENT }}>Full name</span>
+                  <input type="text" value={form.name} onChange={(e) => setField("name", e.target.value)} placeholder={sbProfile?.full_name || "Dana Whitfield"} style={{ border: "1.5px solid #DCE7E8", borderRadius: 11, padding: "12px 13px", fontFamily: SANS, fontSize: 15, color: "#21313C", background: "#FBFDFD" }} />
+                </label>
+                <div>
+                  <span style={{ display: "block", fontFamily: ARCH, fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: ACCENT, marginBottom: 8 }}>Your brand</span>
+                  <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                    {BRANDS.map((b) => {
+                      const on = form.brand === b;
+                      return <button key={b} type="button" onClick={() => setField("brand", b)} style={{ background: on ? "#0E8C93" : "#F1F7F8", color: on ? "#FFFFFF" : ACCENT, border: `1.5px solid ${on ? "#0E8C93" : "#DCE7E8"}`, borderRadius: 999, padding: "9px 13px", cursor: "pointer", fontFamily: ARCH, fontSize: 12.5, fontWeight: 700 }}>{b}</button>;
+                    })}
                   </div>
-                )}
+                </div>
               </div>
               {error && <p style={{ fontFamily: SANS, fontSize: 13.5, lineHeight: 1.5, color: "#C4321F", background: "#FFECE7", borderRadius: 12, padding: "12px 14px", margin: 0 }}>{error}</p>}
-              <button type="button" onClick={submitAuth} style={{ background: "#0E8C93", color: "#FFFFFF", border: "none", borderRadius: 14, padding: 15, cursor: "pointer", fontFamily: ARCH, fontSize: 15, fontWeight: 700 }}>{reg ? "Register and unlock support" : "Sign in"}</button>
-              <button type="button" onClick={() => { setAuthMode(reg ? "signin" : "register"); setError(""); }} style={{ background: "none", border: "none", padding: 4, cursor: "pointer", fontFamily: SANS, fontSize: 13.5, fontWeight: 600, color: ACCENT, textDecoration: "underline" }}>{reg ? "Already registered? Sign in" : "Need an account? Register"}</button>
+              <button type="button" onClick={register} style={{ background: "#0E8C93", color: "#FFFFFF", border: "none", borderRadius: 14, padding: 15, cursor: "pointer", fontFamily: ARCH, fontSize: 15, fontWeight: 700 }}>Register and unlock support</button>
+              <button type="button" onClick={() => { setAuthMode("gate"); setError(""); }} style={{ background: "none", border: "none", padding: 4, cursor: "pointer", fontFamily: SANS, fontSize: 13.5, fontWeight: 600, color: ACCENT, textDecoration: "underline" }}>Back</button>
               <p style={{ fontFamily: SANS, fontSize: 12, lineHeight: 1.5, color: "#8B9AA3", margin: 0 }}>Accounts are verified against the CMG traveler list. Passport images are encrypted and visible only to your Senior Leadership.</p>
             </div>
           )}
@@ -580,32 +595,35 @@ export function CancunApp() {
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ position: "relative", overflow: "hidden", background: ACCENT, borderRadius: 20, padding: 20 }}>
                 <span style={{ position: "absolute", top: -34, right: -24, width: 110, height: 110, borderRadius: "50%", background: "#0E8C93" }} />
-                <p style={{ position: "relative", ...eyebrow("#FFB13B"), letterSpacing: "0.16em" }}>{user!.brand} · registered</p>
-                <p style={{ position: "relative", fontFamily: ARCH, fontSize: 26, fontWeight: 800, lineHeight: 1.15, letterSpacing: "-0.02em", color: "#FFFFFF", margin: 0 }}>Your crew, {user!.first}</p>
+                <p style={{ position: "relative", ...eyebrow("#FFB13B"), letterSpacing: "0.16em" }}>{cx!.brand} · registered</p>
+                <p style={{ position: "relative", fontFamily: ARCH, fontSize: 26, fontWeight: 800, lineHeight: 1.15, letterSpacing: "-0.02em", color: "#FFFFFF", margin: 0 }}>Your crew, {firstName}</p>
                 <p style={{ position: "relative", fontFamily: SANS, fontSize: 13.5, lineHeight: 1.5, color: "#BDEDEF", margin: "8px 0 0" }}>Travel, itinerary, rooming or an emergency — they resolve it or escalate it.</p>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {CREWS[user!.brand].map(([step, name, role]) => (
-                  <div key={step} style={{ display: "flex", alignItems: "center", gap: 12, background: "#FFFFFF", borderRadius: 16, padding: "14px 16px", boxShadow: "0 2px 8px rgba(10,60,70,0.09)" }}>
-                    <span style={{ flex: "none", width: 34, height: 34, borderRadius: "50%", background: "#E7F1F2", display: "grid", placeItems: "center", fontFamily: ARCH, fontSize: 13, fontWeight: 700, color: ACCENT }}>{step}</span>
+                {contacts.length === 0 && <p style={{ fontFamily: SANS, fontSize: 13.5, color: "#8B9AA3", margin: "0 2px" }}>Your crew is being finalized — check back soon.</p>}
+                {contacts.map((c) => (
+                  <div key={c.step} style={{ display: "flex", alignItems: "center", gap: 12, background: "#FFFFFF", borderRadius: 16, padding: "14px 16px", boxShadow: "0 2px 8px rgba(10,60,70,0.09)" }}>
+                    <span style={{ flex: "none", width: 34, height: 34, borderRadius: "50%", background: "#E7F1F2", display: "grid", placeItems: "center", fontFamily: ARCH, fontSize: 13, fontWeight: 700, color: ACCENT }}>{c.step}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block", fontFamily: ARCH, fontSize: 15, fontWeight: 700, color: "#21313C" }}>{name}</span>
-                      <span style={{ display: "block", fontFamily: SANS, fontSize: 12.5, color: "#8B9AA3" }}>{role}</span>
+                      <span style={{ display: "block", fontFamily: ARCH, fontSize: 15, fontWeight: 700, color: "#21313C" }}>{c.name}</span>
+                      <span style={{ display: "block", fontFamily: SANS, fontSize: 12.5, color: "#8B9AA3" }}>{c.role}</span>
                     </span>
-                    <a href="tel:+15550100" style={{ flex: "none", background: "#FF6B4A", color: "#FFFFFF", textDecoration: "none", borderRadius: 999, padding: "8px 14px", fontFamily: ARCH, fontSize: 12.5, fontWeight: 700 }}>Call</a>
+                    {c.phone
+                      ? <a href={`tel:${c.phone}`} style={{ flex: "none", background: "#FF6B4A", color: "#FFFFFF", textDecoration: "none", borderRadius: 999, padding: "8px 14px", fontFamily: ARCH, fontSize: 12.5, fontWeight: 700 }}>Call</a>
+                      : <span style={{ flex: "none", background: "#F1F7F8", color: "#8B9AA3", borderRadius: 999, padding: "8px 14px", fontFamily: ARCH, fontSize: 12.5, fontWeight: 700 }}>No number</span>}
                   </div>
                 ))}
               </div>
               <div style={card}>
                 <p style={eyebrow(ACCENT)}>Passport on file</p>
-                <button type="button" onClick={uploadPassport} style={{ display: "flex", flexDirection: "column", gap: 4, textAlign: "left", width: "100%", cursor: "pointer", borderRadius: 14, padding: 15, background: passport ? "#EAF7EF" : "#F8FBFB", border: `1.5px ${passport ? "solid #B4E0C4" : "dashed #BBD0D3"}` }}>
-                  <span style={{ fontFamily: ARCH, fontSize: 14.5, fontWeight: 700, color: "#21313C" }}>{passport ? "passport-2026.jpg · encrypted" : "Upload your passport photo"}</span>
-                  <span style={{ fontFamily: SANS, fontSize: 12.5, lineHeight: 1.45, color: "#6B7C86" }}>{passport ? "Visible only to your Senior Leadership. Tap to replace." : "Tap to add. Stored encrypted, leadership access only."}</span>
+                <button type="button" onClick={togglePassport} style={{ display: "flex", flexDirection: "column", gap: 4, textAlign: "left", width: "100%", cursor: "pointer", borderRadius: 14, padding: 15, background: cx?.passport_uploaded ? "#EAF7EF" : "#F8FBFB", border: `1.5px ${cx?.passport_uploaded ? "solid #B4E0C4" : "dashed #BBD0D3"}` }}>
+                  <span style={{ fontFamily: ARCH, fontSize: 14.5, fontWeight: 700, color: "#21313C" }}>{cx?.passport_uploaded ? "Passport on file · marked" : "Mark passport as ready"}</span>
+                  <span style={{ fontFamily: SANS, fontSize: 12.5, lineHeight: 1.45, color: "#6B7C86" }}>{cx?.passport_uploaded ? "Tap to clear. (Encrypted file upload arrives in the next update.)" : "Tap to flag it's ready. Encrypted file upload arrives in the next update."}</span>
                 </button>
               </div>
               <div style={card}>
                 <p style={eyebrow(ACCENT)}>Your personalized email</p>
-                <p style={{ fontFamily: SANS, fontSize: 14, lineHeight: 1.55, color: "#21313C", margin: "0 0 10px" }}>Itineraries, rooming and reminders go to <strong>{user!.email}</strong>.</p>
+                <p style={{ fontFamily: SANS, fontSize: 14, lineHeight: 1.55, color: "#21313C", margin: "0 0 10px" }}>Itineraries, rooming and reminders go to <strong>{email}</strong>.</p>
                 <p style={{ fontFamily: SANS, fontSize: 13, lineHeight: 1.5, color: "#6B7C86", margin: 0 }}>Room: Tower 2 · 1418. Roommate assigned November 24. Requests due to your Direct Supervisor by November 1.</p>
               </div>
               <div style={{ background: "#FFEFD6", borderRadius: 18, padding: "16px 18px" }}>
@@ -616,7 +634,7 @@ export function CancunApp() {
                   <li>Be mindful with alcohol and respect anyone not drinking.</li>
                 </ul>
               </div>
-              <button type="button" onClick={signOut} style={{ background: "none", border: "none", padding: 4, cursor: "pointer", fontFamily: SANS, fontSize: 13.5, fontWeight: 600, color: "#8B9AA3", textDecoration: "underline" }}>Sign out</button>
+              <button type="button" onClick={leave} style={{ background: "none", border: "none", padding: 4, cursor: "pointer", fontFamily: SANS, fontSize: 13.5, fontWeight: 600, color: "#8B9AA3", textDecoration: "underline" }}>Sign out</button>
             </div>
           )}
         </div>
