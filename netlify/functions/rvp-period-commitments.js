@@ -14,6 +14,7 @@
 // action is exposed; the history table's immutability trigger enforces it.
 
 import { createClient } from "@supabase/supabase-js";
+import { fiscalForDate, periodWeekEnds, priorWeekEnds } from "./_lib/fiscal.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
@@ -21,6 +22,77 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABAS
 const LEADER_ROLES = ["vp", "coo", "admin"]; // can see/manage every RVP's commitments
 const MANAGE_ROLES = ["rvp", ...LEADER_ROLES]; // can reach this tool at all
 const STATUSES = ["active", "met", "missed"];
+
+// Ranker metric keys stored as fractions in ranking_rows.metrics (the Comms
+// Board renders them ×100 as a percentage). Every OTHER metric key is a raw
+// value (count, days, dollars, per-10K, points). Scaling these ×100 makes the
+// auto-pulled baseline read the same number an RVP sees on the Ranker.
+const PCT_KEYS = new Set([
+  "pctVsLy", "varianceToChart", "ticketsVsLyPct", "voidsPct", "cogsEff",
+  "totalTrainingPct", "bscTrainingPct", "onTimePct", "eveningPct", "vog",
+]);
+const round2 = (n) => Math.round(n * 100) / 100;
+const scaleMetric = (key, raw) => {
+  const v = Number(raw);
+  if (!Number.isFinite(v)) return null;
+  return round2(PCT_KEYS.has(key) ? v * 100 : v);
+};
+
+// The RVP-tier ranking rows are keyed by the leader's display name
+// (resolveOrg nameOf = preferred_name || full_name || email). Recompute it from
+// a profile so a commitment's rvp_user_id maps to its ranking_rows entity_key.
+const rvpEntityName = (p) => (p ? p.preferred_name || p.full_name || p.email || null : null);
+
+// For a fiscal period + a set of RVP entity names, read the pre-aggregated
+// rvp-tier ranking rows and return, per name, the 4-week pre-period baseline
+// (avg of the weekly values) and the per-week series across the period. Weeks
+// with no complete run yet are present with value null (pending). Reads scope
+// 'wtd' — each week's isolated number, exactly what the Comms Board shows.
+async function metricSeriesByName(supa, metricKey, period, names) {
+  const nameList = [...names].filter(Boolean);
+  const baseWeekEnds = priorWeekEnds(period, 4);
+  const trackWeekEnds = periodWeekEnds(period);
+  const allWeekEnds = [...new Set([...baseWeekEnds, ...trackWeekEnds])];
+  const out = new Map();
+  for (const n of nameList) out.set(n, { baseline: null, weeks: trackWeekEnds.map((we) => weekStub(we)) });
+  if (!metricKey || !allWeekEnds.length || !nameList.length) return out;
+
+  const { data: runs } = await supa.from("ranking_runs")
+    .select("id, week_ending, started_at").eq("status", "complete")
+    .in("week_ending", allWeekEnds).order("started_at", { ascending: false });
+  const runByWeek = new Map(); // week_ending -> newest complete run id
+  for (const r of runs || []) if (!runByWeek.has(r.week_ending)) runByWeek.set(r.week_ending, r.id);
+  const runIds = [...runByWeek.values()];
+  if (!runIds.length) return out;
+  const weekByRun = new Map([...runByWeek.entries()].map(([w, id]) => [id, w]));
+
+  const { data: rows } = await supa.from("ranking_rows")
+    .select("run_id, entity_key, metrics").in("run_id", runIds)
+    .eq("scope", "wtd").eq("tier", "rvp").in("entity_key", nameList);
+  // name -> (week_ending -> scaled value)
+  const byName = new Map();
+  for (const r of rows || []) {
+    const val = scaleMetric(metricKey, r.metrics?.[metricKey]);
+    if (val == null) continue;
+    const we = weekByRun.get(r.run_id);
+    (byName.get(r.entity_key) || byName.set(r.entity_key, new Map()).get(r.entity_key)).set(we, val);
+  }
+  for (const name of nameList) {
+    const wk = byName.get(name) || new Map();
+    const baseVals = baseWeekEnds.map((we) => wk.get(we)).filter((v) => v != null);
+    const baseline = baseVals.length ? round2(baseVals.reduce((a, b) => a + b, 0) / baseVals.length) : null;
+    out.set(name, {
+      baseline,
+      weeks: trackWeekEnds.map((we) => weekStub(we, wk.has(we) ? wk.get(we) : null)),
+    });
+  }
+  return out;
+}
+
+function weekStub(weekEnding, value = null) {
+  const fi = fiscalForDate(weekEnding);
+  return { week_ending: weekEnding, week_in_period: fi?.weekInPeriod ?? null, value };
+}
 
 function admin() { return createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } }); }
 function respond(statusCode, payload) { return { statusCode, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }; }
@@ -131,15 +203,32 @@ export const handler = async (event) => {
         return respond(500, { error: error.message });
       }
 
-      // Resolve RVP names for the rows.
+      // Resolve RVP profiles for the rows (display name + the ranking entity name).
       const rvpIds = [...new Set((rows || []).map((r) => r.rvp_user_id))];
-      let rvpNames = {};
+      let profById = {};
       if (rvpIds.length) {
-        const { data: people } = await supa.from("profiles").select("id, full_name").in("id", rvpIds);
-        rvpNames = Object.fromEntries((people || []).map((p) => [p.id, p.full_name]));
+        const { data: people } = await supa.from("profiles").select("id, full_name, preferred_name, email").in("id", rvpIds);
+        profById = Object.fromEntries((people || []).map((p) => [p.id, p]));
       }
-      const commitments = (await withHistory(supa, rows || []))
-        .map((c) => ({ ...c, rvp_name: rvpNames[c.rvp_user_id] || null }));
+      const withHist = (await withHistory(supa, rows || []))
+        .map((c) => ({ ...c, rvp_name: profById[c.rvp_user_id]?.full_name || null }));
+
+      // Attach live 4-week baseline + per-week movement series for metric-anchored
+      // commitments. Group by metric so each metric's ranking rows load once.
+      const entityByCommit = new Map();
+      const byMetric = new Map(); // metric_key -> Set(entity name)
+      for (const c of withHist) {
+        const entity = rvpEntityName(profById[c.rvp_user_id]);
+        entityByCommit.set(c.id, entity);
+        if (c.metric_key && entity) (byMetric.get(c.metric_key) || byMetric.set(c.metric_key, new Set()).get(c.metric_key)).add(entity);
+      }
+      const seriesByMetric = new Map();
+      for (const [mk, nameset] of byMetric) seriesByMetric.set(mk, await metricSeriesByName(supa, mk, period, nameset));
+      const commitments = withHist.map((c) => {
+        const entity = entityByCommit.get(c.id);
+        const s = c.metric_key && entity ? seriesByMetric.get(c.metric_key)?.get(entity) : null;
+        return { ...c, series: s || null };
+      });
 
       // Leadership gets the RVP roster to attribute new commitments; an RVP is
       // implicitly themselves.
@@ -150,6 +239,28 @@ export const handler = async (event) => {
         rvps = allRvps || [];
       }
       return respond(200, { ok: true, commitments, rvps, scope: isLeader ? "all" : "own", self_id: user.id });
+    }
+
+    // ── metric-series: live 4-week baseline + per-week series for one metric ───
+    // Powers the modal's baseline auto-fill when a metric is picked, for the
+    // caller (or, for a leader, a named RVP).
+    if (event.httpMethod === "GET" && action === "metric-series") {
+      const metricKey = clean(params.metric_key, 64);
+      const period = Number(params.period);
+      if (!metricKey || !Number.isInteger(period) || period < 1 || period > 12) {
+        return respond(400, { error: "metric_key and period (1–12) are required." });
+      }
+      let targetId = user.id;
+      if (params.rvp_user_id && params.rvp_user_id !== user.id) {
+        if (!isLeader) return respond(403, { error: "You can only pull your own metrics." });
+        targetId = clean(params.rvp_user_id, 64);
+      }
+      const { data: prof } = await supa.from("profiles").select("id, full_name, preferred_name, email").eq("id", targetId).maybeSingle();
+      if (!prof) return respond(400, { error: "rvp_user_id does not match a profile." });
+      const entity = rvpEntityName(prof);
+      const series = (await metricSeriesByName(supa, metricKey, period, new Set([entity]))).get(entity)
+        || { baseline: null, weeks: [] };
+      return respond(200, { ok: true, metric_key: metricKey, period, rvp_name: prof.full_name || null, ...series });
     }
 
     if (event.httpMethod === "POST") {
