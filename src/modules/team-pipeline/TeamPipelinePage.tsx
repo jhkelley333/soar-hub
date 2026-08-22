@@ -5,7 +5,7 @@
 // GM bench / corrective-action documents build out in later slices.
 //
 // Role-gated to GM and up (see router + nav); scoped to the viewer's org tree.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, CalendarCheck2, Check, ChevronRight, Lock, Search, SlidersHorizontal, Upload, UserPlus, Users } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -39,9 +39,11 @@ type Nav =
 const ZERO: StoreRollup = { risk: { immediate: 0, medium: 0, low: 0, na: 0 }, roster: 0, non_gm: 0, open_reqs: 0, gm_risk: null, sales: null, target: null };
 const RISK_RANK: Record<TeamMember["flight_risk"], number> = { na: 0, low: 1, medium: 2, immediate: 3 };
 
-type TopView = "pipeline" | "succession" | "development" | "tenure";
+type TopView = "pipeline" | "ninebox" | "succession" | "development" | "tenure";
 
 export function TeamPipelinePage() {
+  const { profile } = useAuth();
+  const isDoPlus = ["do", "sdo", "rvp", "vp", "coo", "admin"].includes(String(profile?.role));
   const [nav, setNav] = useState<Nav>({ level: "company" });
   const [view, setView] = useState<TopView>("pipeline");
   const treeQ = useQuery({ queryKey: ["my-tree"], queryFn: fetchMyTree, staleTime: 5 * 60_000 });
@@ -93,11 +95,19 @@ export function TeamPipelinePage() {
           <Segmented<TopView>
             value={view}
             onChange={setView}
-            options={[{ value: "pipeline", label: "Pipeline" }, { value: "succession", label: "Succession & Risk" }, { value: "development", label: "Development" }, { value: "tenure", label: "Time in role" }]}
+            options={[
+              { value: "pipeline", label: "Pipeline" },
+              ...(isDoPlus ? [{ value: "ninebox" as const, label: "9-Box" }] : []),
+              { value: "succession", label: "Succession & Risk" },
+              { value: "development", label: "Development" },
+              { value: "tenure", label: "Time in role" },
+            ]}
           />
         </div>
 
-        {view === "succession" ? (
+        {view === "ninebox" ? (
+          <ScopeNineBox districts={districts} districtMeta={districtMeta} />
+        ) : view === "succession" ? (
           <SuccessionView districtMeta={districtMeta} districts={districts} />
         ) : view === "development" ? (
           <DevelopmentView districts={districts} districtMeta={districtMeta} />
@@ -1825,88 +1835,39 @@ const MOVE_META: Record<Exclude<MoveKind, "same" | "new">, { badge: string; cls:
   lateral: { badge: "→", cls: "bg-amber-400 text-white" },
 };
 
-function NineBox({ roster, storeId }: { roster: TeamMember[]; storeId: string }) {
+// The calibration grid itself: role filter, click-to-reveal, and the 3×3 boxes.
+// Reused by the per-store NineBox (with compare badges) and the scope-wide
+// ScopeNineBox (with a district picker), so both stay identical.
+function NineBoxGrid({ roster, controls, badgeFor, footerNote }: {
+  roster: TeamMember[];
+  controls?: ReactNode;
+  badgeFor?: (m: TeamMember) => { badge: string; cls: string; title: string } | null;
+  footerNote?: ReactNode;
+}) {
   const { open } = useMemberDrawer();
-  const { profile } = useAuth();
-  const isDoPlus = ["do", "sdo", "rvp", "vp", "coo", "admin"].includes(String(profile?.role));
-
-  // DO+ can plot everyone in their scope, not just this store.
-  const [mode, setMode] = useState<"store" | "scope">("store");
-  const scopeQ = useQuery({ queryKey: ["tp-scope-roster"], queryFn: fetchScopeRoster, enabled: mode === "scope", staleTime: 60_000 });
-  const effRoster = mode === "scope" ? (scopeQ.data?.roster ?? []) : roster;
-
-  // Role filter — hide/show by role (most useful in the aggregate view).
   const [hidden, setHidden] = useState<Set<string>>(new Set());
-  const presentRoles = useMemo(() => LADDER.map((r) => r.key).filter((k) => effRoster.some((m) => m.role === k)), [effRoster]);
+  const [sel, setSel] = useState<TeamMember | null>(null);
+  const presentRoles = useMemo(() => LADDER.map((r) => r.key).filter((k) => roster.some((m) => m.role === k)), [roster]);
   const toggleRole = (k: string) => setHidden((h) => { const n = new Set(h); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
-  // Click an avatar to reveal who it is (name/role/store) without committing to
-  // the full card; the strip has a "View card" to open it.
-  const [sel, setSel] = useState<TeamMember | null>(null);
-
-  const shown = effRoster.filter((m) => !hidden.has(m.role));
+  const shown = roster.filter((m) => !hidden.has(m.role));
   const rated = shown.filter((m) => m.perf != null && m.potential != null);
   const cellOf = (col: number, row: number) => rated.filter((m) => perfCol(m.perf!) === col && potRow(m.potential!) === row);
   const unrated = shown.length - rated.length;
 
-  // Calibration compare: overlay each member's movement since a prior snapshot.
-  // Snapshots are per-store, so compare only applies in single-store mode.
-  const [compareRaw, setCompare] = useState<string>("");
-  const compare = mode === "store" ? compareRaw : "";
-  const rowsQ = useQuery({
-    queryKey: ["tp-snapshot-rows", compare, storeId],
-    queryFn: () => fetchSnapshotRows(compare, storeId),
-    enabled: !!compare,
-    staleTime: 60_000,
-  });
-  const priorByMember = useMemo(() => {
-    const m = new Map<string, SnapshotRow>();
-    for (const r of rowsQ.data?.rows ?? []) m.set(r.member_id, r);
-    return m;
-  }, [rowsQ.data]);
-  const moveOf = (mem: TeamMember): MoveKind => {
-    if (!compare || !rowsQ.data) return "same"; // no compare, or snapshot still loading
-    const prior = priorByMember.get(mem.id);
-    if (!prior || prior.perf == null || prior.potential == null) return "new";
-    const sameBox = perfCol(prior.perf) === perfCol(mem.perf!) && potRow(prior.potential) === potRow(mem.potential!);
-    if (sameBox) return "same";
-    const d = boxScore(mem.perf!, mem.potential!) - boxScore(prior.perf, prior.potential);
-    return d > 0 ? "up" : d < 0 ? "down" : "lateral";
-  };
-  const movers = compare ? rated.filter((m) => { const k = moveOf(m); return k === "up" || k === "down" || k === "lateral" || k === "new"; }).length : 0;
-
   return (
     <div className="space-y-3">
-      <p className="max-w-3xl text-sm text-ink-muted">
-        The <strong className="text-ink-2">Sonic 9-Box</strong> calibrates team members on two dimensions —{" "}
-        <strong className="text-ink-2">performance</strong> (→) and <strong className="text-ink-2">potential</strong> (↓) — to
-        spot future leaders, recognize top performers, and target coaching where it lands hardest. Each person sits in a box
-        by their rating; tap an avatar to see who it is, then open their card.
-      </p>
-
-      {/* View scope (DO+) + role filter */}
-      <div className="flex flex-wrap items-center gap-2">
-        {isDoPlus && (
-          <div className="inline-flex overflow-hidden rounded-lg border border-border text-xs font-semibold">
-            <button onClick={() => setMode("store")} className={cn("px-3 py-1.5", mode === "store" ? "bg-accent text-white" : "bg-surface text-ink-muted hover:bg-surface-muted")}>This store</button>
-            <button onClick={() => { setMode("scope"); setCompare(""); setSel(null); }} className={cn("border-l border-border px-3 py-1.5", mode === "scope" ? "bg-accent text-white" : "bg-surface text-ink-muted hover:bg-surface-muted")}>My scope</button>
-          </div>
-        )}
-        {presentRoles.length > 1 && (
-          <div className="flex flex-wrap items-center gap-1">
-            <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Roles</span>
-            {presentRoles.map((k) => {
-              const on = !hidden.has(k);
-              return <button key={k} onClick={() => toggleRole(k)} className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset transition", on ? "bg-accent/10 text-accent ring-accent/30" : "bg-surface text-ink-subtle line-through ring-border")}>{LADDER_BY_KEY[k]?.abbr ?? k}</button>;
-            })}
-            {hidden.size > 0 && <button onClick={() => setHidden(new Set())} className="rounded-full px-2 py-1 text-[11px] font-semibold text-ink-muted hover:text-heading">Show all</button>}
-          </div>
-        )}
-      </div>
-
-      {mode === "scope" && scopeQ.isLoading && <p className="text-xs text-ink-muted">Loading everyone in your scope…</p>}
-
-      {mode === "store" && <CalibrationBar compare={compareRaw} onCompare={setCompare} movers={movers} />}
+      {controls}
+      {presentRoles.length > 1 && (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Roles</span>
+          {presentRoles.map((k) => {
+            const on = !hidden.has(k);
+            return <button key={k} onClick={() => toggleRole(k)} className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset transition", on ? "bg-accent/10 text-accent ring-accent/30" : "bg-surface text-ink-subtle line-through ring-border")}>{LADDER_BY_KEY[k]?.abbr ?? k}</button>;
+          })}
+          {hidden.size > 0 && <button onClick={() => setHidden(new Set())} className="rounded-full px-2 py-1 text-[11px] font-semibold text-ink-muted hover:text-heading">Show all</button>}
+        </div>
+      )}
 
       {sel && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-sm">
@@ -1921,11 +1882,9 @@ function NineBox({ roster, storeId }: { roster: TeamMember[]; storeId: string })
 
       <div className="overflow-x-auto">
         <div className="flex min-w-[720px] gap-2">
-          {/* potential axis label */}
           <div className="flex w-6 items-center justify-center">
             <span className="[writing-mode:vertical-rl] rotate-180 text-[11px] font-bold uppercase tracking-widest text-ink-subtle">Potential</span>
           </div>
-          {/* row labels */}
           <div className="grid w-32 shrink-0 grid-rows-3 gap-2 pt-0">
             {NB_ROWS.map((l, i) => (
               <div key={l} className="flex flex-col justify-center rounded-lg bg-surface-muted px-2 text-center">
@@ -1934,7 +1893,6 @@ function NineBox({ roster, storeId }: { roster: TeamMember[]; storeId: string })
               </div>
             ))}
           </div>
-          {/* grid */}
           <div className="flex-1">
             <div className="grid grid-cols-3 gap-2" style={{ gridTemplateRows: "repeat(3, minmax(150px, auto))" }}>
               {NINE_BOX.map((rowCells, row) => rowCells.map((cell, col) => {
@@ -1952,16 +1910,13 @@ function NineBox({ roster, storeId }: { roster: TeamMember[]; storeId: string })
                     {people.length > 0 && (
                       <div className="mt-auto flex flex-wrap content-start gap-1 pt-1">
                         {people.map((m) => {
-                          const mv = moveOf(m);
-                          const badge = mv === "new" ? "✦" : mv === "same" ? null : MOVE_META[mv].badge;
-                          const badgeCls = mv === "new" ? "bg-blue-600 text-white" : mv === "same" ? "" : MOVE_META[mv].cls;
-                          const mvTitle = mv === "new" ? " · new since " + compare : mv === "same" ? "" : ` · moved ${mv} since ${compare}`;
+                          const b = badgeFor?.(m) ?? null;
                           return (
-                            <button key={m.id} onClick={() => setSel(m)} title={`${m.full_name} · ${LADDER_BY_KEY[m.role]?.abbr}${mvTitle}`}
+                            <button key={m.id} onClick={() => setSel(m)} title={`${m.full_name} · ${LADDER_BY_KEY[m.role]?.abbr ?? m.role}${b?.title ?? ""}`}
                               className={cn("relative rounded-full ring-2 transition", sel?.id === m.id ? "ring-yellow-300" : "ring-white/70 hover:ring-white")}>
                               <Avatar name={m.full_name} risk={m.flight_risk} onColor />
-                              {badge && (
-                                <span className={cn("absolute -right-1 -top-1 grid h-3.5 w-3.5 place-items-center rounded-full text-[8px] font-bold leading-none ring-1 ring-white", badgeCls)}>{badge}</span>
+                              {b && (
+                                <span className={cn("absolute -right-1 -top-1 grid h-3.5 w-3.5 place-items-center rounded-full text-[8px] font-bold leading-none ring-1 ring-white", b.cls)}>{b.badge}</span>
                               )}
                             </button>
                           );
@@ -1972,7 +1927,6 @@ function NineBox({ roster, storeId }: { roster: TeamMember[]; storeId: string })
                 );
               }))}
             </div>
-            {/* column labels */}
             <div className="mt-2 grid grid-cols-3 gap-2">
               {NB_COLS.map((l, i) => (
                 <div key={l} className="rounded-lg bg-surface-muted px-2 py-1 text-center">
@@ -1988,10 +1942,117 @@ function NineBox({ roster, storeId }: { roster: TeamMember[]; storeId: string })
 
       <p className="text-xs text-ink-muted">
         Avatar ring color = risk.{unrated > 0 ? ` ${unrated} team member${unrated === 1 ? "" : "s"} not yet rated — set Performance + Potential on their card to place them.` : ""}
-        {compare && (
-          <span className="ml-1">Comparing to <strong className="text-ink-2">{compare}</strong>: <span className="font-bold text-emerald-600">▲</span> moved up · <span className="font-bold text-red-600">▼</span> down · <span className="font-bold text-amber-600">→</span> lateral · <span className="font-bold text-blue-600">✦</span> new.</span>
-        )}
+        {footerNote}
       </p>
+    </div>
+  );
+}
+
+// Per-store 9-box: adds the snapshot-compare bar (movement badges) on top of the
+// shared grid. Scope-wide viewing lives at the top level (ScopeNineBox).
+function NineBox({ roster, storeId }: { roster: TeamMember[]; storeId: string }) {
+  const [compare, setCompare] = useState<string>("");
+  const rowsQ = useQuery({
+    queryKey: ["tp-snapshot-rows", compare, storeId],
+    queryFn: () => fetchSnapshotRows(compare, storeId),
+    enabled: !!compare,
+    staleTime: 60_000,
+  });
+  const priorByMember = useMemo(() => {
+    const m = new Map<string, SnapshotRow>();
+    for (const r of rowsQ.data?.rows ?? []) m.set(r.member_id, r);
+    return m;
+  }, [rowsQ.data]);
+  const moveOf = (mem: TeamMember): MoveKind => {
+    if (!compare || !rowsQ.data) return "same";
+    const prior = priorByMember.get(mem.id);
+    if (!prior || prior.perf == null || prior.potential == null) return "new";
+    const sameBox = perfCol(prior.perf) === perfCol(mem.perf!) && potRow(prior.potential) === potRow(mem.potential!);
+    if (sameBox) return "same";
+    const d = boxScore(mem.perf!, mem.potential!) - boxScore(prior.perf, prior.potential);
+    return d > 0 ? "up" : d < 0 ? "down" : "lateral";
+  };
+  const rated = roster.filter((m) => m.perf != null && m.potential != null);
+  const movers = compare ? rated.filter((m) => { const k = moveOf(m); return k === "up" || k === "down" || k === "lateral" || k === "new"; }).length : 0;
+  const badgeFor = (m: TeamMember) => {
+    const mv = moveOf(m);
+    if (mv === "same") return null;
+    return {
+      badge: mv === "new" ? "✦" : MOVE_META[mv].badge,
+      cls: mv === "new" ? "bg-blue-600 text-white" : MOVE_META[mv].cls,
+      title: mv === "new" ? " · new since " + compare : ` · moved ${mv} since ${compare}`,
+    };
+  };
+  const legend = compare ? (
+    <span className="ml-1">Comparing to <strong className="text-ink-2">{compare}</strong>: <span className="font-bold text-emerald-600">▲</span> moved up · <span className="font-bold text-red-600">▼</span> down · <span className="font-bold text-amber-600">→</span> lateral · <span className="font-bold text-blue-600">✦</span> new.</span>
+  ) : null;
+
+  return (
+    <div className="space-y-3">
+      <p className="max-w-3xl text-sm text-ink-muted">
+        The <strong className="text-ink-2">Sonic 9-Box</strong> calibrates team members on two dimensions —{" "}
+        <strong className="text-ink-2">performance</strong> (→) and <strong className="text-ink-2">potential</strong> (↓) — to
+        spot future leaders, recognize top performers, and target coaching where it lands hardest. Each person sits in a box
+        by their rating; tap an avatar to see who it is, then open their card.
+      </p>
+      <CalibrationBar compare={compare} onCompare={setCompare} movers={movers} />
+      <NineBoxGrid roster={roster} badgeFor={compare ? badgeFor : undefined} footerNote={legend} />
+    </div>
+  );
+}
+
+// Scope-wide 9-box for DO+ — the whole span at once, with an SDO+/RVP+ district
+// picker (All, one, or several). Lives as a top-level tab (the All-districts page).
+function ScopeNineBox({ districts, districtMeta }: { districts: MyDistrictNode[]; districtMeta: Map<string, { regionName: string | null; doName: string | null; rvpName: string | null }> }) {
+  const scopeQ = useQuery({ queryKey: ["tp-scope-roster"], queryFn: fetchScopeRoster, staleTime: 60_000 });
+  const roster = scopeQ.data?.roster ?? [];
+  const storeToDistrict = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const d of districts) for (const s of d.stores) m.set(s.id, d.id);
+    return m;
+  }, [districts]);
+  const multi = districts.length > 1;
+  const [selD, setSelD] = useState<Set<string>>(new Set()); // empty = all
+  const toggleD = (id: string) => setSelD((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const filtered = useMemo(
+    () => (selD.size === 0 ? roster : roster.filter((m) => { const d = storeToDistrict.get(m.store_id); return d ? selD.has(d) : false; })),
+    [roster, selD, storeToDistrict],
+  );
+
+  const groups = useMemo(() => {
+    const g = new Map<string, MyDistrictNode[]>();
+    for (const d of districts) { const rn = districtMeta.get(d.id)?.regionName ?? "Other"; (g.get(rn) ?? g.set(rn, []).get(rn)!).push(d); }
+    return [...g.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [districts, districtMeta]);
+  const dLabel = (d: MyDistrictNode) => `${d.code ? d.code + " " : ""}${d.name ?? "District"}`;
+
+  const controls = multi ? (
+    <div className="rounded-lg border border-border bg-surface-muted p-2.5">
+      <div className="mb-1.5 flex flex-wrap items-center gap-2">
+        <span className="text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Districts</span>
+        <button onClick={() => setSelD(new Set())} className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset transition", selD.size === 0 ? "bg-accent text-white ring-accent" : "bg-surface text-ink-muted ring-border hover:text-heading")}>All</button>
+        {selD.size > 0 && <span className="text-[11px] text-ink-muted">{selD.size} selected</span>}
+      </div>
+      <div className="space-y-1.5">
+        {groups.map(([region, ds]) => (
+          <div key={region} className="flex flex-wrap items-center gap-1">
+            {groups.length > 1 && <span className="mr-1 w-full text-[10px] font-semibold uppercase tracking-wide text-ink-subtle sm:w-auto">{region}</span>}
+            {ds.map((d) => {
+              const on = selD.has(d.id);
+              return <button key={d.id} onClick={() => toggleD(d.id)} className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset transition", on ? "bg-accent/10 text-accent ring-accent/30" : "bg-surface text-ink-muted ring-border hover:text-heading")}>{dLabel(d)}</button>;
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  ) : null;
+
+  return (
+    <div className="space-y-3">
+      <p className="max-w-3xl text-sm text-ink-muted">
+        The <strong className="text-ink-2">Sonic 9-Box</strong> across your whole span.{multi ? " Show All, one district, or several." : ""} Tap an avatar to see who it is, then open their card.
+      </p>
+      {scopeQ.isLoading ? <Skeleton className="h-64 w-full" /> : <NineBoxGrid roster={filtered} controls={controls} />}
     </div>
   );
 }
