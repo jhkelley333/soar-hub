@@ -19,6 +19,7 @@ export function downloadChangesPdf(a: OrgAlignment, tree: OrgTree, leaders: Map<
   const nodes = a.nodes ?? [];
   const moves = a.moves ?? [];
   const leaderMoves = a.leader_moves ?? [];
+  const leaderAdds = a.leader_adds ?? [];
   const roots = projectTree(tree, nodes, moves);
 
   // Lookups for the change summary (id/ref → readable name).
@@ -49,7 +50,7 @@ export function downloadChangesPdf(a: OrgAlignment, tree: OrgTree, leaders: Map<
   doc.text(`Org Alignment — ${a.name}`, M, y); y += 7;
   doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); setColor(MUTED);
   const eff = new Date(`${a.effective_date}T12:00:00`).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
-  doc.text(`Effective ${eff}  ·  status: ${a.status}  ·  ${nodes.length} new · ${moves.length} move(s) · ${leaderMoves.length} leader move(s)  ·  generated ${today}`, M, y); y += 6;
+  doc.text(`Effective ${eff}  ·  status: ${a.status}  ·  ${nodes.length} new · ${moves.length} move(s) · ${leaderMoves.length} leader move(s) · ${leaderAdds.length} invite(s)  ·  generated ${today}`, M, y); y += 6;
 
   // Legend
   doc.setFontSize(8.5);
@@ -83,6 +84,12 @@ export function downloadChangesPdf(a: OrgAlignment, tree: OrgTree, leaders: Map<
     const role = lm.scope_type === "area" ? "SDO" : "DO";
     const from = (lm.from_scope_id && byId.get(lm.from_scope_id)) || "current";
     doc.text(`LEADER ${role}  ${who}  ${from}  →  ${parentLabel(lm.to_scope_id, lm.to_scope_ref)}`, M + 2, y);
+    y += 4.6;
+  }
+  for (const la of leaderAdds) {
+    ensure(5); setColor(GREEN);
+    const who = la.full_name?.trim() || la.email;
+    doc.text(`NEW ${la.role.toUpperCase()} (invite)  ${who} <${la.email}>  →  ${parentLabel(la.to_scope_id, la.to_scope_ref)}`, M + 2, y);
     y += 4.6;
   }
   y += 4;

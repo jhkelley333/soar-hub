@@ -32,6 +32,7 @@ export async function applyAlignment(supa, alignmentId, actorId) {
   const { data: nodes } = await supa.from("org_alignment_nodes").select("*").eq("alignment_id", alignmentId);
   const { data: moves } = await supa.from("org_alignment_moves").select("*").eq("alignment_id", alignmentId);
   const { data: leaderMoves } = await supa.from("org_alignment_leader_moves").select("*").eq("alignment_id", alignmentId);
+  const { data: leaderAdds } = await supa.from("org_alignment_leader_adds").select("*").eq("alignment_id", alignmentId);
 
   const refMap = {}; // node ref -> real id
   for (const n of nodes || []) if (n.created_real_id) refMap[n.ref] = n.created_real_id;
@@ -85,10 +86,33 @@ export async function applyAlignment(supa, alignmentId, actorId) {
     await supa.from("org_alignment_leader_moves").update({ prior_scope_id: lm.from_scope_id, applied: true }).eq("id", lm.id);
   }
 
+  // 4. Add new leaders: invite by email, set role, assign scope.
+  const inviteRedirect = (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "") + "/accept-invite";
+  for (const la of leaderAdds || []) {
+    if (la.applied) continue;
+    const target = la.to_scope_id || refMap[la.to_scope_ref];
+    if (!target) return { error: `A new leader has no resolvable destination scope.`, status: 400 };
+    const email = String(la.email || "").trim().toLowerCase();
+    if (!email) return { error: `A new leader is missing an email.`, status: 400 };
+    const { data: invite, error: invErr } = await supa.auth.admin.inviteUserByEmail(email, {
+      data: la.full_name ? { full_name: la.full_name } : undefined,
+      redirectTo: inviteRedirect || undefined,
+    });
+    if (invErr) return { error: `Couldn't invite ${email}: ${invErr.message}`, status: 500 };
+    const uid = invite?.user?.id;
+    if (!uid) return { error: `Invite for ${email} returned no user id.`, status: 500 };
+    const { error: profErr } = await supa.from("profiles")
+      .update({ full_name: la.full_name || null, role: la.role, is_active: true }).eq("id", uid);
+    if (profErr) { await supa.auth.admin.deleteUser(uid).catch(() => {}); return { error: `Profile setup failed for ${email}: ${profErr.message}`, status: 500 }; }
+    const { error: scopeErr } = await supa.from("user_scopes").insert({ user_id: uid, scope_type: la.scope_type, scope_id: target });
+    if (scopeErr) { await supa.auth.admin.deleteUser(uid).catch(() => {}); return { error: `Scope assignment failed for ${email}: ${scopeErr.message}`, status: 500 }; }
+    await supa.from("org_alignment_leader_adds").update({ created_user_id: uid, applied: true }).eq("id", la.id);
+  }
+
   await supa.from("org_alignments").update({
     status: "applied", applied_at: new Date().toISOString(), applied_by: actorId, updated_at: new Date().toISOString(),
   }).eq("id", alignmentId);
-  return { ok: true, created: (nodes || []).length, moved: (moves || []).length, leaders: (leaderMoves || []).length };
+  return { ok: true, created: (nodes || []).length, moved: (moves || []).length, leaders: (leaderMoves || []).length, invited: (leaderAdds || []).length };
 }
 
 // Undo an applied alignment: revert every move to its prior parent, then delete
@@ -102,9 +126,18 @@ export async function rollbackAlignment(supa, alignmentId, actorId) {
   const { data: nodes } = await supa.from("org_alignment_nodes").select("*").eq("alignment_id", alignmentId);
   const { data: moves } = await supa.from("org_alignment_moves").select("*").eq("alignment_id", alignmentId);
   const { data: leaderMoves } = await supa.from("org_alignment_leader_moves").select("*").eq("alignment_id", alignmentId);
+  const { data: leaderAdds } = await supa.from("org_alignment_leader_adds").select("*").eq("alignment_id", alignmentId);
 
   const refMap = {}; // node ref -> real id (for leader moves that targeted new nodes)
   for (const n of nodes || []) if (n.created_real_id) refMap[n.ref] = n.created_real_id;
+
+  // 0. Remove invited new leaders: deleting the auth user cascades their
+  //    profile + user_scopes, so this must run before their scope node is gone.
+  for (const la of leaderAdds || []) {
+    if (!la.applied || !la.created_user_id) continue;
+    await supa.auth.admin.deleteUser(la.created_user_id).catch(() => {});
+    await supa.from("org_alignment_leader_adds").update({ created_user_id: null, applied: false }).eq("id", la.id);
+  }
 
   // 1. Revert leader reassignments first (before their destination nodes are
   //    deleted): put each person's scope back, or drop a new assignment.

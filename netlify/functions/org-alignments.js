@@ -47,16 +47,17 @@ async function loadAlignment(supa, id) {
   if (!alignment) return null;
   // NB: org_alignment_nodes has no created_at column — ordering by one makes
   // PostgREST error and silently drops every staged node. Order by real columns.
-  const [{ data: nodes, error: nErr }, { data: moves, error: mErr }, { data: leaderMoves, error: lErr }] = await Promise.all([
+  const [{ data: nodes, error: nErr }, { data: moves, error: mErr }, { data: leaderMoves, error: lErr }, { data: leaderAdds, error: aErr }] = await Promise.all([
     supa.from("org_alignment_nodes").select("*").eq("alignment_id", id).order("kind").order("code"),
     supa.from("org_alignment_moves").select("*").eq("alignment_id", id),
     supa.from("org_alignment_leader_moves").select("*").eq("alignment_id", id).order("created_at"),
+    supa.from("org_alignment_leader_adds").select("*").eq("alignment_id", id).order("created_at"),
   ]);
   if (nErr) throw new Error(`load nodes: ${nErr.message}`);
   if (mErr) throw new Error(`load moves: ${mErr.message}`);
-  // leader_moves is additive (migration 0309). If the table isn't there yet,
-  // degrade to empty rather than breaking the whole tool before the migration.
-  return { ...alignment, nodes: nodes || [], moves: moves || [], leader_moves: lErr ? [] : (leaderMoves || []) };
+  // leader_moves (0309) / leader_adds (0310) are additive. If a table isn't
+  // there yet, degrade to empty rather than breaking the tool before migrating.
+  return { ...alignment, nodes: nodes || [], moves: moves || [], leader_moves: lErr ? [] : (leaderMoves || []), leader_adds: aErr ? [] : (leaderAdds || []) };
 }
 
 export const handler = async (event) => {
@@ -84,15 +85,17 @@ export const handler = async (event) => {
         const ids = (data || []).map((a) => a.id);
         const counts = {};
         if (ids.length) {
-          const [{ data: ns }, { data: ms }, { data: ls }] = await Promise.all([
+          const [{ data: ns }, { data: ms }, { data: ls }, { data: as_ }] = await Promise.all([
             supa.from("org_alignment_nodes").select("alignment_id").in("alignment_id", ids),
             supa.from("org_alignment_moves").select("alignment_id").in("alignment_id", ids),
             supa.from("org_alignment_leader_moves").select("alignment_id").in("alignment_id", ids),
+            supa.from("org_alignment_leader_adds").select("alignment_id").in("alignment_id", ids),
           ]);
           const bump = (id) => (counts[id] ||= { nodes: 0, moves: 0, leaders: 0 });
           for (const r of ns || []) bump(r.alignment_id).nodes++;
           for (const r of ms || []) bump(r.alignment_id).moves++;
           for (const r of ls || []) bump(r.alignment_id).leaders++;
+          for (const r of as_ || []) bump(r.alignment_id).leaders++;
         }
         return respond(200, { ok: true, alignments: (data || []).map((a) => ({ ...a, change_count: counts[a.id] || { nodes: 0, moves: 0, leaders: 0 } })) });
       }
@@ -207,6 +210,29 @@ export const handler = async (event) => {
       if (action === "remove-leader-move") {
         const id = clean(body.id, 64); if (!id) return respond(400, { error: "id is required." });
         const { error } = await supa.from("org_alignment_leader_moves").delete().eq("id", id);
+        if (error) return respond(500, { error: error.message });
+        return respond(200, { ok: true });
+      }
+
+      if (action === "add-leader-add") {
+        const blocked = await editable(clean(body.alignment_id, 64)); if (blocked) return respond(409, { error: blocked });
+        const role = clean(body.role, 10);
+        if (!["do", "sdo"].includes(role)) return respond(400, { error: "role must be do or sdo." });
+        const scopeType = role === "sdo" ? "area" : "district";
+        const email = clean(body.email, 200);
+        if (!email || !email.includes("@")) return respond(400, { error: "A valid email is required." });
+        if (!clean(body.to_scope_id, 64) && !clean(body.to_scope_ref, 60)) return respond(400, { error: "A destination scope is required." });
+        const { data, error } = await supa.from("org_alignment_leader_adds").insert({
+          alignment_id: body.alignment_id, full_name: clean(body.full_name, 120), email: email.toLowerCase(),
+          role, scope_type: scopeType,
+          to_scope_id: clean(body.to_scope_id, 64), to_scope_ref: clean(body.to_scope_ref, 60),
+        }).select().single();
+        if (error) return respond(500, { error: error.message });
+        return respond(200, { ok: true, leader_add: data });
+      }
+      if (action === "remove-leader-add") {
+        const id = clean(body.id, 64); if (!id) return respond(400, { error: "id is required." });
+        const { error } = await supa.from("org_alignment_leader_adds").delete().eq("id", id);
         if (error) return respond(500, { error: error.message });
         return respond(200, { ok: true });
       }
