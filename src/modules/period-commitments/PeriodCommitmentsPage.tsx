@@ -454,7 +454,7 @@ function CommitmentModal({
           <button type="button" onClick={onOpenGuide}
             className="flex w-full items-center gap-2 rounded-lg bg-canvas px-3 py-2 text-left text-xs text-heading ring-1 ring-border hover:ring-accent">
             <Info className="h-4 w-4 shrink-0 text-accent" />
-            <span><span className="font-semibold">How to write one</span> — anchor to a metric, state the gap, and list specific actions. Read the finance-director playbook.</span>
+            <span><span className="font-semibold">How to write one</span> — anchor to a metric, state the gap, and list specific actions. Read the playbook.</span>
           </button>
 
           {isNew && isLeader && (
@@ -601,7 +601,7 @@ const PRINCIPLES: { n: number; title: string; body: string }[] = [
   { n: 1, title: "Anchor to a metric", body: "Start from a number on the Ranker, not a feeling. A commitment the Ranker can't score isn't a commitment — it's a wish." },
   { n: 2, title: "State the gap and the date", body: "Baseline → target, and by when. \"96.1% → 97.0% by period close\" is a gap you can be held to; \"improve COGS\" is not." },
   { n: 3, title: "Decompose the driver (MECE)", body: "Break the gap into the few levers that actually move it — no overlaps, no gaps. Most metrics move on 2–4 drivers, not twenty." },
-  { n: 4, title: "Commit to controllable inputs", body: "Amazon's rule: own the inputs you control, not the output you hope for. \"Waste log audited daily\" is an input; \"lower food cost\" is an output." },
+  { n: 4, title: "Commit to controllable inputs", body: "Own the inputs you control, not the output you hope for. \"Waste log audited daily\" is an input; \"lower food cost\" is an output." },
   { n: 5, title: "Make each action specific", body: "What, who, and cadence — every action names all three. \"Retrain 3 openers on portioning, GM-led, daily pre-shift\" is an action. \"Improve efficiency\" is a slogan." },
   { n: 6, title: "Prove the math adds up", body: "The actions' expected impact should sum to at least the gap. If the gap is +90 bps and your actions total +40, the plan is short — add levers or reset the target." },
 ];
@@ -617,8 +617,7 @@ function GuidanceModal({ open, onClose }: { open: boolean; onClose: () => void }
       footer={<Button onClick={onClose}>Got it</Button>}>
       <div className="space-y-4">
         <p className="text-sm leading-relaxed text-ink-muted">
-          Written the way a Director of Finance from McKinsey or Amazon would frame it: a commitment is a
-          number, a gap, and the specific inputs you'll control to close it. Six principles.
+          A commitment is a number, a gap, and the specific inputs you'll control to close it. Six principles.
         </p>
         <ol className="space-y-2.5">
           {PRINCIPLES.map((p) => (
