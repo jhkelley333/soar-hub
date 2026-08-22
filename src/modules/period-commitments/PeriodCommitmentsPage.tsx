@@ -426,6 +426,7 @@ function CommitmentModal({
   const gapLabel = fmtGap(metric, gap);
   const iUnit = impactUnit(metric);
 
+  const [showActionHelp, setShowActionHelp] = useState(false);
   const actionSum = draft
     ? draft.actions.reduce((s, a) => s + (a.impact.trim() === "" ? 0 : Number(a.impact) || 0), 0)
     : 0;
@@ -480,7 +481,7 @@ function CommitmentModal({
                 </optgroup>
               ))}
             </select>
-            {metric && <p className="mt-1 text-[11px] text-ink-muted">Goal: {metric.goal}. The 4-week baseline auto-pulls from the Ranker; set where you'll take it.</p>}
+            {metric && <p className="mt-1 text-[11px] text-ink-muted">Goal: {metric.goal}. The baseline auto-fills from your last 4 weeks on the Ranker; set where you'll take it.</p>}
           </div>
 
           {/* Baseline → target */}
@@ -501,10 +502,10 @@ function CommitmentModal({
               <div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
                 <Sparkles className="h-3 w-3 text-accent" />
                 {seriesQ.isFetching ? (
-                  <span className="text-ink-muted">Pulling live 4-week baseline from the Ranker…</span>
+                  <span className="text-ink-muted">Pulling your last 4 weeks from the Ranker…</span>
                 ) : liveBaseline != null ? (
                   <span className="text-ink-muted">
-                    Ranker 4-week baseline <span className="font-semibold text-heading">{fmtMetricValue(metric, liveBaseline)}</span>
+                    Last-4-week Ranker baseline <span className="font-semibold text-heading">{fmtMetricValue(metric, liveBaseline)}</span>
                     {String(liveBaseline) !== draft.baseline_value.trim() && (
                       <button type="button" onClick={() => onChange({ ...draft, baseline_value: String(liveBaseline) })}
                         className="ml-1.5 font-semibold text-accent hover:text-accent-hover">Apply</button>
@@ -537,8 +538,15 @@ function CommitmentModal({
 
           {/* Specific actions */}
           <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <Label className="mb-0">Specific actions</Label>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <Label className="mb-0">Specific actions</Label>
+                <button type="button" onClick={() => setShowActionHelp((v) => !v)}
+                  aria-label="What makes a good action" title="What makes a good action"
+                  className={cn("rounded p-0.5 hover:text-accent", showActionHelp ? "text-accent" : "text-ink-subtle")}>
+                  <Info className="h-3.5 w-3.5" />
+                </button>
+              </div>
               {metric && gap != null && (
                 <span className={cn("text-[11px] font-semibold tabular-nums",
                   covers ? "text-emerald-600" : "text-warning")}>
@@ -546,6 +554,25 @@ function CommitmentModal({
                 </span>
               )}
             </div>
+            {showActionHelp && (
+              <div className="mb-2 rounded-lg bg-canvas p-3 text-[11px] leading-relaxed text-ink-muted ring-1 ring-border">
+                <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-ink-subtle">Example action</div>
+                <div className="rounded-md bg-surface p-2 ring-1 ring-border">
+                  <div className="text-ink">Retrain 3 openers on portioning discipline</div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-ink-muted">
+                    <span><span className="text-ink-subtle">Owner</span> GM</span>
+                    <span><span className="text-ink-subtle">Cadence</span> Daily pre-shift</span>
+                    <span className="font-semibold text-heading">+50 {iUnit || "bps"}</span>
+                  </div>
+                </div>
+                <ul className="mt-2 space-y-1">
+                  <li><span className="font-semibold text-heading">What</span> — the concrete, observable action. Not "improve labor"; name exactly what changes.</li>
+                  <li><span className="font-semibold text-heading">Owner</span> — the one person or role accountable for it.</li>
+                  <li><span className="font-semibold text-heading">Cadence</span> — how often it happens: daily, weekly, each pre-shift.</li>
+                  <li><span className="font-semibold text-heading">Impact</span> — expected effect on the metric{iUnit ? ` (${iUnit})` : ""}. The actions should sum to at least the gap.</li>
+                </ul>
+              </div>
+            )}
             <div className="space-y-2">
               {draft.actions.map((a, i) => (
                 <div key={i} className="rounded-lg bg-surface-muted p-2.5 ring-1 ring-border">

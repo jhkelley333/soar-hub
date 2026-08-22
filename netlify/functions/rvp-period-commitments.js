@@ -14,7 +14,7 @@
 // action is exposed; the history table's immutability trigger enforces it.
 
 import { createClient } from "@supabase/supabase-js";
-import { fiscalForDate, periodWeekEnds, priorWeekEnds } from "./_lib/fiscal.js";
+import { fiscalForDate, periodWeekEnds } from "./_lib/fiscal.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
@@ -43,14 +43,30 @@ const scaleMetric = (key, raw) => {
 // a profile so a commitment's rvp_user_id maps to its ranking_rows entity_key.
 const rvpEntityName = (p) => (p ? p.preferred_name || p.full_name || p.email || null : null);
 
+// The last `n` distinct week-ending Sundays that have a complete ranking run,
+// newest first. This is the trailing "last 4 weeks" of real data — always
+// populated when any runs exist, unlike a fixed pre-period window.
+async function lastCompletedWeekEnds(supa, n = 4) {
+  const { data } = await supa.from("ranking_runs")
+    .select("week_ending").eq("status", "complete")
+    .order("week_ending", { ascending: false }).limit(n * 12);
+  const seen = new Set(); const out = [];
+  for (const r of data || []) {
+    if (seen.has(r.week_ending)) continue;
+    seen.add(r.week_ending); out.push(r.week_ending);
+    if (out.length >= n) break;
+  }
+  return out;
+}
+
 // For a fiscal period + a set of RVP entity names, read the pre-aggregated
-// rvp-tier ranking rows and return, per name, the 4-week pre-period baseline
-// (avg of the weekly values) and the per-week series across the period. Weeks
-// with no complete run yet are present with value null (pending). Reads scope
-// 'wtd' — each week's isolated number, exactly what the Comms Board shows.
+// rvp-tier ranking rows and return, per name, the baseline (average of the last
+// 4 completed weeks of real data) and the per-week series across the period.
+// Weeks with no complete run yet are present with value null (pending). Reads
+// scope 'wtd' — each week's isolated number, exactly what the Comms Board shows.
 async function metricSeriesByName(supa, metricKey, period, names) {
   const nameList = [...names].filter(Boolean);
-  const baseWeekEnds = priorWeekEnds(period, 4);
+  const baseWeekEnds = await lastCompletedWeekEnds(supa, 4);
   const trackWeekEnds = periodWeekEnds(period);
   const allWeekEnds = [...new Set([...baseWeekEnds, ...trackWeekEnds])];
   const out = new Map();
