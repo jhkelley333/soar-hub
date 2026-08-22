@@ -34,7 +34,7 @@ export function downloadChangesPdf(a: OrgAlignment, tree: OrgTree, leaders: Map<
     return "—";
   };
 
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "letter" });
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "letter" });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const M = 14;
@@ -118,12 +118,13 @@ export function downloadChangesPdf(a: OrgAlignment, tree: OrgTree, leaders: Map<
     // District: list its stores compactly, highlighting moved ones.
     if (node.kind === "district" && node.children.length) {
       const stores = node.children;
-      const colW = (pageW - 2 * M - (depth + 1) * 6) / 2;
+      const cols = 3;
       const sx = M + (depth + 1) * 6;
+      const colW = (pageW - M - sx) / cols;
       doc.setFont("helvetica", "normal"); doc.setFontSize(7.8);
-      for (let i = 0; i < stores.length; i += 2) {
+      for (let i = 0; i < stores.length; i += cols) {
         ensure(4.4);
-        for (let c = 0; c < 2 && i + c < stores.length; c++) {
+        for (let c = 0; c < cols && i + c < stores.length; c++) {
           const s = stores[i + c];
           setColor(s.moved ? BLUE : MUTED);
           doc.text(`${s.moved ? "● " : ""}${s.label}${s.moved ? " [MOVED]" : ""}`, sx + c * colW, y);
