@@ -119,7 +119,9 @@ export function PeriodCommitmentsPage() {
   });
 
   const openNew = () => setEditing({
-    rvp_user_id: selfId, metric_key: "", commitment_text: "",
+    // Leaders must pick which RVP the commitment is for before we can pull that
+    // RVP's baseline; an RVP is always themselves.
+    rvp_user_id: isLeader ? "" : selfId, metric_key: "", commitment_text: "",
     baseline_value: "", target_value: "", actions: [emptyAction()], status: "active",
   });
   const openEdit = (c: PeriodCommitment) => setEditing({
@@ -407,7 +409,7 @@ function CommitmentModal({
   const seriesQ = useQuery({
     queryKey: ["pc-metric-series", draft?.metric_key, period, draft?.rvp_user_id],
     queryFn: () => fetchMetricSeries(draft!.metric_key, period, draft!.rvp_user_id || undefined),
-    enabled: draft != null && !!draft.metric_key,
+    enabled: draft != null && !!draft.metric_key && !!draft.rvp_user_id,
     staleTime: 60_000,
   });
   const liveBaseline = seriesQ.data?.baseline ?? null;
@@ -501,8 +503,10 @@ function CommitmentModal({
               </div>
               <div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
                 <Sparkles className="h-3 w-3 text-accent" />
-                {seriesQ.isFetching ? (
-                  <span className="text-ink-muted">Pulling your last 4 weeks from the Ranker…</span>
+                {!draft.rvp_user_id ? (
+                  <span className="text-ink-muted">Select an RVP above to auto-pull their last-4-week baseline.</span>
+                ) : seriesQ.isFetching ? (
+                  <span className="text-ink-muted">Pulling the last 4 weeks from the Ranker…</span>
                 ) : liveBaseline != null ? (
                   <span className="text-ink-muted">
                     Last-4-week Ranker baseline <span className="font-semibold text-heading">{fmtMetricValue(metric, liveBaseline)}</span>
@@ -512,7 +516,7 @@ function CommitmentModal({
                     )}
                   </span>
                 ) : (
-                  <span className="text-ink-muted">No ranking runs for these weeks yet — enter the baseline manually.</span>
+                  <span className="text-ink-muted">No matching Ranker data for this RVP yet — enter the baseline manually.</span>
                 )}
               </div>
               {gapLabel && (

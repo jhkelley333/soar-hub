@@ -15,6 +15,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { fiscalForDate, periodWeekEnds } from "./_lib/fiscal.js";
+import { resolveOrg } from "./_lib/kpiOrg.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
@@ -38,10 +39,33 @@ const scaleMetric = (key, raw) => {
   return round2(PCT_KEYS.has(key) ? v * 100 : v);
 };
 
-// The RVP-tier ranking rows are keyed by the leader's display name
-// (resolveOrg nameOf = preferred_name || full_name || email). Recompute it from
-// a profile so a commitment's rvp_user_id maps to its ranking_rows entity_key.
-const rvpEntityName = (p) => (p ? p.preferred_name || p.full_name || p.email || null : null);
+// The RVP-tier ranking rows are keyed by the leader's display name. Match is
+// fuzzy on normalized names (case + whitespace) because the engine's entity_key
+// comes from resolveOrg, which may format the name differently than the raw
+// profile fields.
+const normName = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+// Every name a commitment's RVP might appear under in ranking_rows.entity_key.
+// The authoritative one is resolveOrg's region → rvpName (exactly how the
+// ranking engine keys the row); the raw profile fields are added as fallbacks.
+// Resolving through the RVP's own visible stores makes an admin/owner testing
+// on behalf of a specific RVP resolve to THAT RVP's region, not everything.
+async function candidateEntityNames(supa, profile) {
+  const cands = new Set();
+  if (!profile) return [];
+  for (const v of [profile.preferred_name, profile.full_name, profile.email]) if (v) cands.add(String(v));
+  try {
+    const { data: visibleIds } = await supa.rpc("user_visible_stores", { uid: profile.id });
+    const ids = (visibleIds ?? []).map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null)).filter(Boolean);
+    if (ids.length) {
+      const { data: stores } = await supa.from("stores").select("number").in("id", ids);
+      const numbers = (stores || []).map((s) => String(s.number));
+      const orgMap = await resolveOrg(supa, numbers);
+      for (const n of numbers) { const nm = orgMap.get(n)?.rvpName; if (nm) cands.add(String(nm)); }
+    }
+  } catch { /* rpc / resolveOrg unavailable — fall back to profile-name candidates */ }
+  return [...cands];
+}
 
 // The last `n` distinct week-ending Sundays that have a complete ranking run,
 // newest first. This is the trailing "last 4 weeks" of real data — always
@@ -59,19 +83,21 @@ async function lastCompletedWeekEnds(supa, n = 4) {
   return out;
 }
 
-// For a fiscal period + a set of RVP entity names, read the pre-aggregated
-// rvp-tier ranking rows and return, per name, the baseline (average of the last
-// 4 completed weeks of real data) and the per-week series across the period.
-// Weeks with no complete run yet are present with value null (pending). Reads
-// scope 'wtd' — each week's isolated number, exactly what the Comms Board shows.
-async function metricSeriesByName(supa, metricKey, period, names) {
-  const nameList = [...names].filter(Boolean);
+// For a fiscal period + a map of logicalKey → candidate RVP names, read the
+// pre-aggregated rvp-tier ranking rows and return, per logical key, the baseline
+// (average of the last 4 completed weeks of real data) and the per-week series
+// across the period. Weeks with no complete run yet are present with value null
+// (pending). Reads scope 'wtd' — each week's isolated number, like the Comms
+// Board. Entity matching is normalized (case + whitespace) across all of a
+// key's candidate names, so a Ranker name formatted differently than the raw
+// profile still matches.
+async function metricSeriesForEntities(supa, metricKey, period, entities) {
   const baseWeekEnds = await lastCompletedWeekEnds(supa, 4);
   const trackWeekEnds = periodWeekEnds(period);
   const allWeekEnds = [...new Set([...baseWeekEnds, ...trackWeekEnds])];
   const out = new Map();
-  for (const n of nameList) out.set(n, { baseline: null, weeks: trackWeekEnds.map((we) => weekStub(we)) });
-  if (!metricKey || !allWeekEnds.length || !nameList.length) return out;
+  for (const k of entities.keys()) out.set(k, { baseline: null, weeks: trackWeekEnds.map((we) => weekStub(we)) });
+  if (!metricKey || !allWeekEnds.length || !entities.size) return out;
 
   const { data: runs } = await supa.from("ranking_runs")
     .select("id, week_ending, started_at").eq("status", "complete")
@@ -84,20 +110,26 @@ async function metricSeriesByName(supa, metricKey, period, names) {
 
   const { data: rows } = await supa.from("ranking_rows")
     .select("run_id, entity_key, metrics").in("run_id", runIds)
-    .eq("scope", "wtd").eq("tier", "rvp").in("entity_key", nameList);
-  // name -> (week_ending -> scaled value)
-  const byName = new Map();
+    .eq("scope", "wtd").eq("tier", "rvp");
+  // normalized entity_key -> (week_ending -> scaled value)
+  const byNorm = new Map();
   for (const r of rows || []) {
     const val = scaleMetric(metricKey, r.metrics?.[metricKey]);
     if (val == null) continue;
+    const key = normName(r.entity_key);
     const we = weekByRun.get(r.run_id);
-    (byName.get(r.entity_key) || byName.set(r.entity_key, new Map()).get(r.entity_key)).set(we, val);
+    (byNorm.get(key) || byNorm.set(key, new Map()).get(key)).set(we, val);
   }
-  for (const name of nameList) {
-    const wk = byName.get(name) || new Map();
+  for (const [logical, cands] of entities) {
+    const wk = new Map(); // week_ending -> value, first matching candidate wins per week
+    for (const c of cands || []) {
+      const m = byNorm.get(normName(c));
+      if (!m) continue;
+      for (const [we, v] of m) if (!wk.has(we)) wk.set(we, v);
+    }
     const baseVals = baseWeekEnds.map((we) => wk.get(we)).filter((v) => v != null);
     const baseline = baseVals.length ? round2(baseVals.reduce((a, b) => a + b, 0) / baseVals.length) : null;
-    out.set(name, {
+    out.set(logical, {
       baseline,
       weeks: trackWeekEnds.map((we) => weekStub(we, wk.has(we) ? wk.get(we) : null)),
     });
@@ -230,21 +262,24 @@ export const handler = async (event) => {
         .map((c) => ({ ...c, rvp_name: profById[c.rvp_user_id]?.full_name || null }));
 
       // Attach live 4-week baseline + per-week movement series for metric-anchored
-      // commitments. Group by metric so each metric's ranking rows load once.
-      const entityByCommit = new Map();
-      const byMetric = new Map(); // metric_key -> Set(entity name)
+      // commitments. Resolve each RVP's candidate ranking names once, then group
+      // by metric so each metric's ranking rows load a single time.
+      const candsByUser = new Map();
+      for (const uid of [...new Set(withHist.map((c) => c.rvp_user_id))]) {
+        candsByUser.set(uid, await candidateEntityNames(supa, profById[uid] || { id: uid }));
+      }
+      const byMetric = new Map(); // metric_key -> Map(rvp_user_id -> candidate names)
       for (const c of withHist) {
-        const entity = rvpEntityName(profById[c.rvp_user_id]);
-        entityByCommit.set(c.id, entity);
-        if (c.metric_key && entity) (byMetric.get(c.metric_key) || byMetric.set(c.metric_key, new Set()).get(c.metric_key)).add(entity);
+        if (!c.metric_key) continue;
+        const m = byMetric.get(c.metric_key) || byMetric.set(c.metric_key, new Map()).get(c.metric_key);
+        if (!m.has(c.rvp_user_id)) m.set(c.rvp_user_id, candsByUser.get(c.rvp_user_id) || []);
       }
       const seriesByMetric = new Map();
-      for (const [mk, nameset] of byMetric) seriesByMetric.set(mk, await metricSeriesByName(supa, mk, period, nameset));
-      const commitments = withHist.map((c) => {
-        const entity = entityByCommit.get(c.id);
-        const s = c.metric_key && entity ? seriesByMetric.get(c.metric_key)?.get(entity) : null;
-        return { ...c, series: s || null };
-      });
+      for (const [mk, ents] of byMetric) seriesByMetric.set(mk, await metricSeriesForEntities(supa, mk, period, ents));
+      const commitments = withHist.map((c) => ({
+        ...c,
+        series: c.metric_key ? (seriesByMetric.get(c.metric_key)?.get(c.rvp_user_id) || null) : null,
+      }));
 
       // Leadership gets the RVP roster to attribute new commitments; an RVP is
       // implicitly themselves.
@@ -273,8 +308,8 @@ export const handler = async (event) => {
       }
       const { data: prof } = await supa.from("profiles").select("id, full_name, preferred_name, email").eq("id", targetId).maybeSingle();
       if (!prof) return respond(400, { error: "rvp_user_id does not match a profile." });
-      const entity = rvpEntityName(prof);
-      const series = (await metricSeriesByName(supa, metricKey, period, new Set([entity]))).get(entity)
+      const cands = await candidateEntityNames(supa, prof);
+      const series = (await metricSeriesForEntities(supa, metricKey, period, new Map([[prof.id, cands]]))).get(prof.id)
         || { baseline: null, weeks: [] };
       return respond(200, { ok: true, metric_key: metricKey, period, rvp_name: prof.full_name || null, ...series });
     }
