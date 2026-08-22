@@ -69,7 +69,7 @@ export const NAV: NavItem[] = [
   // Culture Index — the trait framework + all 21 pattern definitions. The
   // reference behind every trait chip on the roster and in accounts; the base
   // the coaching/analytics views build on.
-  { to: "/culture-index", label: "Culture Index", icon: Fingerprint, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/culture-index", label: "Intelligence Trait", icon: Fingerprint, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Team Playbook — AI coaching on how to lead your team, grounded in each
   // person's Culture Index profile. DO and above (they have a downline to lead).
   { to: "/culture-index/playbook", label: "Team Playbook", icon: Sparkles, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
@@ -175,6 +175,20 @@ export const NAV: NavItem[] = [
   { to: "/account",     label: "Account",     icon: UserCircle,      roles: null },
 ];
 
+// Tools that live in the System Settings hub. Roles that can open the hub
+// (vp/coo/admin) reach these there, not as sidebar rows — keeping the sidebar
+// uncluttered. Lower roles that can't open the hub keep their sidebar entry.
+const HUB_TOOLS = new Set<string>([
+  "/culture-index",
+  "/culture-index/playbook",
+  "/culture-index/overview",
+  "/admin/metrics-board",
+  "/admin/hours-of-operation",
+  "/qsr",
+  "/admin/paf-config",
+]);
+const HUB_ROLES: UserRole[] = ["vp", "coo", "admin"];
+
 export function visibleNav(
   role: UserRole | undefined,
   flags: Record<string, boolean> = {},
@@ -184,7 +198,10 @@ export function visibleNav(
 ): NavItem[] {
   if (!role) return [];
   return NAV.filter((item) => {
-    if (role === "admin") return true; // admin always sees everything
+    // Hub tools are hidden from the sidebar for hub-capable roles — they open
+    // them from System Settings instead. Applies before the admin catch-all.
+    if (HUB_ROLES.includes(role) && HUB_TOOLS.has(item.to)) return false;
+    if (role === "admin") return true; // admin always sees everything else
     const ov = overrides[item.to]?.[role];
     if (ov !== undefined) return ov;
     if (!item.roles) return true;

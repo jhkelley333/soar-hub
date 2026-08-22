@@ -8,7 +8,7 @@ import {
   ArrowRight, Network, Users, MapPin, KeyRound, Globe, Flag, QrCode, Link2,
   CloudSun, BarChart3, LayoutGrid, Gauge, ScrollText, Layers, Upload,
   Settings, ClipboardCheck, ListChecks, BookMarked, Clock, TrendingDown, Building2,
-  Fingerprint, Send, Info, MapPinned, type LucideIcon,
+  Fingerprint, Send, Info, MapPinned, Sparkles, GraduationCap, type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -37,6 +37,15 @@ const GROUPS: Group[] = [
       { title: "Hours of Operation", desc: "Standard + special hours, Google compare, and discrepancy reconciliation.", icon: Clock, roles: ["sdo", "rvp", "vp", "coo", "admin"], to: "/admin/hours-of-operation" },
       { title: "Territory Map", desc: "Every store plotted on the map, pin color keyed to its DO.", icon: MapPinned, roles: ["vp", "coo", "admin"], to: "/territory-map" },
       { title: "Org Alignment", desc: "Stage a market realignment — new regions/areas/districts + store moves — and schedule it to go live on a date.", icon: Network, roles: ["admin"], to: "/admin/org-alignment" },
+    ],
+  },
+  {
+    title: "Intelligence Trait & Learning",
+    tools: [
+      { title: "Intelligence Trait", desc: "The trait framework and all 21 patterns — adapted from Culture Index.", icon: Fingerprint, roles: ["vp", "coo", "admin"], to: "/culture-index" },
+      { title: "Team Playbook", desc: "AI coaching on leading your team, grounded in each person's traits.", icon: Sparkles, roles: ["vp", "coo", "admin"], to: "/culture-index/playbook" },
+      { title: "Trait Analytics", desc: "Org-wide trait × performance × store-stability analytics.", icon: BarChart3, roles: ["vp", "coo", "admin"], to: "/culture-index/overview" },
+      { title: "Soar MyLearning", desc: "The SOAR QSR learning platform.", icon: GraduationCap, roles: ["admin"], to: "/qsr" },
     ],
   },
   {
