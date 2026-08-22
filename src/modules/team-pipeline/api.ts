@@ -34,6 +34,10 @@ export function fetchSuccession(): Promise<SuccessionResponse> {
 export function fetchGms(): Promise<GmsResponse> {
   return request<GmsResponse>(`${FN}?action=gms`);
 }
+export function fetchScopeRoster(): Promise<{ roster: TeamMember[]; can_write: boolean }> {
+  return request(`${FN}?action=scope-roster`);
+}
+
 export function fetchStoreRoster(storeId: string): Promise<StoreRosterResponse> {
   return request<StoreRosterResponse>(`${FN}?action=store-roster&store_id=${encodeURIComponent(storeId)}`);
 }

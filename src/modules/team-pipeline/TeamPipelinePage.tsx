@@ -18,7 +18,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, fetchRiskReview, fetchDevRollup, fetchReadinessRollup, fetchTenureRollup, fetchTalentExport, fetchMonthlyReview, markReviewed, takeSnapshot, lockSnapshot, reconcileRoster, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings, addMember, searchMembers, type MemberSearchHit } from "./api";
+import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchScopeRoster, fetchSnapshots, fetchSnapshotRows, fetchRiskReview, fetchDevRollup, fetchReadinessRollup, fetchTenureRollup, fetchTalentExport, fetchMonthlyReview, markReviewed, takeSnapshot, lockSnapshot, reconcileRoster, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings, addMember, searchMembers, type MemberSearchHit } from "./api";
 import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
 import { RosterImport } from "./RosterImport";
 import { toCSV, downloadCSV } from "@/lib/csv";
@@ -1384,10 +1384,12 @@ function BenchRow({ store, gm, onOpen }: { store: MyStoreNode; gm: TeamMember | 
   );
 }
 
-function Avatar({ name, risk }: { name: string; risk: TeamMember["flight_risk"] }) {
+function Avatar({ name, risk, onColor }: { name: string; risk: TeamMember["flight_risk"]; onColor?: boolean }) {
   const initials = name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   const ring = { immediate: "ring-red-400", medium: "ring-amber-400", low: "ring-emerald-400", na: "ring-zinc-300" }[risk];
-  return <span className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent/10 text-[11px] font-bold text-accent ring-2", ring)}>{initials}</span>;
+  // onColor: sitting on a colored 9-box cell — white initials so they don't
+  // bleed into the accent-tinted background.
+  return <span className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-full text-[11px] font-bold ring-2", onColor ? "bg-white/25 text-white" : "bg-accent/10 text-accent", ring)}>{initials}</span>;
 }
 
 function RiskPill({ risk }: { risk: TeamMember["flight_risk"] }) {
@@ -1825,12 +1827,32 @@ const MOVE_META: Record<Exclude<MoveKind, "same" | "new">, { badge: string; cls:
 
 function NineBox({ roster, storeId }: { roster: TeamMember[]; storeId: string }) {
   const { open } = useMemberDrawer();
-  const rated = roster.filter((m) => m.perf != null && m.potential != null);
+  const { profile } = useAuth();
+  const isDoPlus = ["do", "sdo", "rvp", "vp", "coo", "admin"].includes(String(profile?.role));
+
+  // DO+ can plot everyone in their scope, not just this store.
+  const [mode, setMode] = useState<"store" | "scope">("store");
+  const scopeQ = useQuery({ queryKey: ["tp-scope-roster"], queryFn: fetchScopeRoster, enabled: mode === "scope", staleTime: 60_000 });
+  const effRoster = mode === "scope" ? (scopeQ.data?.roster ?? []) : roster;
+
+  // Role filter — hide/show by role (most useful in the aggregate view).
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const presentRoles = useMemo(() => LADDER.map((r) => r.key).filter((k) => effRoster.some((m) => m.role === k)), [effRoster]);
+  const toggleRole = (k: string) => setHidden((h) => { const n = new Set(h); n.has(k) ? n.delete(k) : n.add(k); return n; });
+
+  // Click an avatar to reveal who it is (name/role/store) without committing to
+  // the full card; the strip has a "View card" to open it.
+  const [sel, setSel] = useState<TeamMember | null>(null);
+
+  const shown = effRoster.filter((m) => !hidden.has(m.role));
+  const rated = shown.filter((m) => m.perf != null && m.potential != null);
   const cellOf = (col: number, row: number) => rated.filter((m) => perfCol(m.perf!) === col && potRow(m.potential!) === row);
-  const unrated = roster.length - rated.length;
+  const unrated = shown.length - rated.length;
 
   // Calibration compare: overlay each member's movement since a prior snapshot.
-  const [compare, setCompare] = useState<string>("");
+  // Snapshots are per-store, so compare only applies in single-store mode.
+  const [compareRaw, setCompare] = useState<string>("");
+  const compare = mode === "store" ? compareRaw : "";
   const rowsQ = useQuery({
     queryKey: ["tp-snapshot-rows", compare, storeId],
     queryFn: () => fetchSnapshotRows(compare, storeId),
@@ -1859,10 +1881,43 @@ function NineBox({ roster, storeId }: { roster: TeamMember[]; storeId: string })
         The <strong className="text-ink-2">Sonic 9-Box</strong> calibrates team members on two dimensions —{" "}
         <strong className="text-ink-2">performance</strong> (→) and <strong className="text-ink-2">potential</strong> (↓) — to
         spot future leaders, recognize top performers, and target coaching where it lands hardest. Each person sits in a box
-        by their rating; tap an avatar to open their card.
+        by their rating; tap an avatar to see who it is, then open their card.
       </p>
 
-      <CalibrationBar compare={compare} onCompare={setCompare} movers={movers} />
+      {/* View scope (DO+) + role filter */}
+      <div className="flex flex-wrap items-center gap-2">
+        {isDoPlus && (
+          <div className="inline-flex overflow-hidden rounded-lg border border-border text-xs font-semibold">
+            <button onClick={() => setMode("store")} className={cn("px-3 py-1.5", mode === "store" ? "bg-accent text-white" : "bg-surface text-ink-muted hover:bg-surface-muted")}>This store</button>
+            <button onClick={() => { setMode("scope"); setCompare(""); setSel(null); }} className={cn("border-l border-border px-3 py-1.5", mode === "scope" ? "bg-accent text-white" : "bg-surface text-ink-muted hover:bg-surface-muted")}>My scope</button>
+          </div>
+        )}
+        {presentRoles.length > 1 && (
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Roles</span>
+            {presentRoles.map((k) => {
+              const on = !hidden.has(k);
+              return <button key={k} onClick={() => toggleRole(k)} className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset transition", on ? "bg-accent/10 text-accent ring-accent/30" : "bg-surface text-ink-subtle line-through ring-border")}>{LADDER_BY_KEY[k]?.abbr ?? k}</button>;
+            })}
+            {hidden.size > 0 && <button onClick={() => setHidden(new Set())} className="rounded-full px-2 py-1 text-[11px] font-semibold text-ink-muted hover:text-heading">Show all</button>}
+          </div>
+        )}
+      </div>
+
+      {mode === "scope" && scopeQ.isLoading && <p className="text-xs text-ink-muted">Loading everyone in your scope…</p>}
+
+      {mode === "store" && <CalibrationBar compare={compareRaw} onCompare={setCompare} movers={movers} />}
+
+      {sel && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-sm">
+          <Avatar name={sel.full_name} risk={sel.flight_risk} />
+          <span className="font-semibold text-heading">{sel.full_name}</span>
+          <span className="text-ink-muted">{LADDER_BY_KEY[sel.role]?.label ?? sel.role}</span>
+          {sel.store_number && <span className="text-ink-subtle">· Store #{sel.store_number}{sel.store_name ? ` ${sel.store_name}` : ""}</span>}
+          <button onClick={() => open(sel)} className="ml-auto rounded-md px-2.5 py-1 text-xs font-semibold text-accent ring-1 ring-accent/30 hover:bg-accent/10">View card →</button>
+          <span className="text-lg leading-none"><X onClick={() => setSel(null)} /></span>
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         <div className="flex min-w-[720px] gap-2">
@@ -1902,9 +1957,9 @@ function NineBox({ roster, storeId }: { roster: TeamMember[]; storeId: string })
                           const badgeCls = mv === "new" ? "bg-blue-600 text-white" : mv === "same" ? "" : MOVE_META[mv].cls;
                           const mvTitle = mv === "new" ? " · new since " + compare : mv === "same" ? "" : ` · moved ${mv} since ${compare}`;
                           return (
-                            <button key={m.id} onClick={() => open(m)} title={`${m.full_name} · ${LADDER_BY_KEY[m.role]?.abbr}${mvTitle}`}
-                              className="relative rounded-full ring-2 ring-white/70 transition hover:ring-white">
-                              <Avatar name={m.full_name} risk={m.flight_risk} />
+                            <button key={m.id} onClick={() => setSel(m)} title={`${m.full_name} · ${LADDER_BY_KEY[m.role]?.abbr}${mvTitle}`}
+                              className={cn("relative rounded-full ring-2 transition", sel?.id === m.id ? "ring-yellow-300" : "ring-white/70 hover:ring-white")}>
+                              <Avatar name={m.full_name} risk={m.flight_risk} onColor />
                               {badge && (
                                 <span className={cn("absolute -right-1 -top-1 grid h-3.5 w-3.5 place-items-center rounded-full text-[8px] font-bold leading-none ring-1 ring-white", badgeCls)}>{badge}</span>
                               )}
