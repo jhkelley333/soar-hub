@@ -69,6 +69,45 @@ export function fetchGmLeaders(): Promise<{ ok: true; rows: LeaderRow[] }> {
   return req(`${FN}?action=leaders`);
 }
 
+// ── Full org contacts export (Location Contacts by Level workbook) ───────────
+export interface LeaderContact {
+  name: string | null;
+  first: string;
+  last: string;
+  phone: string | null;
+  email: string | null;
+}
+export interface ContactsExportStore {
+  number: string;
+  name: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  email: string | null;
+  phone: string | null;
+  region: string | null;
+  area: string | null;
+  district: string | null;
+  do: LeaderContact;
+  sdo: LeaderContact;
+  rvp: LeaderContact;
+  gm: {
+    name: string | null; first: string; last: string;
+    cell: string | null; birthday: string | null; email: string | null;
+    hire_date: string | null; placement_date: string | null; status: string | null;
+  };
+}
+export interface ContactsExportResponse {
+  ok: true;
+  stores: ContactsExportStore[];
+  leaders: { role: string; name: string | null; first: string; last: string; phone: string | null; email: string | null }[];
+  presidents: string[];
+}
+export function fetchContactsExport(): Promise<ContactsExportResponse> {
+  return req(`${FN}?action=contacts-export`);
+}
+
 // Edit one store's roster GM name. "Open" / "In Training" (or blank) set the
 // matching status, mirroring the importer.
 export function setGmRosterName(storeNumber: string, gmName: string): Promise<{ ok: true; store_number: string; gm_name: string | null; status: string }> {

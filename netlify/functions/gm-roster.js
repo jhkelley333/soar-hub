@@ -434,6 +434,92 @@ async function rosterHistory(supa, user, params) {
   return { store_number: num, entries: data || [] };
 }
 
+// Split a full name into { first, last } — first token is the first name, the
+// rest is the last (so "Mary Anne Smith" → first "Mary", last "Anne Smith").
+const splitName = (full) => {
+  const t = String(full || "").trim().split(/\s+/).filter(Boolean);
+  if (!t.length) return { first: "", last: "" };
+  if (t.length === 1) return { first: t[0], last: "" };
+  return { first: t[0], last: t.slice(1).join(" ") };
+};
+
+// Full org contacts payload for the "Location Contacts by Level" workbook export
+// (Org Admin). One normalized record per active Sonic store — store fields +
+// resolved DO/SDO/RVP (with contact info) + GM roster detail — plus a leadership
+// roster. Org-wide roles only; this is the whole company. Reuses resolveOrg so
+// the DO/SDO/RVP names line up with everything else in the app.
+async function contactsExport(supa, user) {
+  const role = String(user.role).toLowerCase();
+  if (!ORG_WIDE.has(role)) return { error: "forbidden", status: 403 };
+
+  const { data: stores } = await supa.from("stores")
+    .select("id, number, name, address, city, state, zip, email, phone, district_id")
+    .or("brand.eq.sonic,brand.is.null").eq("is_active", true).order("number");
+  const numbers = (stores || []).map((s) => String(s.number));
+
+  const [orgMap, rosterRes, gmByStore, leaderRes] = await Promise.all([
+    resolveOrg(supa, numbers),
+    supa.from("gm_roster").select("*"),
+    gmAccountsByStore(supa, (stores || []).map((s) => s.id)),
+    supa.from("profiles")
+      .select("id, full_name, preferred_name, email, phone, role, birthday, show_birthday")
+      .in("role", ["do", "sdo", "rvp", "vp", "coo", "admin"]).eq("is_active", true),
+  ]);
+  const rosterByNum = new Map((rosterRes.data || []).map((r) => [String(r.store_number), r]));
+  const leaderProfs = leaderRes.data || [];
+
+  // Normalized name → contact. resolveOrg emits preferred_name||full_name, so key
+  // on both; first writer wins (a real match beats a later collision).
+  const contactByName = new Map();
+  const addContact = (key, c) => { const k = normName(key); if (k && !contactByName.has(k)) contactByName.set(k, c); };
+  for (const p of leaderProfs) {
+    const dn = displayName(p);
+    const c = { name: dn, phone: p.phone || null, email: p.email || null, ...splitName(dn) };
+    addContact(dn, c);
+    addContact(p.full_name, c);
+  }
+  const lookup = (name) => contactByName.get(normName(name)) || { name: name || null, first: "", last: "", phone: null, email: null };
+
+  const storesOut = (stores || []).map((s) => {
+    const num = String(s.number);
+    const org = orgMap.get(num) || {};
+    const roster = rosterByNum.get(num) || {};
+    const acct = gmByStore.get(s.id) || null;
+    const gmName = roster.gm_name || org.gmName || (acct ? (acct.full_name || acct.preferred_name) : null);
+    const gm = splitName(gmName);
+    const doC = lookup(org.doName), sdoC = lookup(org.sdoName), rvpC = lookup(org.rvpName);
+    return {
+      number: num, name: s.name || org.store || null,
+      address: s.address || null, city: s.city || null, state: s.state || null, zip: s.zip || null,
+      email: s.email || `sonic${num}@inspirepartners.net`, phone: s.phone || null,
+      region: org.region || null, area: org.area || null, district: org.district || null,
+      do: { name: org.doName || null, first: doC.first, last: doC.last, phone: doC.phone, email: doC.email },
+      sdo: { name: org.sdoName || null, first: sdoC.first, last: sdoC.last, phone: sdoC.phone, email: sdoC.email },
+      rvp: { name: org.rvpName || null, first: rvpC.first, last: rvpC.last, phone: rvpC.phone, email: rvpC.email },
+      gm: {
+        name: gmName || null, first: gm.first, last: gm.last,
+        cell: roster.gm_cell || acct?.phone || null,
+        birthday: roster.gm_birthday || null,
+        email: roster.gm_email || acct?.email || null,
+        hire_date: roster.hire_date || null, placement_date: roster.placement_date || null,
+        status: roster.status || (gmName ? "named" : null),
+      },
+    };
+  });
+
+  const leaders = leaderProfs
+    .filter((p) => ["do", "sdo", "rvp"].includes(String(p.role).toLowerCase()))
+    .map((p) => ({ role: String(p.role).toUpperCase(), name: displayName(p), ...splitName(displayName(p)), phone: p.phone || null, email: p.email || null }))
+    .sort((a, b) => (LEADER_RANK[a.role.toLowerCase()] - LEADER_RANK[b.role.toLowerCase()]) || String(a.name || "").localeCompare(String(b.name || "")));
+
+  // Executive (president-tier) emails for the flash-report distribution list.
+  const presidents = leaderProfs
+    .filter((p) => ["vp", "coo", "admin"].includes(String(p.role).toLowerCase()) && p.email)
+    .map((p) => p.email);
+
+  return { stores: storesOut, leaders, presidents };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let supa;
@@ -448,6 +534,7 @@ export const handler = async (event) => {
   try {
     if (event.httpMethod === "GET" && action === "list") return unwrap(await listRoster(supa, user));
     if (event.httpMethod === "GET" && action === "leaders") return unwrap(await listLeaders(supa, user));
+    if (event.httpMethod === "GET" && action === "contacts-export") return unwrap(await contactsExport(supa, user));
     if (event.httpMethod === "GET" && action === "history") return unwrap(await rosterHistory(supa, user, params));
     if (event.httpMethod === "POST" && action === "import") {
       const body = event.body ? JSON.parse(event.body) : {};
