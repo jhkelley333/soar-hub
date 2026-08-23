@@ -345,10 +345,24 @@ function exportFullCsv(tree: OrgTreeResponse | null) {
 export function OrgPage() {
   const { profile } = useAuth();
   const isAdmin = profile?.role === "admin";
+  const orgToast = useToast();
 
   const query = useQuery({
     queryKey: ["org-tree"],
     queryFn: fetchOrgTree,
+  });
+
+  // Location Contacts by Level workbook — fetch the full contacts payload and
+  // build the multi-sheet .xlsx client-side (exceljs is lazy-loaded).
+  const contactsExport = useMutation({
+    mutationFn: async () => {
+      const [{ fetchContactsExport }, { downloadContactsWorkbook }] = await Promise.all([
+        import("./gmRosterApi"),
+        import("./orgContactsWorkbook"),
+      ]);
+      await downloadContactsWorkbook(await fetchContactsExport());
+    },
+    onError: (e: unknown) => orgToast.push(e instanceof Error ? e.message : "Export failed.", "error"),
   });
 
   const [expanded, setExpanded] = useState<ExpandedSet>(new Set());
@@ -521,6 +535,17 @@ export function OrgPage() {
               <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
               Org chart PDF
             </Button>
+            {isAdmin && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => contactsExport.mutate()}
+                disabled={contactsExport.isPending}
+              >
+                <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+                {contactsExport.isPending ? "Building…" : "Contacts workbook"}
+              </Button>
+            )}
             <button
               type="button"
               onClick={expandAll}
