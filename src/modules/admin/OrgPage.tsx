@@ -365,6 +365,15 @@ export function OrgPage() {
     onError: (e: unknown) => orgToast.push(e instanceof Error ? e.message : "Export failed.", "error"),
   });
 
+  // Auto-generated org-chart workbook, built from the loaded org tree.
+  const orgChartExport = useMutation({
+    mutationFn: async (tree: OrgTreeResponse) => {
+      const { downloadOrgChartWorkbook } = await import("./orgChartWorkbook");
+      await downloadOrgChartWorkbook(tree);
+    },
+    onError: (e: unknown) => orgToast.push(e instanceof Error ? e.message : "Export failed.", "error"),
+  });
+
   const [expanded, setExpanded] = useState<ExpandedSet>(new Set());
   const [showInactive, setShowInactive] = useState(false);
   const [search, setSearch] = useState("");
@@ -546,6 +555,15 @@ export function OrgPage() {
                 {contactsExport.isPending ? "Building…" : "Contacts workbook"}
               </Button>
             )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => data && orgChartExport.mutate(data)}
+              disabled={!data || data.regions.length === 0 || orgChartExport.isPending}
+            >
+              <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+              {orgChartExport.isPending ? "Building…" : "Org chart (Excel)"}
+            </Button>
             <button
               type="button"
               onClick={expandAll}
