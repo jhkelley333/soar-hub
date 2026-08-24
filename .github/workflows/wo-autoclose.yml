@@ -1,0 +1,57 @@
+# Work Orders auto-close — external trigger for the wo-autoclose-sweep function.
+#
+# Closes any non-terminal work order that has had no activity for 30 days and
+# emails that store's DO / SDO / RVP a summary. Netlify's native scheduled-
+# function trigger has been unreliable in this project, so GitHub's scheduler
+# drives it instead (reliable, with a visible run history in the Actions tab).
+#
+# It just pings the (unauthenticated, idempotent) wo-autoclose-sweep function.
+# The function gates to 07:00 America/Chicago and excludes already-closed /
+# cancelled tickets, so firing more than once a day is cheap and safe.
+#
+# SETUP:
+#   - Nothing required beyond merging this to the default branch with Actions
+#     enabled. Defaults to https://mysoarhub.com.
+#   - Optional: set a SITE_URL repo secret to override the target domain.
+#   - Scheduled workflows only run from the default branch.
+#
+# Verify: run it on demand here ("Run workflow") with the function's ?dry=1 to
+# preview, or check the Actions run history / the response body.
+
+name: Work Orders auto-close
+
+on:
+  schedule:
+    # 12:00 and 13:00 UTC daily; the function proceeds only at 07:00 Central
+    # (covers both CST and CDT).
+    - cron: "0 12,13 * * *"
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+# Don't pile up overlapping runs.
+concurrency:
+  group: wo-autoclose
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Ping wo-autoclose-sweep
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          set -euo pipefail
+          base="${SITE_URL:-https://mysoarhub.com}"
+          base="${base%/}"
+          url="${base}/.netlify/functions/wo-autoclose-sweep"
+          echo "Pinging ${url}"
+          code=$(curl -fsS --max-time 300 -o /tmp/wo-autoclose.json -w "%{http_code}" "${url}" || true)
+          echo "HTTP ${code}"
+          echo "--- response ---"
+          cat /tmp/wo-autoclose.json 2>/dev/null || echo "(no body)"
+          echo
+          case "${code}" in
+            2*) echo "OK" ;;
+            *) echo "::error::wo-autoclose-sweep returned HTTP ${code}"; exit 1 ;;
+          esac
