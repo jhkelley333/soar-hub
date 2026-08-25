@@ -1200,6 +1200,11 @@ async function rvpCommitments(supa, user) {
     const cogsLatest = rvpName ? cogs.latest.get(String(rvpName)) : null;
     const laborSeries = (field) => trackWeekEnds.map((we) => ({ weekEnd: we, value: laborWk.get(region)?.get(we)?.[field] ?? null }));
     const cogsSeries = () => trackWeekEnds.map((we) => ({ weekEnd: we, value: (rvpName ? cogsWk.get(String(rvpName))?.get(we) : null) ?? null }));
+    // The trailing weeks that make up the 4-week actual, oldest -> newest, so the
+    // download can show week-to-week performance.
+    const recentAsc = [...recentWeekEnds].sort();
+    const laborRecent = (field) => recentAsc.map((we) => ({ weekEnd: we, value: laborWk.get(region)?.get(we)?.[field] ?? null }));
+    const cogsRecent = () => recentAsc.map((we) => ({ weekEnd: we, value: (rvpName ? cogsWk.get(String(rvpName))?.get(we) : null) ?? null }));
     const hidden = effectiveHidden(buckets, region);
     const tracked = new Set([...COMMIT_METRICS].filter((m) => !hidden.includes(m)));
     const actuals = {
@@ -1237,6 +1242,13 @@ async function rvpCommitments(supa, user) {
         labor_hours_over: laborSeries("hours_over"),
         labor_avs_pct: laborSeries("avs_pct"),
         cogs_efficiency: cogsSeries(),
+      },
+      // Trailing per-week values (last 4 completed weeks) for the download's
+      // week-to-week view.
+      recent: {
+        labor_hours_over: laborRecent("hours_over"),
+        labor_avs_pct: laborRecent("avs_pct"),
+        cogs_efficiency: cogsRecent(),
       },
       // Full opportunity to standard (labor over chart + food cost over target).
       dollars,

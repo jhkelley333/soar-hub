@@ -131,7 +131,8 @@ export interface RvpCommitmentRow {
   actuals: Record<CommitMetric, number | null>;    // live current-week (WTD / latest run)
   actual4wk: Record<CommitMetric, number | null>;  // average of the last 4 completed weeks
   baselines: Record<CommitMetric, number | null>;  // 4-week base (before the anchor)
-  weekly: Record<CommitMetric, RvpCommitWeek[]>;   // per tracked week
+  weekly: Record<CommitMetric, RvpCommitWeek[]>;   // per tracked week (forward window)
+  recent: Record<CommitMetric, RvpCommitWeek[]>;   // last 4 completed weeks, oldest→newest
   dollars: CommitDollars;                          // full opportunity to standard
   target_dollars: CommitDollars;                   // committed savings: base -> target, tracked buckets
   saved_dollars: CommitDollars;                    // realized: base -> current 4-wk actual
