@@ -440,6 +440,10 @@ function manageableRoles(role) {
     case "rvp":
       return [...HOURLY_STORE_ROLES, "gm", "do", "sdo"];
     case "sdo":
+      // SDOs oversee the districts (and their DOs) in their area, so they can
+      // add / assign a DO — scope validation still limits them to districts
+      // within their own reach.
+      return [...HOURLY_STORE_ROLES, "gm", "do"];
     case "do":
       return [...HOURLY_STORE_ROLES, "gm"];
     case "gm":
