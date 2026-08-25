@@ -4,7 +4,7 @@
 // average, target, on/off status, and the dollar impact (committed savings,
 // realized, and the cost of the gap to target). jsPDF, client-side.
 import { jsPDF } from "jspdf";
-import type { CommitMetric, RvpCommitmentsResponse } from "./api";
+import type { CommitMetric, RvpCommitmentsResponse, RvpCommitWeek } from "./api";
 
 type Dir = "up" | "down";
 interface MDef { label: string; unit: "h" | "%"; dir: Dir; group: string }
@@ -33,6 +33,33 @@ function track(actual: number | null, target: number | null, dir: Dir): Track {
   return (dir === "up" ? actual >= target : actual <= target) ? "on" : "off";
 }
 const TRACK_LABEL: Record<Track, string> = { on: "On track", off: "Off track", "no-target": "No target", "no-data": "No data" };
+
+// A compact week-to-week strip: each of the last completed weeks with its value,
+// colored green when the move vs the prior week is good for this metric, red when
+// worse, grey when flat / first. ASCII only (jsPDF-safe).
+function drawWeekStrip(doc: jsPDF, x: number, y: number, series: RvpCommitWeek[], m: MDef, rightEdge: number) {
+  doc.setFontSize(6.5); doc.setFont("helvetica", "normal"); doc.setTextColor(165, 165, 165);
+  doc.text("WK-TO-WK", x, y);
+  let cx = x + 18;
+  let prev: number | null = null;
+  for (const w of series) {
+    const wk = fmtWeek(w.weekEnd);
+    if (cx > rightEdge - 20) break; // don't overflow the page
+    doc.setFont("helvetica", "normal"); doc.setTextColor(160, 160, 160); doc.setFontSize(6.5);
+    doc.text(wk, cx, y);
+    cx += doc.getTextWidth(wk) + 1.4;
+    const valStr = fmtVal(w.value, m.unit);
+    let color: [number, number, number] = [90, 90, 90];
+    if (w.value != null && prev != null && w.value !== prev) {
+      const better = m.dir === "up" ? w.value > prev : w.value < prev;
+      color = better ? [22, 130, 60] : [197, 40, 40];
+    }
+    doc.setFont("helvetica", "bold"); doc.setTextColor(color[0], color[1], color[2]);
+    doc.text(valStr, cx, y);
+    cx += doc.getTextWidth(valStr) + 4;
+    if (w.value != null) prev = w.value;
+  }
+}
 
 export function exportRvpCommitmentsPdf(data: RvpCommitmentsResponse): void {
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "letter" });
@@ -81,7 +108,7 @@ export function exportRvpCommitmentsPdf(data: RvpCommitmentsResponse): void {
   const rows = data.rows.filter((r) => r.rvp_name && r.stores > 0);
   for (const row of rows) {
     const metrics = ORDER.filter((k) => !(row.hidden_metrics ?? []).includes(k));
-    const blockH = 12 + metrics.length * 8 + 16;
+    const blockH = 12 + metrics.length * 11 + 16;
     ensure(blockH);
 
     // RVP header
@@ -121,7 +148,9 @@ export function exportRvpCommitmentsPdf(data: RvpCommitmentsResponse): void {
       doc.text(fmtTarget(target, m), cols.target, y, { align: "right" });
       doc.setTextColor(st === "off" ? 197 : st === "on" ? 22 : 150, st === "off" ? 40 : st === "on" ? 130 : 150, st === "off" ? 40 : st === "on" ? 60 : 150);
       doc.text(TRACK_LABEL[st], cols.status, y, { align: "right" });
-      y += 7.5;
+      y += 5;
+      drawWeekStrip(doc, cols.metric + 2, y, row.recent?.[k] ?? [], m, pageW - M0);
+      y += 6;
     }
 
     // Financial impact line
