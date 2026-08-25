@@ -128,11 +128,14 @@ export interface RvpCommitmentRow {
   region: string;
   rvp_name: string | null;
   stores: number;
-  actuals: Record<CommitMetric, number | null>;
-  baselines: Record<CommitMetric, number | null>; // last-4-weeks average
+  actuals: Record<CommitMetric, number | null>;    // live current-week (WTD / latest run)
+  actual4wk: Record<CommitMetric, number | null>;  // average of the last 4 completed weeks
+  baselines: Record<CommitMetric, number | null>;  // 4-week base (before the anchor)
   weekly: Record<CommitMetric, RvpCommitWeek[]>;   // per tracked week
   dollars: CommitDollars;                          // full opportunity to standard
-  target_dollars: CommitDollars;                   // closing gap to THEIR target, tracked buckets only
+  target_dollars: CommitDollars;                   // committed savings: base -> target, tracked buckets
+  saved_dollars: CommitDollars;                    // realized: base -> current 4-wk actual
+  miss_dollars: CommitDollars;                     // cost of the gap: 4-wk actual -> target (>0 only when off track)
   hidden_metrics: CommitMetric[];                  // buckets hidden for THIS rvp
   cogs_week: string | null;
   targets: Record<CommitMetric, number | null>;
@@ -144,8 +147,11 @@ export interface RvpCommitmentsResponse {
   // 4-week base: anchor_week_end null = sliding; set = pinned to the 4 weeks
   // strictly before that reference week. options = selectable reference weeks.
   base: { anchor_week_end: string | null; week_ends: string[]; options: string[] };
+  recent_week_ends: string[];                       // the 4 completed weeks the Actual averages
   hidden_metrics: CommitMetric[];
-  totals: CommitDollars;
+  totals: CommitDollars;                            // committed savings (base -> target) across RVPs
+  saved_totals: { total_weekly: number | null; total_annual: number | null };
+  miss_totals: { total_weekly: number | null; total_annual: number | null };
   rows: RvpCommitmentRow[];
 }
 export function fetchRvpCommitments(): Promise<RvpCommitmentsResponse> {

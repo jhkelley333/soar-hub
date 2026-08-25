@@ -1067,30 +1067,31 @@ const effectiveHidden = (buckets, region) =>
 // derives from the Hours Over Chart bucket (AvS is a discipline lever, no separate
 // $, to avoid double-counting). COGS $ = annualized food cost x (1 - effBase/effTarget)
 // — works for any target, above or below the 96% standard.
-function targetDollars({ tracked, baselines, actuals, targets, dollars, ixActualFood, weekInPeriod }) {
+// Dollarize the improvement from `fromV` to `toV` per metric (positive only when
+// `toV` is BETTER than `fromV` — fewer hours over, higher COGS efficiency). The
+// rate is anchored to the live ACTUAL (dollars.* are the $ at the actual), so
+// this works for base->target (committed savings), base->actual (realized), and
+// actual->target (cost of the gap / miss). Annual terms; weekly = annual/52.
+function metricGapDollars(fromV, toV, { tracked, actuals, dollars, ixActualFood, weekInPeriod }) {
   let laborAnnual = 0;
   if (tracked.has("labor_hours_over")) {
-    // Value the BASE->target hour reduction at the current $/hour-over rate:
-    // dollars.labor_annual is the $ at the ACTUAL hours-over, so dividing by the
-    // actual isolates the wage x stores x 52 rate, which we apply to (base - T).
-    const B = baselines.labor_hours_over, A = actuals.labor_hours_over, T = targets.labor_hours_over;
-    if (B != null && T != null && B > T && A != null && A > 0 && dollars.labor_annual != null) {
-      laborAnnual = dollars.labor_annual * ((B - T) / A);
+    const F = fromV.labor_hours_over, T = toV.labor_hours_over, A = actuals.labor_hours_over;
+    if (F != null && T != null && F > T && A != null && A > 0 && dollars.labor_annual != null) {
+      laborAnnual = dollars.labor_annual * ((F - T) / A);
     }
   }
   let cogsAnnual = 0;
   if (tracked.has("cogs_efficiency")) {
-    const B = baselines.cogs_efficiency, A = actuals.cogs_efficiency, T = targets.cogs_efficiency; // percents
-    if (B != null && T != null && T > B) {
-      const effB = B / 100, effT = T / 100, effA = A != null ? A / 100 : null;
+    const F = fromV.cogs_efficiency, T = toV.cogs_efficiency, A = actuals.cogs_efficiency; // percents
+    if (F != null && T != null && T > F) {
+      const effF = F / 100, effT = T / 100, effA = A != null ? A / 100 : null;
       let annualFood = ixActualFood > 0 ? ixActualFood * (52 / Math.max(1, weekInPeriod)) : 0;
       // Fallback (below the 96% standard only): back out the food base from the
-      // Ranker's annualized fc-miss = annualFood x (1 - effActual/0.96) — this
-      // reconstruction is anchored to the ACTUAL, then the base->target gap applies.
+      // Ranker's annualized fc-miss = annualFood x (1 - effActual/0.96).
       if (!(annualFood > 0) && dollars.cogs_annual > 0 && effA != null && effA < 0.96) {
         annualFood = dollars.cogs_annual / (1 - effA / 0.96);
       }
-      if (annualFood > 0) cogsAnnual = Math.max(0, annualFood * (1 - effB / effT));
+      if (annualFood > 0) cogsAnnual = Math.max(0, annualFood * (1 - effF / effT));
     }
   }
   const r = (v) => (isFinite(v) ? Math.round(v) : null);
@@ -1099,6 +1100,12 @@ function targetDollars({ tracked, baselines, actuals, targets, dollars, ixActual
     cogs_weekly: r(cogsAnnual / 52), cogs_annual: r(cogsAnnual),
     total_weekly: r((laborAnnual + cogsAnnual) / 52), total_annual: r(laborAnnual + cogsAnnual),
   };
+}
+
+// The $ the COMMITMENT is worth — moving each metric from its 4-week BASE to the
+// TARGET, tracked buckets only.
+function targetDollars({ baselines, targets, ...rest }) {
+  return metricGapDollars(baselines, targets, rest);
 }
 
 // The caller's in-scope region names, from their visible stores' org.
@@ -1147,14 +1154,18 @@ async function rvpCommitments(supa, user) {
   // strictly before that reference week and stays fixed. Tracking = 30-day window.
   const anchorRef = await baseAnchor(supa);
   const baseWeekEnds = baseWeekEndsFor(anchorRef, anchor, fi);
+  // The Actual shown is the average of the last 4 COMPLETED weeks (a sustained,
+  // trailing figure — "how they're impacting the long run"), always trailing the
+  // latest data regardless of whether the base is pinned.
+  const recentWeekEnds = baseWeekEndsFor(null, anchor, fi);
   const trackWeekEnds = await trackingWindow(supa);
-  const allWeekEnds = [...new Set([...baseWeekEnds, ...trackWeekEnds])];
+  const allWeekEnds = [...new Set([...baseWeekEnds, ...recentWeekEnds, ...trackWeekEnds])];
 
   const credits = await loadLaborCredits(supa, numbers);
   const [cogs, laborWk, cogsWk, buckets, ixActualFood] = await Promise.all([
     cogsByRvpFromRuns(supa, 4, anchorRef ? baseWeekEnds : null),
     laborWeeklyByRegion(supa, numbers, orgMap, allWeekEnds, credits),
-    cogsWeeklyByRvp(supa, trackWeekEnds),
+    cogsWeeklyByRvp(supa, [...new Set([...trackWeekEnds, ...recentWeekEnds])]),
     bucketSettings(supa),
     ixCogsActualByRvp(supa),
   ]);
@@ -1174,6 +1185,10 @@ async function rvpCommitments(supa, user) {
   const avg = (arr) => (arr.length ? round2(arr.reduce((a, b) => a + b, 0) / arr.length) : null);
   const baseAvg = (region, field) =>
     avg(baseWeekEnds.map((we) => laborWk.get(region)?.get(we)?.[field]).filter((v) => v != null));
+  const recentAvg = (region, field) =>
+    avg(recentWeekEnds.map((we) => laborWk.get(region)?.get(we)?.[field]).filter((v) => v != null));
+  const cogsRecentAvg = (rvpName) =>
+    avg(recentWeekEnds.map((we) => (rvpName ? cogsWk.get(String(rvpName))?.get(we) : null)).filter((v) => v != null));
 
   // Only real RVP regions: has an assigned RVP and at least one store.
   const out = [...regions]
@@ -1203,10 +1218,20 @@ async function rvpCommitments(supa, user) {
       labor_avs_pct: baseAvg(region, "avs_pct"),
       cogs_efficiency: rvpName ? (cogs.baseline.get(String(rvpName)) ?? null) : null,
     };
+    // Actual = average of the last 4 completed weeks (falls back to the live
+    // current-week figure when a metric has no weekly history yet).
+    const actual4wk = {
+      labor_hours_over: recentAvg(region, "hours_over") ?? actuals.labor_hours_over,
+      labor_avs_pct: recentAvg(region, "avs_pct") ?? actuals.labor_avs_pct,
+      cogs_efficiency: cogsRecentAvg(rvpName) ?? actuals.cogs_efficiency,
+    };
+    const regionFood = rvpName ? (ixActualFood.get(String(rvpName)) ?? 0) : 0;
+    const dollarArgs = { tracked, actuals, dollars, ixActualFood: regionFood, weekInPeriod };
     return {
       region, rvp_name: rvpName, stores: storeCount.get(region) ?? rrows.length,
       hidden_metrics: hidden,
       actuals,
+      actual4wk,
       baselines,
       weekly: {
         labor_hours_over: laborSeries("hours_over"),
@@ -1217,21 +1242,29 @@ async function rvpCommitments(supa, user) {
       dollars,
       // The committed value — moving each metric from its 4-week base to the
       // target, tracked buckets only.
-      target_dollars: targetDollars({
-        tracked, baselines, actuals, targets, dollars,
-        ixActualFood: rvpName ? (ixActualFood.get(String(rvpName)) ?? 0) : 0,
-        weekInPeriod,
-      }),
+      target_dollars: metricGapDollars(baselines, targets, dollarArgs),
+      // Realized so far: base -> current 4-wk actual (savings already achieved).
+      saved_dollars: metricGapDollars(baselines, actual4wk, dollarArgs),
+      // Cost of the gap to target: current 4-wk actual -> target (>0 only when
+      // off track). "How much the miss is costing."
+      miss_dollars: metricGapDollars(actual4wk, targets, dollarArgs),
       cogs_week: cogsLatest?.week ?? null,
       targets,
     };
   }).sort((a, b) => (a.rvp_name ?? a.region).localeCompare(b.rvp_name ?? b.region));
 
-  const sum = (field) => { const vals = out.map((r) => r.target_dollars?.[field]).filter((v) => v != null); return vals.length ? vals.reduce((a, b) => a + b, 0) : null; };
+  const sumOf = (key, field) => { const vals = out.map((r) => r[key]?.[field]).filter((v) => v != null); return vals.length ? vals.reduce((a, b) => a + b, 0) : null; };
+  const sum = (field) => sumOf("target_dollars", field);
   const totals = {
     labor_weekly: sum("labor_weekly"), labor_annual: sum("labor_annual"),
     cogs_weekly: sum("cogs_weekly"), cogs_annual: sum("cogs_annual"),
     total_weekly: sum("total_weekly"), total_annual: sum("total_annual"),
+  };
+  const saved_totals = {
+    total_weekly: sumOf("saved_dollars", "total_weekly"), total_annual: sumOf("saved_dollars", "total_annual"),
+  };
+  const miss_totals = {
+    total_weekly: sumOf("miss_dollars", "total_weekly"), total_annual: sumOf("miss_dollars", "total_annual"),
   };
 
   // Picker options: recent week-ending Sundays (as reference weeks). The most
@@ -1246,8 +1279,11 @@ async function rvpCommitments(supa, user) {
     // 4-week base state: `anchor_week_end` null = sliding; set = pinned to the 4
     // weeks strictly before that reference week. `week_ends` are those 4 weeks.
     base: { anchor_week_end: anchorRef, week_ends: baseWeekEnds, options: baseOptions },
+    recent_week_ends: recentWeekEnds,
     hidden_metrics: buckets.global,
     totals,
+    saved_totals,
+    miss_totals,
     rows: out,
   };
 }

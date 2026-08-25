@@ -4,7 +4,8 @@
 // upload. Targets are editable inline (backend enforces region scope).
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Pencil, RefreshCw, X } from "lucide-react";
+import { Check, Download, Pencil, RefreshCw, X } from "lucide-react";
+import { exportRvpCommitmentsPdf } from "./rvpCommitmentsPdf";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -129,16 +130,28 @@ export function RvpCommitmentsPage() {
     <div className="mx-auto max-w-5xl space-y-5 p-4 sm:p-6">
       <PageHeader title="RVP Commitments" description="Each region's committed target vs. its live actual, tracked weekly."
         actions={
-          <button
-            type="button"
-            onClick={() => q.refetch()}
-            disabled={q.isFetching}
-            title="Re-pull the latest ranking + labor data"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-600 hover:border-accent/60 hover:text-accent disabled:opacity-50"
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", q.isFetching && "animate-spin")} strokeWidth={1.75} />
-            {q.isFetching ? "Refreshing…" : "Refresh"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => q.data && exportRvpCommitmentsPdf(q.data)}
+              disabled={!q.data || q.data.rows.length === 0}
+              title="Download a meeting-ready PDF"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-600 hover:border-accent/60 hover:text-accent disabled:opacity-50"
+            >
+              <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
+              PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => q.refetch()}
+              disabled={q.isFetching}
+              title="Re-pull the latest ranking + labor data"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-600 hover:border-accent/60 hover:text-accent disabled:opacity-50"
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", q.isFetching && "animate-spin")} strokeWidth={1.75} />
+              {q.isFetching ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
         }
       />
 
@@ -152,9 +165,9 @@ export function RvpCommitmentsPage() {
         <>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="max-w-2xl text-xs text-zinc-500">
-              Labor metrics are this fiscal week to date
-              {q.data.week ? <> ({fmtWeek(q.data.week.start)}–{fmtWeek(q.data.week.end)})</> : null}.
-              COGS Efficiency is the latest ranking run.{" "}
+              <strong>Actual</strong> is the average of the last 4 completed weeks
+              {q.data.recent_week_ends?.length ? <> ({fmtWeek(q.data.recent_week_ends[q.data.recent_week_ends.length - 1])}–{fmtWeek(q.data.recent_week_ends[0])})</> : null}
+              {" "}— sustained performance, not just this week.{" "}
               <strong>4-wk base</strong> is {base?.anchor_week_end
                 ? <>pinned to {baseSpan} (the 4 weeks before {fmtWeekOf(base.anchor_week_end)}) — fixed</>
                 : <>the last-four-weeks average{baseSpan ? <> ({baseSpan})</> : null}, which slides each week</>}
@@ -265,18 +278,31 @@ function RvpCard({ row, canEdit }: { row: RvpCommitmentRow; canEdit: boolean }) 
           ? <div className="px-4 py-4 text-xs text-zinc-400">No buckets selected for this RVP.</div>
           : metrics.map((m) => <MetricRow key={m.key} row={row} m={m} />)}
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-zinc-100 bg-zinc-50/60 px-4 py-2.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">$ if they hit target · 30 days</span>
-        {row.target_dollars.total_weekly ? (
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs tabular-nums text-zinc-600">
-            {row.target_dollars.labor_weekly ? <span>Labor <b className="text-midnight">{fmtUsd(per30(row.target_dollars.labor_weekly))}</b></span> : null}
-            {row.target_dollars.cogs_weekly ? <span>COGS <b className="text-midnight">{fmtUsd(per30(row.target_dollars.cogs_weekly))}</b></span> : null}
-            <span className="text-emerald-700">Total <b>{fmtUsd(per30(row.target_dollars.total_weekly))}</b> / 30d</span>
-            <span className="text-zinc-400">({fmtUsd(row.target_dollars.total_annual)}/yr)</span>
+      <div className="space-y-1 border-t border-zinc-100 bg-zinc-50/60 px-4 py-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">$ if they hit target · 30 days</span>
+          {row.target_dollars.total_weekly ? (
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs tabular-nums text-zinc-600">
+              {row.target_dollars.labor_weekly ? <span>Labor <b className="text-midnight">{fmtUsd(per30(row.target_dollars.labor_weekly))}</b></span> : null}
+              {row.target_dollars.cogs_weekly ? <span>COGS <b className="text-midnight">{fmtUsd(per30(row.target_dollars.cogs_weekly))}</b></span> : null}
+              <span className="text-emerald-700">Total <b>{fmtUsd(per30(row.target_dollars.total_weekly))}</b> / 30d</span>
+              <span className="text-zinc-400">({fmtUsd(row.target_dollars.total_annual)}/yr)</span>
+            </div>
+          ) : (
+            <span className="text-xs text-zinc-400">Set a target on a tracked bucket to see the savings.</span>
+          )}
+        </div>
+        {row.miss_dollars.total_weekly ? (
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-red-400">Cost of the gap · currently · 30 days</span>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs tabular-nums text-zinc-600">
+              {row.miss_dollars.labor_weekly ? <span>Labor <b className="text-red-700">{fmtUsd(per30(row.miss_dollars.labor_weekly))}</b></span> : null}
+              {row.miss_dollars.cogs_weekly ? <span>COGS <b className="text-red-700">{fmtUsd(per30(row.miss_dollars.cogs_weekly))}</b></span> : null}
+              <span className="text-red-700">Total <b>{fmtUsd(per30(row.miss_dollars.total_weekly))}</b> / 30d</span>
+              <span className="text-zinc-400">({fmtUsd(row.miss_dollars.total_annual)}/yr)</span>
+            </div>
           </div>
-        ) : (
-          <span className="text-xs text-zinc-400">Set a target on a tracked bucket to see the savings.</span>
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -285,15 +311,12 @@ function RvpCard({ row, canEdit }: { row: RvpCommitmentRow; canEdit: boolean }) 
 function MetricRow({ row, m }: { row: RvpCommitmentRow; m: MetricDef }) {
   const toast = useToast();
   const qc = useQueryClient();
-  // Weekly-grain metrics (e.g. COGS Efficiency) track sustained performance, so
-  // the "Actual" is the AVERAGE of the tracked weeks — how they're impacting the
-  // long run — not just the latest week. WTD labor metrics stay as the live
-  // current-week figure.
-  const weekly = row.weekly[m.key] ?? [];
-  const weekVals = weekly.map((w) => w.value).filter((v): v is number => v != null);
-  const avgActual = weekVals.length ? weekVals.reduce((a, b) => a + b, 0) / weekVals.length : null;
-  const isAvg = m.grain === "weekly" && avgActual != null;
-  const actual = isAvg ? avgActual : row.actuals[m.key];
+  // "Actual" is the average of the last 4 completed weeks (a sustained, trailing
+  // figure — how they're impacting the long run), computed server-side. Falls
+  // back to the live current-week figure when a metric has no weekly history yet.
+  const actual4 = row.actual4wk?.[m.key] ?? null;
+  const isAvg = actual4 != null;
+  const actual = actual4 ?? row.actuals[m.key];
   const target = row.targets[m.key];
   const baseline = row.baselines[m.key];
   const status = track(actual, target, m.dir);
@@ -342,8 +365,8 @@ function MetricRow({ row, m }: { row: RvpCommitmentRow; m: MetricDef }) {
 
       {/* Actual */}
       <div className="w-20 text-right">
-        <div className="text-[10px] uppercase tracking-wide text-zinc-400" title={isAvg ? `Average of the ${weekVals.length} tracked week${weekVals.length === 1 ? "" : "s"}` : undefined}>
-          Actual{isAvg ? " · avg" : ""}
+        <div className="text-[10px] uppercase tracking-wide text-zinc-400" title={isAvg ? "Average of the last 4 completed weeks" : "Live current-week figure"}>
+          Actual{isAvg ? " · 4-wk avg" : ""}
         </div>
         <div className={cn("text-sm font-semibold tabular-nums",
           status === "on" ? "text-emerald-600" : status === "off" ? "text-red-600" : "text-zinc-500")}>
