@@ -15,10 +15,12 @@ const M: Record<CommitMetric, MDef> = {
 };
 const ORDER: CommitMetric[] = ["labor_hours_over", "labor_avs_pct", "cogs_efficiency"];
 
+// NOTE: jsPDF's WinAnsi font encoding lacks ≥ ≤ − — (they garble + trigger a
+// letter-spaced font fallback), so this PDF uses ASCII equivalents only.
 const fmtVal = (v: number | null, unit: "h" | "%") =>
-  v == null ? "—" : unit === "h" ? `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}h` : `${v.toFixed(1)}%`;
+  v == null ? "-" : unit === "h" ? `${v >= 0 ? "+" : "-"}${Math.abs(v).toFixed(1)}h` : `${v.toFixed(1)}%`;
 const fmtTarget = (v: number | null, m: MDef) =>
-  v == null ? "—" : `${m.dir === "up" ? "≥" : "≤"} ${m.unit === "h" ? `${v}h` : `${v}%`}`;
+  v == null ? "-" : `${m.dir === "up" ? ">=" : "<="} ${m.unit === "h" ? `${v}h` : `${v}%`}`;
 const usd = (v: number | null | undefined) =>
   v == null ? "—" : v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const per30 = (weekly: number | null | undefined) => (weekly == null ? null : Math.round((weekly * 30) / 7));
