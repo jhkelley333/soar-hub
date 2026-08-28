@@ -1,14 +1,13 @@
-// Report — "Store Funds Count, current period" (compliance). For the current
-// fiscal period, lists the stores that are MISSING nightly cash counts in Cash
-// Management (a cash_closeouts row per store per business date), grouped
-// RVP → DO, so COO + RVPs can chase the gaps. Not a dollar report — it tracks
-// who has / hasn't counted.
+// Report — "Store Funds (Bank) validation, current period" (compliance). DOs
+// count each store's on-hand cash Bank in week 1 of every 4-week period and
+// reconcile it to the assigned Bank amount (store_fund_settings). This report,
+// for the current fiscal period, lists the stores STILL DUE (Bank not yet
+// validated) and any that came in OVER TOLERANCE, grouped RVP -> DO, so COO +
+// RVPs can chase them — mirroring the Cash Management → Store Funds tab.
 //
-// "Enrolled" stores (the ones expected to count) = any active store with at
-// least one closeout in the last ~30 days, so stores not using Cash Management
-// don't show up as false gaps, while a store that WAS counting and stopped
-// surfaces as all-missing. Closed-day gaps (business disruptions) can show as
-// missing; that's acceptable for a chase list.
+// Universe = active stores that have a Bank set (a store_fund_settings row).
+// "Validated this period" = a required (non-off-cycle) store_fund_validations
+// row whose validated_at falls in the current period.
 
 import { resolveOrg } from "../../kpiOrg.js";
 import { fiscalForDate } from "../../fiscal.js";
@@ -17,140 +16,130 @@ import { wallClock } from "../core.js";
 const pad = (n) => String(n).padStart(2, "0");
 const isoOf = (d) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 const isoAddDays = (iso, n) => { const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return isoOf(d); };
-function daysBetween(startIso, endIso) {
-  const out = [];
-  let d = new Date(`${startIso}T12:00:00Z`);
-  const end = new Date(`${endIso}T12:00:00Z`);
-  while (d <= end) { out.push(isoOf(d)); d.setUTCDate(d.getUTCDate() + 1); }
-  return out;
-}
-const fmtDay = (iso) => new Date(`${String(iso).slice(0, 10)}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-
-const HOW_TO_FIND = [
-  "How to find it in Cash Management:",
-  "  1. Open SOAR Hub → Cash Management (/admin/cash-management).",
-  "  2. Pick the store, then a business date. A submitted nightly count shows the",
-  "     counted drawer total + deposit; a date with no entry is a missing count.",
-  "  3. The store manager submits the count from that page after counting the",
-  "     drawer at close — chase the missing dates listed above.",
-];
+const money = (cents) => `$${(Number(cents || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const signed = (cents) => `${Number(cents) >= 0 ? "+" : "-"}$${Math.abs(Number(cents || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export async function mondayStoreFundsCount({ supa, definition, now }) {
   const tz = definition.timezone || "America/Chicago";
   const wc = wallClock(now, tz);
   const todayIso = `${wc.year}-${pad(wc.month)}-${pad(wc.day)}`;
 
-  // Current fiscal period; fall back to a trailing 4 weeks if the fiscal
-  // calendar doesn't cover today (year boundary).
   const fx = fiscalForDate(todayIso);
   const periodStart = fx ? fx.periodStart : isoAddDays(todayIso, -27);
   const periodEnd = fx ? fx.periodEnd : todayIso;
-  const periodLabel = fx ? `Period ${fx.period} (${fx.fiscalYear})` : "last 4 weeks";
+  const periodLabel = fx ? `Period ${fx.period} (${fx.fiscalYear})` : "current period";
+  const weekInPeriod = fx ? fx.weekInPeriod : null;
 
-  // Evaluate counts for full business days only: period start → yesterday.
-  const yesterday = isoAddDays(todayIso, -1);
-  const evalEnd = yesterday < periodEnd ? yesterday : periodEnd;
-
-  if (evalEnd < periodStart) {
-    return {
-      rowCount: 0,
-      subject: `Store Funds Count — ${periodLabel}: new period, nothing to count yet`,
-      text: `${periodLabel} just started (${periodStart}). No business days have closed yet, so there are no cash counts to check.\n\n${HOW_TO_FIND.join("\n")}`,
-      summary: { period: periodLabel, period_start: periodStart, eval_end: null, enrolled: 0, gaps: 0 },
-    };
-  }
-
-  const days = daysBetween(periodStart, evalEnd);
-
-  // One query over a widened range: in-period rows build the submitted map;
-  // every store_number seen defines the "enrolled" (actively counting) set.
-  const { data: closeouts } = await supa
-    .from("cash_closeouts")
-    .select("store_number, business_date")
-    .gte("business_date", isoAddDays(periodStart, -30))
-    .lte("business_date", evalEnd);
-
-  const submitted = new Map(); // store_number → Set(business_date in period)
-  const enrolled = new Set();
-  for (const c of closeouts || []) {
-    const sn = String(c.store_number);
-    enrolled.add(sn);
-    const bd = String(c.business_date).slice(0, 10);
-    if (bd >= periodStart && bd <= evalEnd) {
-      if (!submitted.has(sn)) submitted.set(sn, new Set());
-      submitted.get(sn).add(bd);
-    }
-  }
-
-  // Keep only enrolled stores that are still active.
-  const { data: storeRows } = await supa.from("stores").select("number, name, is_active").eq("is_active", true);
+  // Universe: active stores that have a Bank set.
+  const [{ data: settings }, { data: storeRows }, { data: cashSettings }] = await Promise.all([
+    supa.from("store_fund_settings").select("store_number, bank_amount_cents"),
+    supa.from("stores").select("number, name, is_active").eq("is_active", true),
+    supa.from("cash_settings").select("fund_tolerance_cents").limit(1).maybeSingle(),
+  ]);
   const nameByNum = new Map((storeRows || []).map((s) => [String(s.number), s.name]));
-  const enrolledActive = [...enrolled].filter((sn) => nameByNum.has(sn));
-
-  // Gap = an enrolled store missing one or more business days this period.
-  const gaps = [];
-  let totalMissingDays = 0;
-  for (const sn of enrolledActive) {
-    const have = submitted.get(sn) || new Set();
-    const missing = days.filter((d) => !have.has(d));
-    if (missing.length) { gaps.push({ sn, missing }); totalMissingDays += missing.length; }
+  const bankByNum = new Map();
+  for (const s of settings || []) {
+    const sn = String(s.store_number);
+    if (nameByNum.has(sn)) bankByNum.set(sn, s.bank_amount_cents);
   }
-  const fullyCounted = enrolledActive.length - gaps.length;
+  const tolerance = cashSettings?.fund_tolerance_cents ?? 500;
 
-  if (!gaps.length) {
+  // Required (non-off-cycle) validations that landed this period; keep the
+  // latest per store.
+  const { data: vals } = await supa
+    .from("store_fund_validations")
+    .select("store_number, counted_cents, variance_cents, over_tolerance, validated_at, validated_by_name, is_off_cycle")
+    .gte("validated_at", `${periodStart}T00:00:00`)
+    .lte("validated_at", `${periodEnd}T23:59:59`)
+    .eq("is_off_cycle", false);
+  const latest = new Map();
+  for (const v of vals || []) {
+    const sn = String(v.store_number);
+    if (!bankByNum.has(sn)) continue;
+    const prev = latest.get(sn);
+    if (!prev || new Date(v.validated_at) > new Date(prev.validated_at)) latest.set(sn, v);
+  }
+
+  const totalBanked = bankByNum.size;
+  const validatedCount = latest.size;
+  const dueNums = [...bankByNum.keys()].filter((sn) => !latest.has(sn));
+  const overTol = [...latest.entries()]
+    .filter(([, v]) => v.over_tolerance)
+    .map(([sn, v]) => ({ sn, name: nameByNum.get(sn) || `#${sn}`, bank: bankByNum.get(sn), ...v }));
+
+  const periodProgress = `${periodLabel}${weekInPeriod ? ` · Week ${weekInPeriod}` : ""}`;
+  const HOW_TO_FIND = [
+    "How to find it in Cash Management:",
+    "  1. Open SOAR Hub → Cash Management → Store Funds tab.",
+    "  2. Each store shows its Bank, Last Count, Variance, and a Validate button.",
+    `  3. DOs count the store's Bank in Week 1 and hit Validate; over the ${money(tolerance)} tolerance escalates to the SDO.`,
+    "  4. Chase the 'still due' stores below.",
+  ];
+
+  // All caught up.
+  if (!dueNums.length && !overTol.length) {
     return {
       rowCount: 0,
-      subject: `Store Funds Count — ${periodLabel}: all ${enrolledActive.length} stores current ✓`,
+      subject: `Store Funds — ${periodProgress}: all ${totalBanked} Banks validated, none over tolerance ✓`,
       text:
-        `Store Funds Count — ${periodLabel}\n` +
-        `Days checked: ${periodStart} → ${evalEnd} (${days.length} business days)\n\n` +
-        `All ${enrolledActive.length} counting stores have a submitted cash count for every business day this period. No gaps.\n\n` +
+        `Store Funds (Bank) validation — ${periodProgress}\n` +
+        `${totalBanked} stores with a Bank · ${validatedCount} validated this period · 0 due · 0 over tolerance.\n\n` +
+        `Every store's Bank is validated for this period and within tolerance. Nothing to chase.\n\n` +
         `${HOW_TO_FIND.join("\n")}`,
-      summary: { period: periodLabel, period_start: periodStart, eval_end: evalEnd, enrolled: enrolledActive.length, fully_counted: enrolledActive.length, gaps: 0, missing_days: 0 },
+      summary: { period: periodLabel, banked: totalBanked, validated: validatedCount, due: 0, over_tolerance: 0 },
     };
   }
 
-  // Group gap stores RVP → DO.
-  const org = await resolveOrg(supa, gaps.map((g) => g.sn));
+  // Group the due list RVP -> DO (DOs do the validating).
+  const org = await resolveOrg(supa, [...dueNums, ...overTol.map((o) => o.sn)]);
   const tree = new Map();
-  for (const g of gaps) {
-    const o = org.get(g.sn) || {};
+  for (const sn of dueNums) {
+    const o = org.get(sn) || {};
     const rvp = o.rvpName || "Unassigned RVP";
     const doName = o.doName || "Unassigned DO";
     if (!tree.has(rvp)) tree.set(rvp, new Map());
     const dos = tree.get(rvp);
     if (!dos.has(doName)) dos.set(doName, []);
-    dos.get(doName).push({ ...g, name: o.store || nameByNum.get(g.sn) || `#${g.sn}` });
+    dos.get(doName).push({ sn, name: o.store || nameByNum.get(sn) || `#${sn}`, bank: bankByNum.get(sn) });
   }
 
   const lines = [];
-  lines.push(`Store Funds Count — ${periodLabel}`);
-  lines.push(`Days checked: ${periodStart} → ${evalEnd} (${days.length} business days)`);
-  lines.push(`${enrolledActive.length} counting stores · ${fullyCounted} fully counted · ${gaps.length} with gaps · ${totalMissingDays} missing count-day${totalMissingDays === 1 ? "" : "s"}`);
+  lines.push(`Store Funds (Bank) validation — ${periodProgress}`);
+  lines.push(`${totalBanked} stores with a Bank · ${validatedCount} validated this period · ${dueNums.length} still due · ${overTol.length} over tolerance`);
   lines.push("");
 
-  for (const [rvp, dos] of [...tree].sort((a, b) => a[0].localeCompare(b[0]))) {
-    const rvpMissing = [...dos.values()].reduce((a, arr) => a + arr.reduce((b, g) => b + g.missing.length, 0), 0);
-    lines.push(`${rvp} — ${rvpMissing} missing count-day${rvpMissing === 1 ? "" : "s"}`);
-    for (const [doName, arr] of [...dos].sort((a, b) => a[0].localeCompare(b[0]))) {
-      lines.push(`  DO ${doName}`);
-      for (const g of arr.sort((a, b) => a.name.localeCompare(b.name))) {
-        const shown = g.missing.slice(0, 10).map(fmtDay).join(", ");
-        const extra = g.missing.length > 10 ? ` (+${g.missing.length - 10} more)` : "";
-        lines.push(`    #${g.sn} ${g.name} — ${g.missing.length} of ${days.length} missing: ${shown}${extra}`);
+  if (dueNums.length) {
+    lines.push(`STILL DUE — ${dueNums.length} store${dueNums.length === 1 ? "" : "s"} not yet validated this period:`);
+    for (const [rvp, dos] of [...tree].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const rvpCount = [...dos.values()].reduce((a, arr) => a + arr.length, 0);
+      lines.push(`  ${rvp} — ${rvpCount} due`);
+      for (const [doName, arr] of [...dos].sort((a, b) => a[0].localeCompare(b[0]))) {
+        lines.push(`    DO ${doName} — ${arr.length}`);
+        for (const s of arr.sort((a, b) => a.name.localeCompare(b.name))) {
+          lines.push(`      #${s.sn} ${s.name} — Bank ${money(s.bank)}`);
+        }
       }
     }
     lines.push("");
   }
+
+  if (overTol.length) {
+    lines.push(`OVER TOLERANCE (> ${money(tolerance)}) — ${overTol.length} count${overTol.length === 1 ? "" : "s"} this period:`);
+    for (const o of overTol.sort((a, b) => Math.abs(b.variance_cents) - Math.abs(a.variance_cents))) {
+      lines.push(`  #${o.sn} ${o.name} — Bank ${money(o.bank)}, counted ${money(o.counted_cents)}, variance ${signed(o.variance_cents)}${o.validated_by_name ? ` (by ${o.validated_by_name})` : ""}`);
+    }
+    lines.push("");
+  }
+
   lines.push(...HOW_TO_FIND);
 
   return {
-    rowCount: gaps.length,
-    subject: `Store Funds Count — ${periodLabel}: ${gaps.length} store${gaps.length === 1 ? "" : "s"} with missing counts`,
+    rowCount: dueNums.length + overTol.length,
+    subject: `Store Funds — ${periodProgress}: ${dueNums.length} due, ${overTol.length} over tolerance`,
     text: lines.join("\n"),
     summary: {
-      period: periodLabel, period_start: periodStart, eval_end: evalEnd,
-      enrolled: enrolledActive.length, fully_counted: fullyCounted, gaps: gaps.length, missing_days: totalMissingDays,
+      period: periodLabel, banked: totalBanked, validated: validatedCount,
+      due: dueNums.length, over_tolerance: overTol.length,
     },
   };
 }
