@@ -40,7 +40,7 @@
 //   LABOR_SHEET_RANGE             range (default "A1:AB1000")
 //   LABOR_POLL_TZ                 poll-window tz (default America/Chicago)
 //   LABOR_POLL_START              window open, local "HH:MM" (default 07:30)
-//   LABOR_POLL_END                window close, local "HH:MM" (default 14:00)
+//   LABOR_POLL_END                window close, local "HH:MM" (default 20:00)
 //                                 (legacy LABOR_POLL_START_HOUR/END_HOUR honored)
 //   SUPABASE_* / VITE_SUPABASE_*  standard service-role access
 
@@ -48,6 +48,7 @@ import { createClient } from "@supabase/supabase-js";
 import { google } from "googleapis";
 import { createHash } from "node:crypto";
 import { getGoogleCredentials } from "./_lib/googleCreds.js";
+import { pingHeartbeat } from "./_lib/heartbeat.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY =
@@ -68,8 +69,13 @@ const POLL_TZ = process.env.LABOR_POLL_TZ || "America/Chicago";
 // Poll window, local to POLL_TZ, stored as minutes-since-midnight so it can
 // start/end on the half hour. Set via LABOR_POLL_START / LABOR_POLL_END as
 // "HH:MM" (or a bare hour); the legacy *_HOUR vars still work as a fallback.
-// Default 07:30–14:00 — back office fills the sheet late-morning through
-// early afternoon. Both ends are inclusive to the minute.
+// Default 07:30–20:00 — back office fills the sheet late-morning through early
+// afternoon, but the KPI feed lags a calendar day, so yesterday's business
+// date is still arriving well into the afternoon. The window was widened from
+// 14:00 to 20:00 after a throttled-cron gap on 2026-08-27 let the only in-
+// window pings fall before 07:30 and after 14:00, so nothing landed that day.
+// The after-window seal below still protects a completed prior day from being
+// overwritten, so a later close is safe. Both ends are inclusive to the minute.
 const POLL_START_MIN = minutesEnv(
   process.env.LABOR_POLL_START,
   process.env.LABOR_POLL_START_HOUR,
@@ -78,7 +84,7 @@ const POLL_START_MIN = minutesEnv(
 const POLL_END_MIN = minutesEnv(
   process.env.LABOR_POLL_END,
   process.env.LABOR_POLL_END_HOUR,
-  14 * 60,
+  20 * 60,
 );
 
 // Parse a clock time to minutes-of-day. Prefers an "HH:MM"/bare-hour string,
@@ -394,6 +400,12 @@ export const handler = async (event) => {
     return { statusCode: 422, body: JSON.stringify({ error: "business date not found" }) };
   }
 
+  // Dead-man's-switch: we successfully read the sheet and resolved a business
+  // date, so the labor pipeline is alive — ping the external monitor. Fires on
+  // the no-change and after-window-seal paths too (all healthy outcomes); only
+  // an actual feed/sheet failure above skips it. Best-effort.
+  await pingHeartbeat("labor");
+
   // Parse data rows.
   const parsed = [];
   for (let r = headerIdx + 1; r < rows.length; r++) {
@@ -533,12 +545,14 @@ export const handler = async (event) => {
   //      Central. Catches the back office leaving Sales Date stuck for
   //      multiple days while still updating the daily band.
   //   2) AFTER-WINDOW SEAL — Sales Date is yesterday but it's already past
-  //      the 2pm Central poll window today. By that hour yesterday's labor
-  //      is normally finalized, so any further change to that row is almost
-  //      certainly the back office accidentally writing today's numbers into
-  //      yesterday's band. (The natural "back office writes yesterday's
-  //      labor today; polls converge through 2pm" workflow still flows —
-  //      converging happens BEFORE the cutoff, not after.)
+  //      the poll-window close (POLL_END_MIN, default 8pm Central) today. By
+  //      that hour yesterday's labor is normally finalized, so any further
+  //      change to that row is almost certainly the back office accidentally
+  //      writing today's numbers into yesterday's band. (The natural "back
+  //      office writes yesterday's labor today; polls converge through the
+  //      window" workflow still flows — converging happens BEFORE the cutoff,
+  //      not after. The cutoff tracks POLL_END_MIN, so widening the window
+  //      also widens how late convergence is allowed.)
   //   3) DRIFT DETECTOR — for any existing snapshot, if the new daily labor
   //      % differs from the stored value by more than DRIFT_PCT_THRESHOLD
   //      points (default 5) on enough stores, log a DRIFT warning and skip.
@@ -659,7 +673,7 @@ export const handler = async (event) => {
 
 // Schedule config — Netlify reads this export. Poll every 15 minutes; the
 // handler gates itself to the poll window (LABOR_POLL_START..LABOR_POLL_END
-// in LABOR_POLL_TZ, default 07:30–14:00) and only upserts when the sheet
+// in LABOR_POLL_TZ, default 07:30–20:00) and only upserts when the sheet
 // content changed, so off-window and no-change polls are cheap. This is what
 // lets the snapshot
 // follow back office filling the sheet at different times instead of

@@ -33,6 +33,7 @@ import { extractLaborRows, feedBusinessDate, isPre0238Error, isPre0272Error, isP
 import { extractCountRows, isPreCountExtrasError, stripCountExtras } from "./_lib/kpiCount.js";
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { logPull } from "./_lib/pullLog.js";
+import { pingHeartbeat } from "./_lib/heartbeat.js";
 import { fiscalForDate } from "./_lib/fiscal.js";
 import { runRankingNow } from "./_lib/ranking/run.js";
 
@@ -191,6 +192,9 @@ export const handler = async (event) => {
     kpi_snapshot: true, central_date: centralDate, central_hour: wc.hour, duration_ms: Date.now() - started,
   });
   console.log(`[kpi-capture] stored snapshot for ${centralDate} ${wc.hour}:00 CT · labor rows ${laborStored} · count rows ${countStored} (${businessDate}) · closes w${closes.weeks}/p${closes.periods}`);
+  // Dead-man's-switch: we reached the feed and wrote a snapshot — tell the
+  // external monitor the capture pipeline is alive. Best-effort.
+  await pingHeartbeat("kpi");
   return { statusCode: 200, body: `captured ${centralDate} ${wc.hour}:00 CT · labor ${laborStored} · count ${countStored} rows for ${businessDate} · closes ${closes.weeks}w/${closes.periods}p${ranked ? ` · ranker: ${ranked}` : ""}` };
 };
 
