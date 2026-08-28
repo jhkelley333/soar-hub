@@ -11,16 +11,19 @@ const money = (n) => `$${(Math.round(n * 100) / 100).toLocaleString("en-US", { m
 const num = (n) => Number(n) || 0;
 // Still closed = the store closed and has no reopen date recorded yet.
 const stillClosed = (d) => d.store_closed === true && !d.reopen_date;
-const fmtDay = (iso) => {
-  if (!iso) return "";
-  const d = new Date(`${String(iso).slice(0, 10)}T12:00:00`);
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-};
 // Human list of what went wrong: closure types + issue types, de-duped.
 const kinds = (d) => {
   const all = [...(d.closure_types || []), ...(d.issue_types || [])].map((s) => String(s).trim()).filter(Boolean);
   return [...new Set(all)].join(", ");
 };
+
+// CSV cell escaping — wrap in quotes and double any embedded quotes when the
+// value carries a comma, quote, or newline (Excel-safe).
+const csvCell = (v) => {
+  const s = v == null ? "" : String(v);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+const csvRow = (cells) => cells.map(csvCell).join(",");
 
 export async function weeklyBusinessDisruptions({ supa, definition, now }) {
   const { weekStart, weekEnd, weekEndExclusive } = priorWeek(now, definition.timezone || "America/Chicago");
@@ -65,43 +68,64 @@ export async function weeklyBusinessDisruptions({ supa, definition, now }) {
     storesMap.get(sn).items.push(d);
   }
 
-  const lines = [];
-  lines.push(`Business disruptions — week of ${weekLabel}`);
-  lines.push(`${list.length} report${list.length === 1 ? "" : "s"} · ${stores.length} store${stores.length === 1 ? "" : "s"} · ${money(totalLoss)} est. lost sales`);
-  lines.push(`${openCount} still open · ${closedCount} still closed`);
-  lines.push("");
+  // Per-RVP loss, for the summary body (the detail now rides in the CSV).
+  const rvpTotals = [...tree].map(([rvp, dos]) => {
+    const loss = [...dos.values()].reduce((a, sm) => a + [...sm.values()].reduce((b, s) => b + s.items.reduce((c, d) => c + num(d.estimated_loss_sales), 0), 0), 0);
+    return [rvp, loss];
+  }).sort((a, b) => b[1] - a[1]);
 
-  for (const [rvp, dos] of [...tree].sort((a, b) => a[0].localeCompare(b[0]))) {
-    const rvpLoss = [...dos.values()].reduce((a, sm) => a + [...sm.values()].reduce((b, s) => b + s.items.reduce((c, d) => c + num(d.estimated_loss_sales), 0), 0), 0);
-    lines.push(`${rvp} — ${money(rvpLoss)}`);
-    for (const [doName, storesMap] of [...dos].sort((a, b) => a[0].localeCompare(b[0]))) {
-      lines.push(`  DO ${doName}`);
-      for (const [sn, s] of [...storesMap].sort((a, b) => a[1].name.localeCompare(b[1].name))) {
-        const stLoss = s.items.reduce((a, d) => a + num(d.estimated_loss_sales), 0);
-        lines.push(`    #${sn} ${s.name} — ${money(stLoss)}`);
-        for (const d of s.items) {
-          const flags = [];
-          if (stillClosed(d)) flags.push("STILL CLOSED");
-          else if (d.reopen_date) flags.push(`reopened ${fmtDay(d.reopen_date)}`);
-          if (d.order_ahead_disabled) flags.push("order-ahead off");
-          const kind = kinds(d);
-          const bits = [fmtDay(d.disruption_date), kind || "—", money(num(d.estimated_loss_sales)) + " lost"];
-          if (flags.length) bits.push(flags.join(", "));
-          lines.push(`      ${bits.join(" · ")}`);
-        }
-      }
-    }
-    lines.push("");
-  }
+  // Build the detail CSV — one row per disruption, RVP → DO → store context
+  // flattened so it opens clean in Excel. Sorted RVP, DO, store, date.
+  const header = ["RVP", "DO", "Store #", "Store", "Date", "Kinds", "Est. lost sales", "Status", "Still closed", "Reopen date", "Order-ahead off", "Submitted by", "Description"];
+  const csvRows = list.map((d) => {
+    const sn = String(d.store_number);
+    const o = org.get(sn) || {};
+    return {
+      rvp: o.rvpName || "Unassigned RVP",
+      do: o.doName || "Unassigned DO",
+      sn, name: o.store || `#${sn}`,
+      d,
+    };
+  }).sort((a, b) =>
+    a.rvp.localeCompare(b.rvp) || a.do.localeCompare(b.do) ||
+    a.name.localeCompare(b.name) || String(a.d.disruption_date).localeCompare(String(b.d.disruption_date)),
+  ).map(({ rvp, do: doName, sn, name, d }) => csvRow([
+    rvp, doName, sn, name,
+    String(d.disruption_date || "").slice(0, 10),
+    kinds(d),
+    num(d.estimated_loss_sales).toFixed(2),
+    d.status || "",
+    stillClosed(d) ? "yes" : "no",
+    d.reopen_date ? String(d.reopen_date).slice(0, 10) : "",
+    d.order_ahead_disabled ? "yes" : "no",
+    d.submitted_by_name || "",
+    d.description || "",
+  ]));
+  const csv = [csvRow(header), ...csvRows].join("\r\n");
+  const filename = `business-disruptions_${weekStart}_to_${weekEnd}.csv`;
+
+  // Concise summary body — the full per-store detail is the attached CSV.
+  const bodyLines = [
+    `Business disruptions — week of ${weekLabel}`,
+    `${list.length} report${list.length === 1 ? "" : "s"} · ${stores.length} store${stores.length === 1 ? "" : "s"} · ${money(totalLoss)} est. lost sales`,
+    `${openCount} still open · ${closedCount} still closed`,
+    "",
+    "Est. lost sales by RVP:",
+    ...rvpTotals.map(([rvp, loss]) => `  ${rvp} — ${money(loss)}`),
+    "",
+    `Full detail is attached as ${filename} (one row per disruption).`,
+    "Open it in Excel or Google Sheets to sort/filter by RVP, DO, store, or type.",
+  ];
 
   return {
     rowCount: list.length,
     subject: `Business disruptions — ${list.length} report${list.length === 1 ? "" : "s"}, ${money(totalLoss)} lost (week of ${weekStart})`,
-    text: lines.join("\n"),
+    text: bodyLines.join("\n"),
+    attachments: [{ filename, content: Buffer.from(csv, "utf8").toString("base64") }],
     summary: {
       week_start: weekStart, week_end: weekEnd,
       count: list.length, stores: stores.length, still_open: openCount, still_closed: closedCount,
-      est_loss_sales: Math.round(totalLoss * 100) / 100,
+      est_loss_sales: Math.round(totalLoss * 100) / 100, csv: true,
     },
   };
 }

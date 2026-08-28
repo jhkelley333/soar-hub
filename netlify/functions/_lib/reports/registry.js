@@ -18,6 +18,7 @@ import { mondayNoGmCredit } from "./handlers/mondayNoGmCredit.js";
 import { weeklyTrainingCredits } from "./handlers/weeklyTrainingCredits.js";
 import { trainingOverBudget } from "./handlers/trainingOverBudget.js";
 import { weeklyBusinessDisruptions } from "./handlers/weeklyBusinessDisruptions.js";
+import { mondayStoreFundsCount } from "./handlers/mondayStoreFundsCount.js";
 
 // Engine smoke test — no query; confirms the render + Resend path end to end.
 async function smokeTest({ definition, now }) {
@@ -40,6 +41,7 @@ const HANDLERS = {
   weekly_training_credits: weeklyTrainingCredits,
   training_over_budget: trainingOverBudget,
   weekly_business_disruptions: weeklyBusinessDisruptions,
+  monday_store_funds_count: mondayStoreFundsCount,
 };
 
 export function getHandler(key) {
