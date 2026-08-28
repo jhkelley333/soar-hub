@@ -20,6 +20,20 @@
 
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
+import { finalizePafApproval, APPROVAL_PENDING_STATUSES } from "./_lib/pafApproveCore.js";
+
+// A reply whose top line is an approval ("approve" / "approved" / "yes approve"),
+// but NOT a negation ("do not approve" / "reject" / "deny").
+function isApprovalReply(text) {
+  const first = String(text || "").split(/\r?\n/).find((l) => l.trim()) || "";
+  const t = first.trim().toLowerCase();
+  if (/\b(not|don'?t|do not|no|reject|deny|decline)\b/.test(t)) return false;
+  return /^(approve\b|approved\b|yes[\s,!.:-]*approve|i approve|approve it|approve this)/.test(t);
+}
+// Roles allowed to approve a PAF by email reply (the assigned COO plus exec
+// escalation). An in-scope RVP still approves via the in-app button / one-click
+// link — reply-approve stays tight on purpose.
+const REPLY_APPROVE_ROLES = new Set(["coo", "vp", "admin"]);
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY =
@@ -262,9 +276,50 @@ export const handler = async (event) => {
 // as a system note so the reply isn't silently dropped.
 async function handlePafReply(supabase, pafId, from, fromName, message) {
   const { data: paf } = await supabase
-    .from("paf_submissions").select("id").eq("id", pafId).maybeSingle();
+    .from("paf_submissions")
+    .select("id, status, approving_email, sdo_approver_id, employee_name")
+    .eq("id", pafId)
+    .maybeSingle();
   if (!paf) return resp(200, { ok: true, ignored: "unknown paf" });
 
+  const fromEmail = extractEmailAddress(from);
+  let matched = null;
+  if (fromEmail) {
+    const { data } = await supabase
+      .from("profiles")
+      .select("id, role, is_active")
+      .ilike("email", fromEmail)
+      .maybeSingle();
+    if (data?.is_active) matched = data;
+  }
+  const matchedUserId = matched?.id ?? null;
+
+  // ── Reply-to-approve ──────────────────────────────────────────────────────
+  // A recognized approval reply from an authorized sender (the assigned COO, or
+  // an exec role) on a PAF that's awaiting COO approval flips it into the
+  // Payroll queue — the same transition as the in-app / one-click approve.
+  if (isApprovalReply(message) && APPROVAL_PENDING_STATUSES.includes(paf.status) && matched) {
+    const role = String(matched.role || "").toLowerCase();
+    const isAssigned =
+      (paf.approving_email && fromEmail && paf.approving_email.toLowerCase() === fromEmail.toLowerCase()) ||
+      (paf.sdo_approver_id && paf.sdo_approver_id === matched.id);
+    if (isAssigned || REPLY_APPROVE_ROLES.has(role)) {
+      const r = await finalizePafApproval(supabase, pafId, {
+        actorEmail: fromEmail,
+        note: "Approved via email reply",
+        channel: "email-reply",
+      });
+      if (r.ok) {
+        await postPafSystemNote(supabase, pafId, `✓ Approved by ${fromName} via email reply — moved to the Payroll queue.`);
+        console.log(`[resend-inbound] paf=${pafId} approved via email reply by ${fromEmail}`);
+        return resp(200, { ok: true, pafId, approved: true });
+      }
+      // If it was already decided / not approvable, fall through and just log the reply.
+      console.log(`[resend-inbound] paf=${pafId} reply-approve skipped: ${r.error}`);
+    }
+  }
+
+  // ── Default: post the reply onto the PAF chat thread ──────────────────────
   const { data: thread } = await supabase
     .from("chat_threads")
     .select("id")
@@ -274,17 +329,6 @@ async function handlePafReply(supabase, pafId, from, fromName, message) {
     .limit(1)
     .maybeSingle();
   if (!thread) return resp(200, { ok: true, ignored: "no thread for paf" });
-
-  const fromEmail = extractEmailAddress(from);
-  let matchedUserId = null;
-  if (fromEmail) {
-    const { data: matched } = await supabase
-      .from("profiles")
-      .select("id, is_active")
-      .ilike("email", fromEmail)
-      .maybeSingle();
-    if (matched?.is_active) matchedUserId = matched.id;
-  }
 
   if (matchedUserId) {
     await supabase.from("chat_thread_members").upsert(
@@ -301,4 +345,16 @@ async function handlePafReply(supabase, pafId, from, fromName, message) {
   });
 
   return resp(200, { ok: true, pafId });
+}
+
+// Post a system note into the PAF chat thread (best-effort), so the approval
+// shows up in-app for the submitter.
+async function postPafSystemNote(supabase, pafId, text) {
+  const { data: thread } = await supabase
+    .from("chat_threads")
+    .select("id").eq("scope_kind", "submission").eq("scope_ref", pafId)
+    .order("created_at", { ascending: true }).limit(1).maybeSingle();
+  if (!thread) return;
+  await supabase.from("chat_messages").insert({ thread_id: thread.id, from_user_id: null, text, system: true })
+    .then(() => {}).catch(() => {});
 }

@@ -46,6 +46,12 @@ import { randomUUID } from "node:crypto";
 import { sendSms, telnyxConfigured } from "./_lib/telnyx.js";
 import { getFlag } from "./_lib/flags.js";
 import { resolvePafWatchers } from "./_lib/pafWatchers.js";
+import { finalizePafApproval } from "./_lib/pafApproveCore.js";
+
+// Inbound address a COO can reply to (routes to resend-inbound.js). Same domain
+// the WO + PAF-chat reply flows use.
+const pafInboundReplyTo = (pafId) =>
+  `paf-${pafId}@${process.env.RESEND_INBOUND_DOMAIN || "inbound.mysoarhub.com"}`;
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -226,7 +232,7 @@ function renderTemplate(template, vars) {
   return { subject: render(template.subject), body: render(template.body) };
 }
 
-async function sendEmailViaResend({ to, subject, text }) {
+async function sendEmailViaResend({ to, subject, text, replyTo }) {
   if (!RESEND_API_KEY) {
     console.warn("[paf] RESEND_API_KEY not set; skipping send", { to, subject });
     return { skipped: true };
@@ -249,7 +255,9 @@ async function sendEmailViaResend({ to, subject, text }) {
         to: recipients,
         subject,
         text,
-        ...(RESEND_REPLY_TO ? { reply_to: RESEND_REPLY_TO } : {}),
+        // A per-email reply_to (e.g. the PAF inbound address for reply-to-approve)
+        // overrides the global RESEND_REPLY_TO.
+        ...(replyTo ? { reply_to: replyTo } : RESEND_REPLY_TO ? { reply_to: RESEND_REPLY_TO } : {}),
       }),
     });
     if (!res.ok) {
@@ -291,7 +299,9 @@ const FALLBACK_TEMPLATES = {
 };
 
 // Convenience: pull the named template from the active config and send.
-async function sendPafEmail(supa, { templateKey, to, vars }) {
+// `appendText` is added after the rendered body (e.g. the one-click approve
+// link + "reply approve" instructions); `replyTo` sets a per-email Reply-To.
+async function sendPafEmail(supa, { templateKey, to, vars, appendText, replyTo }) {
   const recipients = Array.isArray(to) ? to.filter(Boolean) : to ? [to] : [];
   if (!recipients.length) return { skipped: true };
   try {
@@ -306,7 +316,8 @@ async function sendPafEmail(supa, { templateKey, to, vars }) {
     return await sendEmailViaResend({
       to: recipients,
       subject: rendered.subject,
-      text: rendered.body,
+      text: appendText ? `${rendered.body}${appendText}` : rendered.body,
+      replyTo,
     });
   } catch (e) {
     console.warn("[paf] sendPafEmail threw", e);
@@ -1063,6 +1074,7 @@ async function applyBonusRouting(supa, submitterRole, row, driveIn, category) {
     if (!approverId) approverId = await resolveAdminFallback(supa);
     row.status = "Pending VP Approval";
     row.sdo_approver_id = approverId;
+    await stampApprovalToken(supa, row, approverId);
     return;
   }
   if (category === "Bonus" && !BONUS_BYPASS_ROLES.has(submitterRole)) {
@@ -1073,10 +1085,21 @@ async function applyBonusRouting(supa, submitterRole, row, driveIn, category) {
     if (!approverId) approverId = await resolveAdminFallback(supa);
     row.status = "Pending SDO Approval";
     row.sdo_approver_id = approverId; // may still be null; the widget filters by id-match
+    await stampApprovalToken(supa, row, approverId);
   } else {
     row.status = "Pending";
     row.sdo_approver_id = null;
   }
+}
+
+// Mint a single-use approval token + expiry on the row and record the approver's
+// email, so the COO's approval email can carry a one-click Approve link and
+// reply-to-approve can attribute the decision.
+async function stampApprovalToken(supa, row, approverId) {
+  row.action_token = randomUUID();
+  row.token_expires_at = new Date(Date.now() + TOKEN_EXPIRY_HOURS * 3600 * 1000).toISOString();
+  const appr = await profileById(supa, approverId);
+  row.approving_email = appr?.email || null;
 }
 
 // The COO who approves salary pay adjustments + bonuses (first active COO; VP
@@ -1110,9 +1133,20 @@ async function notifyPafRouted(supa, submitterDisplay, row, ctx) {
   const watchers = await resolvePafWatchers(supa, ctx.driveIn);
   const watcherEmails = watchers.map((w) => w.email).filter(Boolean);
 
+  // One-click Approve link + reply-to-approve footer for COO-routed approvals.
+  const approveExtras = () => {
+    if (!row.action_token || !row.id) return {};
+    const link = `${appBaseUrl()}/paf/accept?token=${row.action_token}`;
+    return {
+      replyTo: pafInboundReplyTo(row.id),
+      appendText:
+        `\n\n----------\nApprove now — one click (link expires in ${TOKEN_EXPIRY_HOURS} hours):\n${link}\n\n` +
+        `Or just REPLY to this email with the word "approve" and it will be approved in SOAR Hub.`,
+    };
+  };
+
   if (row.status === "Pending VP Approval") {
-    // Approval request to the VP, with the VP + COO copy list the policy
-    // asks for.
+    // Approval request to the COO, with the VP + COO copy list the policy asks for.
     const approver = await profileById(supa, row.sdo_approver_id);
     const copyList = await rolesEmails(supa, ["vp", "coo"]);
     const to = [approver?.email, ...copyList, ...watcherEmails].filter(Boolean);
@@ -1126,6 +1160,7 @@ async function notifyPafRouted(supa, submitterDisplay, row, ctx) {
         START_DATE: row.pa_start_date ?? "",
         SUBMITTER: submitterDisplay,
       },
+      ...approveExtras(),
     });
     return;
   }
@@ -1143,6 +1178,7 @@ async function notifyPafRouted(supa, submitterDisplay, row, ctx) {
         AMOUNT: fmtMoney(row.estimated_cost),
         DO: submitterDisplay,
       },
+      ...approveExtras(),
     });
   } else {
     const recipients = await payrollEmails(supa);
@@ -1206,6 +1242,7 @@ async function submitPaf(supa, user, body) {
     },
   });
 
+  insertRow.id = created.id; // so notify can build the approve link + reply-to
   const submitterDisplay = user.preferred_name || user.full_name || user.email;
   await notifyPafRouted(supa, submitterDisplay, insertRow, {
     driveIn,
@@ -1303,9 +1340,11 @@ async function resubmitPaf(supa, user, body) {
     sdo_decided_at: null,
     sdo_decision: null,
     sdo_decision_note: null,
-    action_token: null,
-    token_expires_at: null,
-    approving_email: null,
+    // Keep the token/approver applyBonusRouting just minted for a COO-routed
+    // resubmit; clear any stale token when it routes elsewhere.
+    action_token: row.action_token ?? null,
+    token_expires_at: row.token_expires_at ?? null,
+    approving_email: row.approving_email ?? null,
     approval_notes: null,
     approved_at: null,
     approved_by: null,
@@ -1350,6 +1389,7 @@ async function resubmitPaf(supa, user, body) {
     },
   });
 
+  updateRow.id = id; // so notify can build the approve link + reply-to
   await notifyPafRouted(supa, submitterDisplay, updateRow, {
     driveIn,
     effectiveDriveIn,
@@ -1511,6 +1551,35 @@ async function needsApprovalPaf(supa, user, body) {
 // updated and returns 409. Without this both updates would succeed,
 // the audit log would record two token-approved rows, and the second
 // approved_at would silently overwrite the first.
+// Outcome emails after a COO/leader approval (shared by the one-click link and
+// the email-reply paths; mirrors sdoApprovePaf's notifications). `existing` is
+// the row returned by finalizePafApproval.
+async function notifyPafApproved(supa, existing, isVpFlow, approverName) {
+  if (isVpFlow) {
+    const copyList = await rolesEmails(supa, ["vp", "coo"]);
+    await sendPafEmail(supa, {
+      templateKey: "PAY_ADJ_VP_APPROVED",
+      to: [...new Set([...outcomeRecipients(existing.submitter_email, existing.resubmitted_by_email), ...copyList])],
+      vars: { EMPLOYEE: existing.employee_name, ROLE: existing.pa_role ?? "", APPROVER: approverName },
+    });
+  } else {
+    await sendPafEmail(supa, {
+      templateKey: "BONUS_SDO_APPROVED",
+      to: outcomeRecipients(existing.submitter_email, existing.resubmitted_by_email),
+      vars: { EMPLOYEE: existing.employee_name, STORE: existing.drive_in, APPROVER: approverName },
+    });
+  }
+  const payroll = await payrollEmails(supa);
+  await sendPafEmail(supa, {
+    templateKey: "PAF_SUBMITTED",
+    to: payroll,
+    vars: {
+      EMPLOYEE: existing.employee_name, STORE: existing.drive_in ?? "N/A",
+      DO: approverName, CATEGORY: isVpFlow ? PAY_ADJ_SALARY : "Bonus", AMOUNT: "—",
+    },
+  });
+}
+
 async function tokenApprove(supa, body) {
   const token = sanitizeText(body?.token, 200);
   if (!token) return { error: "token is required.", status: 400 };
@@ -1525,6 +1594,20 @@ async function tokenApprove(supa, body) {
   if (existing.token_expires_at && new Date(existing.token_expires_at) < new Date()) {
     return { error: "Link has expired.", status: 410 };
   }
+
+  // COO-routed approvals (salary / bonus): the one-click link finalizes the
+  // decision to the Payroll queue, exactly like the in-app approve.
+  if (APPROVAL_PENDING_STATUSES.includes(existing.status)) {
+    const r = await finalizePafApproval(supa, existing.id, {
+      actorEmail: existing.approving_email,
+      note: "Approved via one-click email link",
+      channel: "email-link",
+    });
+    if (r.error) return { error: r.error, status: r.status };
+    await notifyPafApproved(supa, r.existing, r.isVpFlow, r.existing.approving_email || "the approver");
+    return { ok: true, employee_name: existing.employee_name, drive_in: existing.drive_in };
+  }
+
   if (existing.status !== "Needs Approval") {
     return { error: "PAF is no longer awaiting approval.", status: 400 };
   }
@@ -1776,6 +1859,9 @@ async function sdoApprovePaf(supa, user, body) {
       sdo_decided_at: now,
       sdo_decision: "approved",
       sdo_decision_note: note,
+      // Invalidate any outstanding one-click / reply-approve token.
+      action_token: null,
+      token_expires_at: null,
     })
     .eq("id", id);
   if (error) return { error: error.message, status: 500 };
@@ -1866,6 +1952,9 @@ async function sdoRejectPaf(supa, user, body) {
       sdo_decided_at: now,
       sdo_decision: "rejected",
       sdo_decision_note: reason,
+      // Invalidate any outstanding one-click / reply-approve token.
+      action_token: null,
+      token_expires_at: null,
     })
     .eq("id", id);
   if (error) return { error: error.message, status: 500 };
