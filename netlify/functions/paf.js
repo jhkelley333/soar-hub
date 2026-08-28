@@ -1056,26 +1056,42 @@ async function evaluatePafCutoff(supa) {
 
 async function applyBonusRouting(supa, submitterRole, row, driveIn, category) {
   if (category === PAY_ADJ_SALARY) {
-    // Salary adjustments for GM/DO/SDO are approved by the VP. Reuses the
-    // SDO-approval columns with a distinct status.
-    let approverId = await resolveVpApprover(supa);
+    // Salary adjustments for GM/DO/SDO are approved by the COO. Reuses the
+    // VP-approval status + columns (the approve gate already treats VP/COO as
+    // interchangeable); the assigned approver is the COO.
+    let approverId = await resolveCooApprover(supa);
     if (!approverId) approverId = await resolveAdminFallback(supa);
     row.status = "Pending VP Approval";
     row.sdo_approver_id = approverId;
     return;
   }
   if (category === "Bonus" && !BONUS_BYPASS_ROLES.has(submitterRole)) {
-    let approverId = await resolveBonusApprover(supa, driveIn, submitterRole);
+    // Bonuses are approved by the COO (was the scoped SDO). Keeps the
+    // "Pending SDO Approval" status + bonus templates; the assigned approver
+    // is the COO, and the approve gate already lets COO/admin act on it.
+    let approverId = await resolveCooApprover(supa);
     if (!approverId) approverId = await resolveAdminFallback(supa);
     row.status = "Pending SDO Approval";
-    row.sdo_approver_id = approverId; // may still be null; SDO widget filters by id-match
+    row.sdo_approver_id = approverId; // may still be null; the widget filters by id-match
   } else {
     row.status = "Pending";
     row.sdo_approver_id = null;
   }
 }
 
+// The COO who approves salary pay adjustments + bonuses (first active COO; VP
+// backup, then admin fallback via the caller).
+async function resolveCooApprover(supa) {
+  for (const role of ["coo", "vp"]) {
+    const { data } = await supa
+      .from("profiles").select("id").eq("role", role).eq("is_active", true).limit(1);
+    if (data?.[0]?.id) return data[0].id;
+  }
+  return null;
+}
+
 // The VP who approves salary pay adjustments (first active VP; COO backup).
+// Retained for reference / any other caller.
 async function resolveVpApprover(supa) {
   for (const role of ["vp", "coo"]) {
     const { data } = await supa
