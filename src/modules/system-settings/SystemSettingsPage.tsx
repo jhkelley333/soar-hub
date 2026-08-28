@@ -8,7 +8,7 @@ import {
   ArrowRight, Network, Users, MapPin, KeyRound, Globe, Flag, QrCode, Link2,
   CloudSun, BarChart3, LayoutGrid, Gauge, ScrollText, Layers, Upload,
   Settings, ClipboardCheck, ListChecks, BookMarked, Clock, TrendingDown, Building2,
-  Fingerprint, Send, Info, MapPinned, Sparkles, GraduationCap, Plane, type LucideIcon,
+  Fingerprint, Send, Info, MapPinned, Sparkles, GraduationCap, Plane, Activity, type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -51,6 +51,7 @@ const GROUPS: Group[] = [
   {
     title: "Accessibility",
     tools: [
+      { title: "User Activity", desc: "Who's active now, last login per user, and a feed of recent actions.", icon: Activity, roles: ["admin", "coo", "vp"], to: "/admin/user-activity" },
       { title: "Role Access", desc: "What each role can see and do.", icon: KeyRound, roles: ["admin"], to: "/admin/role-access" },
       { title: "Region Access", desc: "Per-region access grants.", icon: Globe, roles: ["admin"], to: "/admin/region-access" },
       { title: "Feature Flags", desc: "Toggle features on or off per environment.", icon: Flag, roles: ["admin"], to: "/admin/feature-flags" },
