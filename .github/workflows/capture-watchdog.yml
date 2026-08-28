@@ -1,0 +1,61 @@
+# Capture watchdog — external trigger for the capture-watchdog function.
+#
+# Complements the dead-man's-switch heartbeat (which lives entirely outside our
+# infra) with the inside view: this pings capture-watchdog, which reads the pull
+# log + labor_v2_daily and emails if a capture is late, failing, or if
+# yesterday's business date never landed. See netlify/functions/capture-watchdog.js.
+#
+# Like the other pullers, this drives the function from GitHub's scheduler
+# rather than Netlify's native cron (unreliable in this project). The function
+# gates its own checks to the Central-time window and dedups alerts on a
+# cooldown, so running it on the schedule below is cheap and won't spam.
+#
+# SETUP:
+#   - Merge to the default branch with Actions enabled. Defaults to
+#     https://mysoarhub.com; override with a SITE_URL repo secret.
+#   - Alerts go to CAPTURE_ALERT_TO (Netlify env; default info@heathkelley.com)
+#     via the existing Resend integration (RESEND_API_KEY / RESEND_FROM_*).
+#   - Scheduled workflows only run from the default branch.
+#
+# Verify: run it on demand ("Run workflow"), or hit
+#   /.netlify/functions/capture-watchdog?test=1   to send a wiring-test email,
+#   /.netlify/functions/capture-watchdog?dry=1     to see incidents without emailing.
+
+name: Capture watchdog
+
+on:
+  schedule:
+    # A few times across the afternoon/evening. GitHub cron is UTC; these hours
+    # span ~1pm–11pm Central across DST, which covers the heartbeat-gap window
+    # and the after-6pm "did yesterday land?" check. The function's cooldown
+    # keeps a standing outage to a single alert.
+    - cron: "0 18,20,22,0,2 * * *"
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+concurrency:
+  group: capture-watchdog
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping capture-watchdog
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          set -euo pipefail
+          base="${SITE_URL:-https://mysoarhub.com}"
+          base="${base%/}"
+          url="${base}/.netlify/functions/capture-watchdog"
+          echo "Pinging ${url}"
+          code=$(curl -fsS --max-time 120 -o /tmp/watchdog.json -w "%{http_code}" "${url}" || true)
+          echo "HTTP ${code}"
+          echo "--- response ---"
+          cat /tmp/watchdog.json 2>/dev/null || echo "(no body)"
+          echo
+          case "${code}" in
+            2*) echo "OK" ;;
+            *) echo "::error::capture-watchdog returned HTTP ${code}"; exit 1 ;;
+          esac
