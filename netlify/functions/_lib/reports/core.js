@@ -26,10 +26,12 @@ export function envConfigured() {
 // ── Resend ───────────────────────────────────────────────────────────────────
 // Sends one email to a de-duped recipient list. Returns { ok } / { skipped } /
 // { ok:false, status }. Never throws — the caller records the run either way.
-export async function sendEmail({ to, subject, text, html }) {
+export async function sendEmail({ to, subject, text, html, attachments }) {
   const recipients = [...new Set((Array.isArray(to) ? to : [to]).filter(Boolean).map((e) => String(e).trim().toLowerCase()))];
   if (!recipients.length) return { skipped: true, reason: "no recipients" };
   if (!RESEND_API_KEY) return { skipped: true, reason: "RESEND_API_KEY not set" };
+  // Resend attachments: [{ filename, content: <base64 string> }].
+  const files = Array.isArray(attachments) ? attachments.filter((a) => a?.filename && a?.content) : [];
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -40,6 +42,7 @@ export async function sendEmail({ to, subject, text, html }) {
         subject,
         ...(text ? { text } : {}),
         ...(html ? { html } : {}),
+        ...(files.length ? { attachments: files } : {}),
         ...(RESEND_REPLY_TO ? { reply_to: RESEND_REPLY_TO } : {}),
       }),
     });

@@ -54,7 +54,7 @@ export async function runReport(supa, definition, { now = new Date(), windowStar
       }
     } else {
       const to = testTo ? [testTo] : await resolveRecipients(supa, definition.recipients);
-      const r = await sendEmail({ to, subject: result.subject, text: result.text, html: result.html });
+      const r = await sendEmail({ to, subject: result.subject, text: result.text, html: result.html, attachments: result.attachments });
       if (r.ok) recipientCount = r.count || to.length;
       else if (r.skipped) sendErr = testTo ? null : (r.reason || "no recipients resolved");
       else sendErr = `${r.status}: ${r.detail || ""}`;
@@ -99,7 +99,15 @@ export async function fireEventReport(supa, key, context, { now = new Date() } =
 // `force` runs every enabled scheduled report now regardless of cron; `only`
 // limits to one key. The dispatcher runs ~every 15 min.
 export async function dispatchDue(supa, { now = new Date(), force = false, only = null } = {}) {
-  const LOOKBACK_MIN = 16; // small overlap over the ~15-min dispatcher interval
+  // A scheduled report fires at a single minute, but the dispatcher's trigger
+  // (GitHub Actions / Netlify cron) throttles to multi-hour gaps in this
+  // project — so a 16-min lookback silently dropped the whole day's reports
+  // when no tick landed near the fire. Look back far enough that any later tick
+  // that day still catches the morning fire; lastFireWithin returns the most
+  // recent fire and the per-window claim below keeps it send-once, so a wide
+  // window can't double-send. Bounded (default 26h) so a multi-day outage can't
+  // resurrect stale reports. Override with REPORTS_LOOKBACK_MIN.
+  const LOOKBACK_MIN = Number(process.env.REPORTS_LOOKBACK_MIN) || 26 * 60;
   let q = supa.from("report_definitions").select("*").eq("trigger_type", "schedule").eq("enabled", true);
   if (only) q = q.eq("key", only);
   const { data: defs } = await q;
