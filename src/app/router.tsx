@@ -55,6 +55,7 @@ import { LaborV2Page } from "@/modules/labor-v2/LaborV2Page";
 import { RankingAdminPage } from "@/modules/ranking/RankingAdminPage";
 import { BottomPerformersPage } from "@/modules/ranking/BottomPerformersPage";
 import { PullLogPage } from "@/modules/labor-v2/PullLogPage";
+import { UserActivityPage } from "@/modules/admin/UserActivityPage";
 import { LaborV2Entry } from "@/modules/labor-v2/LaborV2Entry";
 import { RvpCommitmentsPage } from "@/modules/labor-v2/RvpCommitmentsPage";
 import { PeriodCommitmentsPage } from "@/modules/period-commitments/PeriodCommitmentsPage";
@@ -298,6 +299,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <PullLogPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/user-activity",
+        element: (
+          <ProtectedRoute requireRoles={["admin", "coo", "vp"]}>
+            <UserActivityPage />
           </ProtectedRoute>
         ),
       },

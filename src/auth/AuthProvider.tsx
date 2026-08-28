@@ -13,6 +13,7 @@ import { isStandalone } from "@/lib/push";
 import { queryClient } from "@/lib/queryClient";
 import { clearPersistedQueryCache } from "@/lib/queryPersister";
 import { perfMark, perfReport } from "@/lib/perf";
+import { useActivityHeartbeat } from "./useActivityHeartbeat";
 import type { Profile, UserScope } from "@/types/database";
 
 interface AuthState {
@@ -105,6 +106,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // a background timeout.
   const profileIdRef = useRef<string | null>(null);
   useEffect(() => { profileIdRef.current = profile?.id ?? null; }, [profile]);
+
+  // Presence heartbeat: while signed in, keep this user's last_seen_at fresh
+  // for the admin User Activity page. Best-effort, self-write RLS only.
+  useActivityHeartbeat(profile?.id ?? null);
 
   // True while an app-initiated sign-out is in flight (explicit signOut,
   // or the OAuth no-profile bounce). Lets the auth listener tell a
