@@ -104,9 +104,9 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
-        className={`relative w-full ${maxWidth} overflow-hidden rounded-xl bg-surface shadow-2xl ring-1 ring-black/5`}
+        className={`relative flex max-h-[calc(100dvh-2rem)] w-full flex-col ${maxWidth} overflow-hidden rounded-xl bg-surface shadow-2xl ring-1 ring-black/5`}
       >
-        <div className="flex items-center justify-between border-b border-border px-5 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
           <h2
             id="modal-title"
             className="text-base font-semibold tracking-tight text-heading"
@@ -122,9 +122,9 @@ export function Modal({
             <X className="h-4 w-4" strokeWidth={1.75} />
           </button>
         </div>
-        <div className="max-h-[70vh] overflow-y-auto px-5 py-4">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
         {footer && (
-          <div className="flex items-center justify-end gap-2 border-t border-border bg-surface-muted px-5 py-3">
+          <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border bg-surface-muted px-5 py-3">
             {footer}
           </div>
         )}
