@@ -309,9 +309,16 @@ function isFieldVisibleForState(fieldKey: string, state: FormState): boolean {
     return false;
   }
   if (fieldKey === "reg_pay_rate") {
-    // Clocked in at the other store: no pay accrues here, so no rate to enter.
+    // Clocked in at the other store: the rate is entered in the dedicated
+    // cross-store charge section, so hide the general rate field here.
     if (state.category === "Cross Store Work" && state.cross_clocked_other === "yes") return false;
     return state.pay_basis !== "Salary";
+  }
+  if (fieldKey === "reg_hours") {
+    // Clocked in at the other store: regular hours are entered in the dedicated
+    // cross-store charge section, so hide the general field to avoid duplicates.
+    if (state.category === "Cross Store Work" && state.cross_clocked_other === "yes") return false;
+    return true;
   }
   if (fieldKey === "new_location") {
     return state.location_change === "Yes";
@@ -719,7 +726,10 @@ export function PafForm({
           setError('"Store Charged OT" is required when the team member clocked in at the other store.');
           return;
         }
-        if (!(Number(state.ot_hours) > 0)) { setError('"OT Hours" is required — enter the overtime hours to charge.'); return; }
+        if (!(Number(state.reg_hours) > 0) && !(Number(state.ot_hours) > 0)) {
+          setError("Enter regular hours, overtime hours, or both.");
+          return;
+        }
         if (!(Number(state.reg_pay_rate) > 0)) { setError('"Pay Rate" is required.'); return; }
       } else {
         if (!(Number(state.reg_hours) > 0)) { setError('"Reg Hours" is required.'); return; }
@@ -883,10 +893,9 @@ export function PafForm({
                   onClick={() => {
                     patch("cross_clocked_other", val);
                     if (val === "yes") {
-                      // Base pay runs through the other store's clock — clear
-                      // reg hours + tips so only the OT premium is charged.
-                      // Keep rate + OT hours (they drive the charge amount).
-                      patch("reg_hours", "");
+                      // Tips don't apply to a cross-store charge — clear them.
+                      // Regular hours, OT hours, and rate are entered in the
+                      // cross-store charge section below and drive the charge.
                       patch("cc_tips", "");
                       patch("declared_tips", "");
                     }
@@ -903,9 +912,9 @@ export function PafForm({
             </div>
             {state.cross_clocked_other === "yes" && (
               <div className="rounded-md bg-amber-50 px-3 py-2.5 text-sm text-amber-800 ring-1 ring-inset ring-amber-200">
-                Base pay runs through the other store's clock. This PAF <strong>charges the OT premium</strong> to
-                that store — enter the <strong>OT hours + pay rate</strong> below and the <strong>Store Charged
-                OT</strong>; the amount to charge is calculated automatically.
+                They clocked in at the other store. Enter the <strong>hours worked + pay rate</strong> and the{" "}
+                <strong>Store Charged</strong> below — put hours under <strong>Regular</strong> or <strong>Overtime</strong>{" "}
+                (or both). Regular charges at the rate; overtime at 1.5×. The amount to charge is calculated automatically.
               </div>
             )}
             {state.cross_clocked_other === "no" && (
@@ -917,16 +926,27 @@ export function PafForm({
         </FormSection>
       )}
 
-      {/* Cross store OT — clocked-in flow. Regular pay runs through the other
-          store's clock; only the OT premium needs charging there. Capture the
-          OT hours and show the 1.5× so payroll knows what to charge. No pay is
-          added to this PAF (cost stays $0). */}
+      {/* Cross store hours & charge — clocked-in flow. Base pay runs through the
+          other store's clock; this PAF charges the hours worked to that store.
+          Regular hours charge at the rate (×1); overtime at 1.5×. Payroll can
+          record a no-overtime borrowed shift as Regular. */}
       {state.category === "Cross Store Work" && state.cross_clocked_other === "yes" && (
         <FormSection
-          title="Cross store OT"
-          description="Base pay runs through the other store's clock; this PAF charges the OT premium. Enter the OT hours and pay rate to compute the amount to charge."
+          title="Cross store hours & charge"
+          description="Enter the hours worked and pay rate. Put hours under Regular or Overtime (or both) — Regular charges at the rate, Overtime at 1.5×."
         >
           <div className="flex flex-wrap items-end gap-4">
+            <div className="w-32">
+              <NhField label="Reg Hours">
+                <input
+                  inputMode="decimal"
+                  value={state.reg_hours ?? ""}
+                  onChange={(e) => patch("reg_hours", e.target.value.replace(/[^0-9.]/g, ""))}
+                  placeholder="0"
+                  className={NH_INPUT}
+                />
+              </NhField>
+            </div>
             <div className="w-32">
               <NhField label="OT Hours">
                 <input
@@ -954,8 +974,14 @@ export function PafForm({
             </div>
             <div className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-200">
               Amount to charge{String(state.store_chrged_ot ?? "").trim() ? <> store #{state.store_chrged_ot}</> : null}:{" "}
-              <strong>{formatUSD(Number(state.ot_hours || 0) * Number(state.reg_pay_rate || 0) * 1.5)}</strong>
-              <span className="ml-1 text-emerald-700/70">({Number(state.ot_hours || 0)} OT hr × ${Number(state.reg_pay_rate || 0).toFixed(2)} × 1.5)</span>
+              <strong>{formatUSD(
+                Number(state.reg_hours || 0) * Number(state.reg_pay_rate || 0) +
+                Number(state.ot_hours || 0) * Number(state.reg_pay_rate || 0) * 1.5,
+              )}</strong>
+              <span className="ml-1 text-emerald-700/70">
+                ({Number(state.reg_hours || 0)} reg × ${Number(state.reg_pay_rate || 0).toFixed(2)}
+                {" + "}{Number(state.ot_hours || 0)} OT × ${Number(state.reg_pay_rate || 0).toFixed(2)} × 1.5)
+              </span>
             </div>
           </div>
         </FormSection>
