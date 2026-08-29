@@ -851,8 +851,16 @@ async function buildPafRowFromBody(supa, user, body) {
       return { error: 'Answer "Did the team member clock in at the other store?"', status: 400 };
     }
     crossClockedOther = ans === "yes";
-    if (crossClockedOther && !sanitizeText(body?.store_chrged_ot, 20)) {
-      return { error: '"Store Charged OT" is required when the team member clocked in at the other store.', status: 400 };
+    if (crossClockedOther) {
+      if (!sanitizeText(body?.store_chrged_ot, 20)) {
+        return { error: '"Store Charged OT" is required when the team member clocked in at the other store.', status: 400 };
+      }
+      if (!(num(body?.reg_hours) > 0) && !(num(body?.ot_hours) > 0)) {
+        return { error: "Enter regular hours, overtime hours, or both for the cross-store charge.", status: 400 };
+      }
+      if (!(num(body?.reg_pay_rate) > 0)) {
+        return { error: '"Pay Rate" is required for the cross-store charge.', status: 400 };
+      }
     }
   }
 
@@ -980,21 +988,27 @@ async function buildPafRowFromBody(supa, user, body) {
   };
 
   // Clocked at the other store: base pay runs through that store's clock, so
-  // this PAF documents the OT PREMIUM to charge the other store. Charge OT
-  // only: keep reg_pay_rate + ot_hours, zero reg_hours + tips. The PAF's cost
-  // is then ot_hours × rate × 1.5 — the amount payroll charges the other store.
-  // Zeros, not nulls: these columns are NOT NULL in paf_submissions.
+  // this PAF documents the hours worked to charge back to the other store.
+  // The submitter records the hours as Regular (charged at the rate) and/or
+  // Overtime (charged at 1.5×); a no-overtime borrowed shift is all Regular.
+  // Tips don't apply to a cross-store charge, so zero them. reg_hours/ot_hours
+  // carry the submitted hours. Zeros, not nulls: these columns are NOT NULL.
   if (crossClockedOther === true) {
-    insertRow.reg_hours = 0;
     insertRow.cc_tips = 0;
     insertRow.declared_tips = 0;
-    const otCharge = num(insertRow.ot_hours) * num(insertRow.reg_pay_rate) * 1.5;
+    const rate = num(insertRow.reg_pay_rate);
+    const regHrs = num(insertRow.reg_hours);
+    const otHrs = num(insertRow.ot_hours);
+    const charge = regHrs * rate + otHrs * rate * 1.5;
+    const parts = [];
+    if (regHrs > 0) parts.push(`${regHrs} reg hr × $${rate.toFixed(2)}`);
+    if (otHrs > 0) parts.push(`${otHrs} OT hr × $${rate.toFixed(2)} × 1.5`);
     const marker = "[CROSS STORE — CLOCKED AT OTHER STORE]";
     if (!insertRow.explanation.includes(marker)) {
       insertRow.explanation =
-        `${insertRow.explanation}\n\n${marker} NOTIFY PAYROLL: charge $${otCharge.toFixed(2)} ` +
-        `(${num(insertRow.ot_hours)} OT hr × $${num(insertRow.reg_pay_rate).toFixed(2)} × 1.5) to store #${insertRow.store_chrged_ot}. ` +
-        "Base pay runs through the other store's clock; this PAF charges the OT premium only.";
+        `${insertRow.explanation}\n\n${marker} NOTIFY PAYROLL: charge $${charge.toFixed(2)} ` +
+        `(${parts.join(" + ")}) to store #${insertRow.store_chrged_ot}. ` +
+        "Base pay runs through the other store's clock; this PAF charges the hours worked to that store.";
     }
   }
 
