@@ -38,6 +38,23 @@ function addDaysIso(iso: string, n: number): string {
 const fmtWeekLabel = (mondayIso: string) =>
   `${fmtDate(mondayIso).replace(/, \d{4}$/, "")} – ${fmtDate(addDaysIso(mondayIso, 6))}`;
 
+// Turn manually-typed lines into the same CSV shape the parser expects. Each
+// line is a store number with an optional attendee count ("1056", "1056, 2",
+// "1056 x3"); since the parser counts one attendee per row, a store with count
+// N is emitted N times. Returns the CSV plus how many distinct stores it found.
+function manualToCsv(text: string): { csv: string; stores: number } {
+  const rows = ["store_number"];
+  let stores = 0;
+  for (const raw of text.split(/\r?\n/)) {
+    const m = raw.trim().match(/^(\d{2,6})\D*(\d+)?/);
+    if (!m) continue;
+    const count = Math.max(1, Math.min(999, Number(m[2]) || 1));
+    for (let i = 0; i < count; i++) rows.push(m[1]);
+    stores++;
+  }
+  return { csv: rows.join("\n"), stores };
+}
+
 export function CorporateTrainingCreditPanel() {
   const { profile } = useAuth();
   const toast = useToast();
@@ -54,6 +71,8 @@ export function CorporateTrainingCreditPanel() {
     return Array.from({ length: 16 }, (_, i) => addDaysIso(cur, (2 - i) * 7));
   }, []);
 
+  const [entryMode, setEntryMode] = useState<"csv" | "manual">("csv");
+  const [manualText, setManualText] = useState("");
   const [parsed, setParsed] = useState<CorpTrainingParseResult | null>(null);
   const [fileName, setFileName] = useState("");
   const [label, setLabel] = useState("");
@@ -85,7 +104,7 @@ export function CorporateTrainingCreditPanel() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["corp-training"] });
       toast.push("Training credit applied.", "success");
-      setParsed(null); setFileName(""); setLabel(""); setDayOn(Array(7).fill(false)); setDaily("");
+      setParsed(null); setFileName(""); setManualText(""); setLabel(""); setDayOn(Array(7).fill(false)); setDaily("");
     },
     onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't apply the credit.", "error"),
   });
@@ -110,6 +129,19 @@ export function CorporateTrainingCreditPanel() {
     parseMut.mutate(text);
   };
 
+  const previewManual = () => {
+    const { csv, stores } = manualToCsv(manualText);
+    if (!stores) { toast.push("Enter at least one store number, one per line.", "error"); return; }
+    setFileName("");
+    parseMut.mutate(csv);
+  };
+
+  const switchMode = (m: "csv" | "manual") => {
+    if (m === entryMode) return;
+    setEntryMode(m);
+    setParsed(null); setFileName("");
+  };
+
   const canApply = inScopeStores.length > 0 && selectedDates.length > 0 && dailyAmount > 0 && !applyMut.isPending;
   const totalCredit = inScopeStores.reduce((a, s) => a + s.count, 0) * selectedDates.length * dailyAmount;
 
@@ -120,7 +152,7 @@ export function CorporateTrainingCreditPanel() {
           <div>
             <h2 className="text-sm font-semibold text-midnight">Add a corporate training class</h2>
             <p className="mt-0.5 text-xs text-zinc-500">
-              Upload a CSV of attendees (needs a store-number column), then pick the week + days the class ran.
+              Enter the stores manually or upload a CSV of attendees, then pick the week + days the class ran.
               Each store is credited {fmtUSD(defaultDaily)}/day per attendee.
             </p>
           </div>
@@ -142,23 +174,52 @@ export function CorporateTrainingCreditPanel() {
           )}
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 hover:border-accent hover:text-accent">
-            <Upload className="h-4 w-4" />
-            {fileName || "Choose CSV…"}
-            <input type="file" accept=".csv,text/csv" className="hidden"
-              onChange={(e) => onFile(e.target.files?.[0] ?? null)} />
-          </label>
-          {parseMut.isPending && <span className="text-xs text-zinc-400">Reading…</span>}
-          {parsed && (
-            <span className="text-xs text-zinc-500">
-              {parsed.stores.length} stores · {parsed.total_attendees} attendees
-              {parsed.unknown.length > 0 && (
-                <span className="ml-2 text-amber-600">{parsed.unknown.length} out of scope (skipped)</span>
-              )}
-            </span>
-          )}
+        {/* Entry mode toggle */}
+        <div className="mt-4 inline-flex rounded-lg bg-zinc-100 p-0.5 text-xs">
+          {(["manual", "csv"] as const).map((m) => (
+            <button key={m} type="button" onClick={() => switchMode(m)}
+              className={cn("rounded-md px-3 py-1 font-medium transition",
+                entryMode === m ? "bg-white text-midnight shadow-sm" : "text-zinc-500 hover:text-zinc-700")}>
+              {m === "manual" ? "Enter stores" : "Upload CSV"}
+            </button>
+          ))}
         </div>
+
+        {entryMode === "manual" ? (
+          <div className="mt-3">
+            <textarea
+              className={cn(inputCls, "w-full font-mono text-xs")} rows={5}
+              value={manualText} onChange={(e) => setManualText(e.target.value)}
+              placeholder={"One store per line — number, optional attendee count:\n1056\n1057, 2\n1082 3"} />
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <Button size="sm" onClick={previewManual} disabled={parseMut.isPending || !manualText.trim()}>
+                {parseMut.isPending ? "Checking…" : "Preview stores"}
+              </Button>
+              <span className="text-[11px] text-zinc-400">
+                Store number, then an optional attendee count (defaults to 1). Out-of-scope stores are skipped.
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 hover:border-accent hover:text-accent">
+              <Upload className="h-4 w-4" />
+              {fileName || "Choose CSV…"}
+              <input type="file" accept=".csv,text/csv" className="hidden"
+                onChange={(e) => onFile(e.target.files?.[0] ?? null)} />
+            </label>
+            {parseMut.isPending && <span className="text-xs text-zinc-400">Reading…</span>}
+          </div>
+        )}
+
+        {parsed && (
+          <p className="mt-3 text-xs text-zinc-500">
+            {parsed.stores.length} stores · {parsed.total_attendees} attendees
+            {parsed.unknown.length > 0 && (
+              <span className="ml-2 text-amber-600">{parsed.unknown.length} out of scope (skipped)</span>
+            )}
+          </p>
+        )}
 
         {parsed && inScopeStores.length > 0 && (
           <>
