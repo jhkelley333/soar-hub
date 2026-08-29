@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bug, Lightbulb, ChevronUp, MessageSquare, Plus, ShieldCheck } from "lucide-react";
+import { Bug, Lightbulb, ChevronUp, MessageSquare, Plus, ShieldCheck, ImageIcon, MapPin } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -17,8 +17,9 @@ import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import {
-  listHubTickets, getHubTicket, createHubTicket, voteHubTicket, commentHubTicket, setHubTicketStatus,
+  listHubTickets, getHubTicket, voteHubTicket, commentHubTicket, setHubTicketStatus,
 } from "./api";
+import { NewTicketModal } from "./NewTicketModal";
 import type { HubTicket, HubStatus, HubKind } from "./types";
 import { STATUS_LABEL } from "./types";
 
@@ -76,7 +77,7 @@ export function MyHubPage() {
   return (
     <>
       <PageHeader
-        title="MyHub"
+        title="Support Tickets"
         description="Report an issue or share an idea for the Hub. Upvote what matters — you'll be notified when yours is resolved."
         actions={<Button onClick={() => setCreateOpen(true)}><Plus className="mr-1 h-4 w-4" /> New ticket</Button>}
       />
@@ -110,7 +111,7 @@ export function MyHubPage() {
         </div>
       )}
 
-      {createOpen && <CreateModal onClose={() => setCreateOpen(false)} />}
+      <NewTicketModal open={createOpen} onClose={() => setCreateOpen(false)} pagePath="" />
       {openId && <DetailModal id={openId} isAdmin={!!isAdmin} onClose={() => setOpenId(null)} />}
     </>
   );
@@ -144,59 +145,20 @@ function TicketRow({ t, onOpen, onVote, voting }: { t: HubTicket; onOpen: () => 
             <StatusChip status={t.status} />
             {t.has_update && <span className="h-1.5 w-1.5 rounded-full bg-accent" title="Updated" />}
           </div>
-          <div className="mt-0.5 flex items-center gap-2 text-[11px] text-zinc-400">
+          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
             <span>{t.created_by_name || "Someone"}</span>
             <span>· {relTime(t.created_at)}</span>
             {(t.comment_count ?? 0) > 0 && (
               <span className="inline-flex items-center gap-0.5"><MessageSquare className="h-3 w-3" /> {t.comment_count}</span>
             )}
+            {t.has_photo && <ImageIcon className="h-3 w-3" aria-label="Has photo" />}
+            {t.page_path && (
+              <span className="inline-flex items-center gap-0.5 font-mono text-zinc-400"><MapPin className="h-3 w-3" /> {t.page_path}</span>
+            )}
           </div>
         </button>
       </CardBody>
     </Card>
-  );
-}
-
-function CreateModal({ onClose }: { onClose: () => void }) {
-  const toast = useToast();
-  const qc = useQueryClient();
-  const [kind, setKind] = useState<HubKind>("issue");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-
-  const mut = useMutation({
-    mutationFn: () => createHubTicket({ kind, title: title.trim(), description: description.trim() }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["hub-tickets"] });
-      qc.invalidateQueries({ queryKey: ["hub-my-updates"] });
-      toast.push("Thanks — your ticket was submitted.", "success");
-      onClose();
-    },
-    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't submit.", "error"),
-  });
-
-  return (
-    <Modal open onClose={onClose} title="New MyHub ticket"
-      footer={<>
-        <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button onClick={() => mut.mutate()} disabled={!title.trim() || mut.isPending}>{mut.isPending ? "Submitting…" : "Submit"}</Button>
-      </>}>
-      <div className="space-y-4">
-        <Segmented value={kind} onChange={(v) => setKind(v as HubKind)}
-          options={[{ value: "issue", label: "🐞 Issue" }, { value: "idea", label: "💡 Idea" }]} />
-        <div>
-          <label className="mb-1 block text-xs font-medium text-zinc-600">Title</label>
-          <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={160}
-            placeholder={kind === "idea" ? "What should the Hub do?" : "What went wrong?"} autoFocus />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-zinc-600">Details <span className="text-zinc-400">(optional)</span></label>
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={5} maxLength={4000}
-            className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-midnight focus:border-accent focus:outline-none"
-            placeholder="Steps to reproduce, which page, or more about the idea…" />
-        </div>
-      </div>
-    </Modal>
   );
 }
 
@@ -251,7 +213,17 @@ function DetailModal({ id, isAdmin, onClose }: { id: string; isAdmin: boolean; o
             <span className="text-[11px] text-zinc-400">by {ticket.created_by_name || "Someone"} · {relTime(ticket.created_at)}</span>
           </div>
 
+          {ticket.page_path && (
+            <p className="inline-flex items-center gap-1 text-xs text-zinc-500">
+              <MapPin className="h-3.5 w-3.5 text-zinc-400" /> Reported from <span className="font-mono">{ticket.page_path}</span>
+            </p>
+          )}
           {ticket.description && <p className="whitespace-pre-wrap text-sm text-zinc-700">{ticket.description}</p>}
+          {ticket.photo_url && (
+            <a href={ticket.photo_url} target="_blank" rel="noreferrer" className="block">
+              <img src={ticket.photo_url} alt="attachment" className="max-h-72 rounded-lg ring-1 ring-zinc-200" />
+            </a>
+          )}
           {ticket.resolution_note && (
             <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
               <span className="font-semibold">Resolution:</span> {ticket.resolution_note}

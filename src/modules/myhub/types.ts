@@ -13,6 +13,10 @@ export interface HubTicket {
   resolution_note: string | null;
   resolved_at: string | null;
   upvotes: number;
+  page_path?: string | null;
+  photo_path?: string | null;
+  photo_url?: string | null;   // signed download URL (detail only)
+  has_photo?: boolean;         // board flag
   created_at: string;
   updated_at: string;
   my_vote?: boolean;
