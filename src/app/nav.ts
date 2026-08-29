@@ -24,6 +24,7 @@ import {
   ListChecks,
   Clock,
   Fingerprint,
+  LifeBuoy,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -172,6 +173,7 @@ export const NAV: NavItem[] = [
   // Assessment Templates, Command Center Links, Labor Sync, Weather Sync now
   // live behind System Settings. PAF Config stays for payroll (admin: hub).
   { to: "/admin/paf-config", label: "PAF Config", icon: Settings,    roles: ["payroll"] },
+  { to: "/myhub",       label: "MyHub",       icon: LifeBuoy,        roles: null },
   { to: "/account",     label: "Account",     icon: UserCircle,      roles: null },
 ];
 
@@ -281,6 +283,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/manuals": "WORKSPACE",
   "/my-stores": "WORKSPACE",
   "/account": "WORKSPACE",
+  "/myhub": "WORKSPACE",
   // Roster (GMs + leadership + birthdays) lives under People.
   "/admin/gm-roster": "PEOPLE",
   "/admin/system-settings": "ADMIN",
