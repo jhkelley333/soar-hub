@@ -31,8 +31,22 @@ export function getHubTicket(id: string): Promise<{ ticket: HubTicket; comments:
   return req(`${FN}?action=get&id=${encodeURIComponent(id)}`);
 }
 
-export function createHubTicket(input: { kind: HubKind; title: string; description: string }): Promise<{ ticket: HubTicket }> {
+export function createHubTicket(input: {
+  kind: HubKind; title: string; description: string; page_path?: string; photo_path?: string | null;
+}): Promise<{ ticket: HubTicket }> {
   return req(`${FN}?action=create`, { method: "POST", body: JSON.stringify(input) });
+}
+
+// Upload one photo for a ticket (before the ticket exists) via a signed URL,
+// mirroring the store-visit pattern. Returns the stored path to attach on create.
+export async function uploadHubPhoto(file: File): Promise<string> {
+  const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+  const { token, path } = await req<{ upload_url: string; token: string; path: string }>(
+    `${FN}?action=photo-upload-url`, { method: "POST", body: JSON.stringify({ ext }) },
+  );
+  const { error } = await supabase.storage.from("support-ticket-photos").uploadToSignedUrl(path, token, file);
+  if (error) throw new Error(error.message);
+  return path;
 }
 
 export function voteHubTicket(id: string): Promise<{ upvotes: number; my_vote: boolean }> {

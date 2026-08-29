@@ -31,6 +31,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { LaunchSplash } from "@/auth/LaunchSplash";
 import { RequiredTrainingPrompt } from "@/modules/qsr/RequiredTrainingPrompt";
 import { ViewAsBanner } from "@/app/ViewAsBanner";
+import { SupportTicketButton } from "@/modules/myhub/SupportTicketButton";
 import { fetchMyTree, launchScopeLabel, scopeWordForRole } from "@/modules/my-stores/api";
 import { cn } from "@/lib/cn";
 
@@ -163,6 +164,12 @@ export function AppShell() {
           )}
         </main>
       </div>
+
+      {/* Global Support Ticket launcher — floating, top-right. The desktop
+          Topbar carries its own button, so on non-full-bleed pages this floating
+          one is mobile-only; on full-bleed pages (no Topbar) it shows on all
+          sizes so the launcher is reachable on every page. */}
+      <SupportTicketButton variant="floating" className={cn(!fullBleed && "lg:hidden")} />
 
       {/* Bottom-tab nav — mobile only. Hidden inside Cash Management, which
           takes over the bottom bar with its own section nav. */}

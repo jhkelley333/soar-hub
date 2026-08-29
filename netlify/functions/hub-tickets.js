@@ -23,6 +23,8 @@ const SITE_URL = (process.env.SITE_URL || "https://mysoarhub.com").replace(/\/$/
 
 const STATUSES = new Set(["open", "planned", "in_progress", "resolved", "declined"]);
 const STATUS_LABEL = { open: "Open", planned: "Planned", in_progress: "In progress", resolved: "Resolved", declined: "Declined" };
+const PHOTO_BUCKET = "support-ticket-photos";
+const PHOTO_TTL = 3600; // 1h signed download URLs
 
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("hub-tickets env vars not configured");
@@ -73,6 +75,25 @@ async function notify(supa, { userIds = [], emails = [], title, body, url = `${S
 
 const touch = (supa, id) => supa.from("hub_tickets").update({ updated_at: new Date().toISOString() }).eq("id", id);
 
+async function signPhoto(supa, path) {
+  if (!path) return null;
+  try {
+    const { data } = await supa.storage.from(PHOTO_BUCKET).createSignedUrl(path, PHOTO_TTL);
+    return data?.signedUrl ?? null;
+  } catch { return null; }
+}
+
+// Mint a signed PUT URL for one ticket photo, before the ticket exists. Path is
+// namespaced to the caller so a user can only write under their own folder.
+async function photoUploadUrl(supa, user, body) {
+  const ext = /^(jpe?g|png|webp|heic|gif)$/i.test(String(body?.ext || "")) ? String(body.ext).toLowerCase() : "jpg";
+  const rand = Math.random().toString(36).slice(2, 8);
+  const path = `tickets/${user.id}/${Date.now()}-${rand}.${ext}`;
+  const { data, error } = await supa.storage.from(PHOTO_BUCKET).createSignedUploadUrl(path);
+  if (error) return { error: error.message, status: 500 };
+  return { upload_url: data.signedUrl, token: data.token, path };
+}
+
 async function listBoard(supa, user, params) {
   let q = supa.from("hub_tickets").select("*");
   if (params.status && STATUSES.has(params.status)) q = q.eq("status", params.status);
@@ -96,6 +117,7 @@ async function listBoard(supa, user, params) {
   const out = rows.map((t) => ({
     ...t,
     my_vote: voted.has(t.id),
+    has_photo: !!t.photo_path,
     comment_count: commentCount.get(t.id) || 0,
     // Unseen = a ticket I reported that changed since I last opened it.
     has_update: t.created_by === user.id && (!seenAt.has(t.id) || new Date(t.updated_at) > new Date(seenAt.get(t.id))),
@@ -115,16 +137,21 @@ async function getTicket(supa, user, id) {
   ]);
   // Mark read.
   await supa.from("hub_ticket_reads").upsert({ user_id: user.id, ticket_id: id, seen_at: new Date().toISOString() }, { onConflict: "user_id,ticket_id" });
-  return { ticket: { ...ticket, my_vote: !!myVote }, comments: comments || [] };
+  const photo_url = await signPhoto(supa, ticket.photo_path);
+  return { ticket: { ...ticket, my_vote: !!myVote, photo_url }, comments: comments || [] };
 }
 
 async function createTicket(supa, user, body) {
   const kind = body?.kind === "idea" ? "idea" : "issue";
   const title = clean(body?.title, 160);
   const description = clean(body?.description, 4000);
+  const page_path = clean(body?.page_path, 300) || null;
+  // Only accept a photo path under this user's own folder (defense in depth).
+  const photoRaw = clean(body?.photo_path, 300);
+  const photo_path = photoRaw && photoRaw.startsWith(`tickets/${user.id}/`) ? photoRaw : null;
   if (!title) return { error: "A title is required.", status: 400 };
   const { data, error } = await supa.from("hub_tickets").insert({
-    kind, title, description,
+    kind, title, description, page_path, photo_path,
     created_by: user.id, created_by_name: displayName(user), created_by_email: user.email,
   }).select().single();
   if (error) return { error: error.message, status: 500 };
@@ -132,8 +159,8 @@ async function createTicket(supa, user, body) {
   const { ids, emails } = await adminRecipients(supa);
   await notify(supa, {
     userIds: ids, emails,
-    title: `New MyHub ${kind}: ${title}`,
-    body: `${displayName(user)} filed a${kind === "idea" ? "n idea" : "n issue"}: “${title}”.`,
+    title: `New support ${kind}: ${title}`,
+    body: `${displayName(user)} filed a${kind === "idea" ? "n idea" : "n issue"}: “${title}”.${page_path ? ` (on ${page_path})` : ""}`,
     url: `${SITE_URL}/myhub`, excludeUserId: user.id,
   });
   return { ticket: data };
@@ -165,11 +192,11 @@ async function addComment(supa, user, body) {
   const url = `${SITE_URL}/myhub`;
   if (admin_ && ticket.created_by && ticket.created_by !== user.id) {
     // Admin replied → notify the reporter.
-    await notify(supa, { userIds: [ticket.created_by], emails: [ticket.created_by_email], title: `Reply on your MyHub ticket: ${ticket.title}`, body: `${displayName(user)} replied: “${text.slice(0, 160)}”.`, url, excludeUserId: user.id });
+    await notify(supa, { userIds: [ticket.created_by], emails: [ticket.created_by_email], title: `Reply on your support ticket: ${ticket.title}`, body: `${displayName(user)} replied: “${text.slice(0, 160)}”.`, url, excludeUserId: user.id });
   } else if (!admin_) {
     // Reporter/other replied → notify admins.
     const { ids, emails } = await adminRecipients(supa);
-    await notify(supa, { userIds: ids, emails, title: `New reply on MyHub ticket: ${ticket.title}`, body: `${displayName(user)} commented: “${text.slice(0, 160)}”.`, url, excludeUserId: user.id });
+    await notify(supa, { userIds: ids, emails, title: `New reply on support ticket: ${ticket.title}`, body: `${displayName(user)} commented: “${text.slice(0, 160)}”.`, url, excludeUserId: user.id });
   }
   return { comment };
 }
@@ -194,7 +221,7 @@ async function setStatus(supa, user, body) {
     const verb = status === "resolved" ? "resolved" : status === "declined" ? "closed" : `moved to ${STATUS_LABEL[status]}`;
     await notify(supa, {
       userIds: [ticket.created_by], emails: [ticket.created_by_email],
-      title: `Your MyHub ticket was ${verb}: ${ticket.title}`,
+      title: `Your support ticket was ${verb}: ${ticket.title}`,
       body: `“${ticket.title}” is now ${STATUS_LABEL[status]}.${note ? ` Note: ${note}` : ""}`,
       url: `${SITE_URL}/myhub`, excludeUserId: user.id,
     });
@@ -231,6 +258,10 @@ export const handler = async (event) => {
       return r.error ? respond(r.status, { error: r.error }) : respond(200, r);
     }
     if (action === "my-updates") return respond(200, await myUpdates(supa, user));
+    if (action === "photo-upload-url") {
+      const r = await photoUploadUrl(supa, user, body);
+      return r.error ? respond(r.status, { error: r.error }) : respond(200, r);
+    }
     if (action === "create") {
       const r = await createTicket(supa, user, body);
       return r.error ? respond(r.status, { error: r.error }) : respond(200, r);

@@ -25,6 +25,7 @@ import { fetchDirectory } from "@/modules/directory/api";
 import type { DirectoryPerson } from "@/modules/directory/api";
 import type { Contact } from "@/types/database";
 import { cn } from "@/lib/cn";
+import { SupportTicketButton } from "@/modules/myhub/SupportTicketButton";
 
 const WO_ROLES = new Set([
   "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader",
@@ -287,6 +288,9 @@ export function Topbar() {
           </div>
         )}
       </div>
+
+      {/* Support ticket launcher */}
+      <SupportTicketButton variant="topbar" />
 
       {/* Theme toggle */}
       <button

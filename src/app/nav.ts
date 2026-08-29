@@ -173,7 +173,7 @@ export const NAV: NavItem[] = [
   // Assessment Templates, Command Center Links, Labor Sync, Weather Sync now
   // live behind System Settings. PAF Config stays for payroll (admin: hub).
   { to: "/admin/paf-config", label: "PAF Config", icon: Settings,    roles: ["payroll"] },
-  { to: "/myhub",       label: "MyHub",       icon: LifeBuoy,        roles: null },
+  { to: "/myhub",       label: "Support Ticket", icon: LifeBuoy,     roles: null },
   { to: "/account",     label: "Account",     icon: UserCircle,      roles: null },
 ];
 
