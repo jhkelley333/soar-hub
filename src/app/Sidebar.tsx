@@ -14,6 +14,7 @@ import { useViewAs, useEffectiveRole } from "@/lib/useViewAs";
 import { listPafs, listSdoQueue } from "@/modules/paf/api";
 import { listApprovalQueue } from "@/modules/employee-actions/api";
 import { useChatUnreadCount } from "@/modules/chat/useChatUnread";
+import { hubMyUpdates } from "@/modules/myhub/api";
 import { ROLE_LABELS, type UserRole } from "@/types/database";
 import { cn } from "@/lib/cn";
 
@@ -121,11 +122,20 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const pafBadge = usePafBadgeCount(effectiveRole);
   const eaBadge = useEmployeeActionsBadgeCount(effectiveRole);
   const chatBadge = useChatUnreadCount();
+  // MyHub: badge = the current user's own tickets that changed since last viewed.
+  const myHubQuery = useQuery({
+    queryKey: ["hub-my-updates"],
+    queryFn: hubMyUpdates,
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
+  });
+  const myHubBadge = myHubQuery.data?.count ?? 0;
 
   function badgeFor(to: string): number | null {
     if (to === "/paf" && typeof pafBadge === "number" && pafBadge > 0) return pafBadge;
     if (to === "/employee-actions" && typeof eaBadge === "number" && eaBadge > 0) return eaBadge;
     if (to === "/chat" && chatBadge > 0) return chatBadge > 99 ? 99 : chatBadge;
+    if (to === "/myhub" && myHubBadge > 0) return myHubBadge > 99 ? 99 : myHubBadge;
     return null;
   }
 
