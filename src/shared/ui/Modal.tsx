@@ -107,7 +107,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
-        className={`relative flex max-h-[calc(100dvh-2rem)] w-full flex-col ${maxWidth} overflow-hidden rounded-xl bg-surface shadow-2xl ring-1 ring-black/5`}
+        className={`relative flex max-h-[calc(100dvh_-_2rem)] w-full flex-col ${maxWidth} overflow-hidden rounded-xl bg-surface shadow-2xl ring-1 ring-black/5`}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
           <h2
