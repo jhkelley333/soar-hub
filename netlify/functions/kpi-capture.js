@@ -106,13 +106,28 @@ export const handler = async (event) => {
     return { statusCode: 502, body: `Couldn't reach the KPI feed after retries: ${lastErr}` };
   }
 
-  const { error } = await supa
-    .from("kpi_snapshots")
-    .upsert(
-      { captured_at: new Date().toISOString(), central_date: centralDate, central_hour: wc.hour, payload },
-      { onConflict: "central_date,central_hour" },
-    );
-  if (error) return { statusCode: 500, body: `DB insert failed: ${error.message}` };
+  // Store the raw snapshot. Retry a couple times so a transient Supabase blip
+  // (pooler hiccup, brief unavailability) doesn't fail an otherwise-good pull,
+  // and — critically — log the failure to the Pull Log if it still fails, so a
+  // 500 here is diagnosable instead of invisible (it previously returned before
+  // any logPull, so DB-write failures never showed up in /admin/labor-v2/log).
+  let snapErr = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const { error } = await supa
+      .from("kpi_snapshots")
+      .upsert(
+        { captured_at: new Date().toISOString(), central_date: centralDate, central_hour: wc.hour, payload },
+        { onConflict: "central_date,central_hour" },
+      );
+    if (!error) { snapErr = null; break; }
+    snapErr = error;
+    if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 1000)); // 1s, 2s
+  }
+  if (snapErr) {
+    console.log(`[kpi-capture] kpi_snapshots insert failed after retries: ${snapErr.message}`);
+    await logPull(supa, { source: "cron", ok: false, central_date: centralDate, central_hour: wc.hour, error: `kpi_snapshots insert failed: ${snapErr.message}`, duration_ms: Date.now() - started });
+    return { statusCode: 500, body: `DB insert failed: ${snapErr.message}` };
+  }
 
   // Also fan the store-level labor numbers into labor_v2_daily (per store + the
   // feed's business date), so Labor v2 has its history without a separate fetch.
