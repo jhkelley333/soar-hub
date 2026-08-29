@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 const FOCUSABLE_SELECTOR =
@@ -92,7 +93,12 @@ export function Modal({
 
   if (!open) return null;
 
-  return (
+  // Portal to <body> so the modal escapes any ancestor that establishes a
+  // containing block for fixed positioning — e.g. the Topbar's backdrop-blur
+  // (backdrop-filter), which otherwise pins `fixed inset-0` to the ~60px Topbar
+  // box instead of the viewport, clipping the modal at the top. This is why it
+  // rendered correctly only on full-bleed pages that have no Topbar.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
         className="absolute inset-0 bg-zinc-900/40"
@@ -132,6 +138,7 @@ export function Modal({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
