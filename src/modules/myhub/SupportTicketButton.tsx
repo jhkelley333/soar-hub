@@ -39,7 +39,7 @@ export function SupportTicketButton({ variant = "topbar", className }: { variant
           title="Report an issue or idea"
           className={cn(
             "fixed right-3 z-30 inline-flex h-11 w-11 items-center justify-center rounded-full bg-accent text-white shadow-lg ring-1 ring-black/5 transition active:scale-95",
-            "top-[calc(env(safe-area-inset-top,0px)+0.5rem)]",
+            "top-[calc(env(safe-area-inset-top,0px)_+_0.5rem)]",
             className,
           )}
         >
