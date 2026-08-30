@@ -6,7 +6,7 @@
 import type { ShareBand, ShareNode, SharedLaborResponse } from "./api";
 
 type Fmt = "text" | "pct" | "var" | "over" | "hrs" | "avs" | "money";
-interface Col { group: string; header: string; band?: "daily" | "wtd" | "ptd"; key?: keyof ShareBand; fmt: Fmt; credit?: "no_gm" | "pto" | "training" | "gm_support" | "training_class" }
+interface Col { group: string; header: string; band?: "daily" | "wtd" | "ptd"; key?: keyof ShareBand; fmt: Fmt; credit?: "no_gm" | "pto" | "training" | "gm_support" | "training_class"; field?: "name" | "parent" }
 
 const WINDOW = (band: "daily" | "wtd" | "ptd", group: string): Col[] => [
   { group, header: "Labor %", band, key: "labor_pct", fmt: "pct" },
@@ -18,7 +18,10 @@ const WINDOW = (band: "daily" | "wtd" | "ptd", group: string): Col[] => [
 ];
 
 const COLS: Col[] = [
-  { group: "Location", header: "Name", fmt: "text" },
+  { group: "Location", header: "Name", fmt: "text", field: "name" },
+  // Parent leader one tier up (SDO→RVP, DO→SDO, Store→DO) so the file can be
+  // sorted/grouped by parent.
+  { group: "Location", header: "Parent", fmt: "text", field: "parent" },
   ...WINDOW("daily", "Daily"),
   ...WINDOW("wtd", "Week to Date"),
   ...WINDOW("ptd", "Period to Date"),
@@ -36,13 +39,16 @@ const OVER = "FFC0392B"; // red
 const UNDER = "FF1E7E34"; // green
 const isNum = (v: unknown): v is number => typeof v === "number" && isFinite(v);
 
-interface Row { name: string; daily: ShareBand; wtd: ShareBand; ptd: ShareBand; credits: ShareNode["credits"] }
+interface Row { name: string; parent: string; daily: ShareBand; wtd: ShareBand; ptd: ShareBand; credits: ShareNode["credits"] }
 
-const rowOf = (n: ShareNode, name: string): Row => ({ name, daily: n.daily, wtd: n.wtd, ptd: n.ptd, credits: n.credits });
+const rowOf = (n: ShareNode, name: string, parent: string): Row => ({ name, parent, daily: n.daily, wtd: n.wtd, ptd: n.ptd, credits: n.credits });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function writeCell(cell: any, r: Row, c: Col) {
-  if (c.fmt === "text") { cell.value = r.name; cell.font = { bold: true, color: { argb: "FF1C2733" } }; return; }
+  if (c.fmt === "text") {
+    if (c.field === "parent") { cell.value = r.parent; cell.font = { color: { argb: "FF6B7A89" } }; return; }
+    cell.value = r.name; cell.font = { bold: true, color: { argb: "FF1C2733" } }; return;
+  }
   let v: number | null = null;
   if (c.credit) v = r.credits[c.credit] ?? null;
   else if (c.band && c.key) v = r[c.band][c.key];
@@ -133,7 +139,7 @@ function fillSheet(ws: any, scope: string, date: string | null | undefined, sect
   for (const [title, rows] of sections) {
     if (rows.length) row = addSection(ws, row, title, rows);
   }
-  ws.columns.forEach((col: { width?: number }, i: number) => { col.width = i === 0 ? 34 : 10; });
+  ws.columns.forEach((col: { width?: number }, i: number) => { col.width = i === 0 ? 34 : i === 1 ? 22 : 10; });
 }
 
 export async function downloadSharedLaborFile(data: SharedLaborResponse, scopeLabel?: string): Promise<void> {
@@ -142,17 +148,30 @@ export async function downloadSharedLaborFile(data: SharedLaborResponse, scopeLa
   wb.creator = "SOAR Hub";
 
   const scope = scopeLabel || (data.scope.kind === "region" ? (data.scope.region ?? "Region") : "Company");
-  const view = { state: "frozen" as const, ySplit: 1, xSplit: 1 };
+  const view = { state: "frozen" as const, ySplit: 1, xSplit: 2 };
   const used = new Set<string>();
+
+  // Parent leader one tier up, keyed by the org-unit name each node carries:
+  // an SDO (area) → its RVP (region leader); a DO (district) → its SDO (area
+  // leader); a store → its DO (district leader). RVP/company have no parent.
+  const leaderByRegion = new Map((data.levels.region ?? []).map((n) => [n.region ?? n.name, n.leader ?? ""]));
+  const leaderByArea = new Map((data.levels.area ?? []).map((n) => [n.area ?? n.name, n.leader ?? ""]));
+  const leaderByDistrict = new Map((data.levels.district ?? []).map((n) => [n.district ?? n.name, n.leader ?? ""]));
+  const parentOf = (n: ShareNode): string => {
+    if (n.level === "store") return leaderByDistrict.get(n.district ?? "") ?? "";
+    if (n.level === "district") return leaderByArea.get(n.area ?? "") ?? "";
+    if (n.level === "area") return leaderByRegion.get(n.region ?? "") ?? "";
+    return "";
+  };
 
   // Summary tab — the full rollup (Company → RVP → SDO → DO → Stores).
   const summary = wb.addWorksheet(sheetName("Summary", used), { views: [view] });
   const summarySections: [string, Row[]][] = [];
-  if (data.company) summarySections.push([scope === "Company" ? "SOAR — Company" : scope, [rowOf(data.company, grp(data.company))]]);
-  summarySections.push(["RVP · Region", (data.levels.region ?? []).map((n) => rowOf(n, grp(n)))]);
-  summarySections.push(["SDO · Market", (data.levels.area ?? []).map((n) => rowOf(n, grp(n)))]);
-  summarySections.push(["DO · District", (data.levels.district ?? []).map((n) => rowOf(n, grp(n)))]);
-  summarySections.push(["Stores", (data.levels.store ?? []).map((n) => rowOf(n, `#${n.store_number} ${n.store_name ?? ""}`.trim()))]);
+  if (data.company) summarySections.push([scope === "Company" ? "SOAR — Company" : scope, [rowOf(data.company, grp(data.company), parentOf(data.company))]]);
+  summarySections.push(["RVP · Region", (data.levels.region ?? []).map((n) => rowOf(n, grp(n), parentOf(n)))]);
+  summarySections.push(["SDO · Market", (data.levels.area ?? []).map((n) => rowOf(n, grp(n), parentOf(n)))]);
+  summarySections.push(["DO · District", (data.levels.district ?? []).map((n) => rowOf(n, grp(n), parentOf(n)))]);
+  summarySections.push(["Stores", (data.levels.store ?? []).map((n) => rowOf(n, `#${n.store_number} ${n.store_name ?? ""}`.trim(), parentOf(n)))]);
   fillSheet(summary, scope, data.date, summarySections);
 
   // One tab per DO (district): the DO's rollup row + its stores.
@@ -170,8 +189,8 @@ export async function downloadSharedLaborFile(data: SharedLaborResponse, scopeLa
     const tab = sheetName(doNode?.leader || doNode?.name || key, used);
     const ws = wb.addWorksheet(tab, { views: [view] });
     const secs: [string, Row[]][] = [];
-    if (doNode) secs.push(["DO · District", [rowOf(doNode, grp(doNode))]]);
-    secs.push(["Stores", doStores.map((n) => rowOf(n, `#${n.store_number} ${n.store_name ?? ""}`.trim()))]);
+    if (doNode) secs.push(["DO · District", [rowOf(doNode, grp(doNode), parentOf(doNode))]]);
+    secs.push(["Stores", doStores.map((n) => rowOf(n, `#${n.store_number} ${n.store_name ?? ""}`.trim(), parentOf(n)))]);
     fillSheet(ws, doNode ? grp(doNode) : key, data.date, secs);
   }
 
