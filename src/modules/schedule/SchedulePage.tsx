@@ -78,9 +78,11 @@ function fmtHour(h: number): string {
 export function SchedulePage() {
   const [anchor, setAnchor] = useState(() => new Date());
   const [view, setView] = useState<View>("month");
-  const [hidden, setHidden] = useState<Set<EventType>>(new Set());
+  // Type filter is select-to-show: empty = show every type (no filter);
+  // selecting one or more chips narrows to only those types.
+  const [selected, setSelected] = useState<Set<EventType>>(new Set());
   const [colorBy, setColorBy] = useState<ColorBy>("type");
-  const [showFiscal, setShowFiscal] = useState(false);
+  const [showFiscal, setShowFiscal] = useState(true);
   const [dayHours, setDayHours] = useState<DayHours>(loadDayHours);
   const [hoursOpen, setHoursOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -150,9 +152,11 @@ export function SchedulePage() {
   const visible = useMemo(
     () =>
       events.filter(
-        (e) => !hidden.has(e.type) && (!e.store_number || effectiveActive.has(e.store_number))
+        (e) =>
+          (selected.size === 0 || selected.has(e.type)) &&
+          (!e.store_number || effectiveActive.has(e.store_number))
       ),
-    [events, hidden, effectiveActive]
+    [events, selected, effectiveActive]
   );
 
   const byDate = useMemo(() => {
@@ -166,7 +170,7 @@ export function SchedulePage() {
   }, [visible]);
 
   function toggleType(t: EventType) {
-    setHidden((prev) => {
+    setSelected((prev) => {
       const next = new Set(prev);
       next.has(t) ? next.delete(t) : next.add(t);
       return next;
@@ -321,19 +325,23 @@ export function SchedulePage() {
       {/* Type filter legend + color-by toggle */}
       <div className="mb-4 flex flex-wrap items-center gap-1.5">
         {EVENT_TYPE_ORDER.map((t) => {
-          const off = hidden.has(t);
+          // Select-to-show: a selected chip highlights in its type color and
+          // narrows the view to that type; unselected chips are neutral. With
+          // none selected, every type shows (no filter).
+          const on = selected.has(t);
           const m = TYPE_META[t];
-          const dim = off || colorBy === "org"; // org-mode: legend is reference only
+          const highlight = on && colorBy !== "org"; // org-mode: legend is reference only
           return (
             <button
               key={t}
               onClick={() => toggleType(t)}
+              aria-pressed={on}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition",
-                off ? "bg-white text-zinc-400 ring-zinc-200" : m.chip
+                highlight ? m.chip : "bg-white text-zinc-500 ring-zinc-200 hover:bg-zinc-50"
               )}
             >
-              <span className={cn("h-2 w-2 rounded-full", dim && off ? "bg-zinc-300" : m.dot)} />
+              <span className={cn("h-2 w-2 rounded-full", on ? m.dot : "bg-zinc-300")} />
               {m.label}
             </button>
           );
