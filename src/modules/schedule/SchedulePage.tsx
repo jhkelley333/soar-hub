@@ -78,8 +78,8 @@ function fmtHour(h: number): string {
 export function SchedulePage() {
   const [anchor, setAnchor] = useState(() => new Date());
   const [view, setView] = useState<View>("month");
-  // Type filter is select-to-show: empty = show every type (no filter);
-  // selecting one or more chips narrows to only those types.
+  // Type filter is select-to-show: nothing is shown until a type is selected;
+  // selecting one or more chips shows only those types. Default (none) is empty.
   const [selected, setSelected] = useState<Set<EventType>>(new Set());
   const [colorBy, setColorBy] = useState<ColorBy>("type");
   const [showFiscal, setShowFiscal] = useState(true);
@@ -153,7 +153,7 @@ export function SchedulePage() {
     () =>
       events.filter(
         (e) =>
-          (selected.size === 0 || selected.has(e.type)) &&
+          selected.has(e.type) &&
           (!e.store_number || effectiveActive.has(e.store_number))
       ),
     [events, selected, effectiveActive]
