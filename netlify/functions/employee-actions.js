@@ -20,6 +20,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { fireEventReport } from "./_lib/reports/dispatch.js";
+import { resolveStoreLeadership } from "./_lib/eaApprovers.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -207,76 +208,8 @@ async function resolveVisibleStoreNumbers(supa, userId) {
   return rows.map((s) => String(s.number)).filter(Boolean);
 }
 
-// Resolve the active profiles holding `role` whose user_scopes row matches
-// the given org scope. Returns full profile rows (id, email, names).
-async function scopedProfiles(supa, scopeType, scopeId, role) {
-  if (!scopeId) return [];
-  const nowIso = new Date().toISOString();
-  // Who covers this scope: primary holders (user_scopes) plus acting coverers
-  // (additional_scopes, non-expired). Primary counts only if their role
-  // matches the tier; acting coverers count regardless of primary role (an
-  // RVP covering an area is a valid acting SDO escalation target).
-  const [{ data: primaryScoped }, { data: actingScoped }] = await Promise.all([
-    supa.from("user_scopes").select("user_id").eq("scope_type", scopeType).eq("scope_id", scopeId),
-    supa.from("additional_scopes").select("user_id, expires_at").eq("scope_type", scopeType).eq("scope_id", scopeId),
-  ]);
-  const activeActing = (actingScoped ?? []).filter((r) => !r.expires_at || r.expires_at > nowIso);
-  const ids = Array.from(
-    new Set([
-      ...(primaryScoped ?? []).map((s) => s.user_id),
-      ...activeActing.map((s) => s.user_id),
-    ])
-  );
-  if (!ids.length) return [];
-  const { data: profiles } = await supa
-    .from("profiles")
-    .select("id, email, full_name, preferred_name, role")
-    .in("id", ids)
-    .eq("is_active", true);
-  const primaryIds = new Set((primaryScoped ?? []).map((s) => s.user_id));
-  const actingIds = new Set(activeActing.map((s) => s.user_id));
-  const out = [];
-  for (const p of profiles ?? []) {
-    const primaryMatch = primaryIds.has(p.id) && p.role === role;
-    if (primaryMatch || actingIds.has(p.id)) {
-      out.push({ id: p.id, email: p.email, full_name: p.full_name, preferred_name: p.preferred_name });
-    }
-  }
-  return out;
-}
-
-// Given a store number, resolve the DO (district scope) and RVP (region
-// scope) responsible for it. Same scope-walk org.js findManager() uses.
-async function resolveStoreLeadership(supa, storeNumber) {
-  const out = { dos: [], sdos: [], rvps: [] };
-  const { data: store } = await supa
-    .from("stores")
-    .select("id, district_id")
-    .eq("number", storeNumber)
-    .maybeSingle();
-  if (!store?.district_id) return out;
-
-  out.dos = await scopedProfiles(supa, "district", store.district_id, "do");
-
-  const { data: district } = await supa
-    .from("districts")
-    .select("id, area_id")
-    .eq("id", store.district_id)
-    .maybeSingle();
-  if (!district?.area_id) return out;
-
-  out.sdos = await scopedProfiles(supa, "area", district.area_id, "sdo");
-
-  const { data: area } = await supa
-    .from("areas")
-    .select("id, region_id")
-    .eq("id", district.area_id)
-    .maybeSingle();
-  if (area?.region_id) {
-    out.rvps = await scopedProfiles(supa, "region", area.region_id, "rvp");
-  }
-  return out;
-}
+// scopedProfiles + resolveStoreLeadership moved to _lib/eaApprovers.js (shared
+// with the daily approvals-reminder report). Imported at the top of this file.
 
 // ----------------------------------------------------------------------------
 // my-stores — stores the caller can submit an Employee Action for.
