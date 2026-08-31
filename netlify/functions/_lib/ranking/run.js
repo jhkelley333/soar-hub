@@ -18,6 +18,13 @@ import engine from "./engine.cjs";
 const isNum = (v) => typeof v === "number" && isFinite(v);
 const numOrNull = (v) => (v == null || isNaN(Number(v)) ? null : Number(v));
 
+// Corporate / hold stores (e.g. #8100) are not operating restaurants — exclude
+// them from the ranking and from the expected-store count, the same list
+// labor-v2 excludes from the shared labor sheet. Keep in sync with
+// CORPORATE_STORE_NUMBERS in labor-v2.js.
+const CORPORATE_STORE_NUMBERS = ["8100"];
+const corpNotInFilter = `(${CORPORATE_STORE_NUMBERS.join(",")})`;
+
 function isoAddDays(iso, n) {
   const [y, m, d] = String(iso).split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d + n));
@@ -231,8 +238,11 @@ export async function runRankingNow(supa, user, opts = {}) {
     else issues.push({ level: "warn", msg: `Couldn't backfill ${weekEnding} from stored snapshots (${bf.error}).` });
   }
 
-  // Credit-adjusted through the same pipeline the labor pages use.
-  const { data: rows, error: rowsErr } = await supa.from("labor_v2_daily").select("*").eq("business_date", weekEnding);
+  // Credit-adjusted through the same pipeline the labor pages use. Corporate /
+  // hold stores (#8100) are filtered out at the source so they're never ranked,
+  // never counted, and never skew the company avg wage.
+  const { data: rows, error: rowsErr } = await supa.from("labor_v2_daily").select("*")
+    .eq("business_date", weekEnding).not("store_number", "in", corpNotInFilter);
   if (rowsErr) return { error: rowsErr.message, status: 500 };
   if (!rows?.length) {
     return { error: `No Labor v2 rows for week ending ${weekEnding} — the fiscal Sunday was never captured.`, status: 400 };
@@ -255,7 +265,7 @@ export async function runRankingNow(supa, user, opts = {}) {
   // drop Apricus). Without this the partial note is inflated by every LC store.
   const { count: expectedStores } = await supa
     .from("stores").select("id", { count: "exact", head: true })
-    .eq("is_active", true).or("brand.eq.sonic,brand.is.null");
+    .eq("is_active", true).or("brand.eq.sonic,brand.is.null").not("number", "in", corpNotInFilter);
 
   // 4. Config slice + live avg wage (B8).
   const rc = await loadRankingConfig(supa, weekEnding);
