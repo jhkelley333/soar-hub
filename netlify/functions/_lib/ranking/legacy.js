@@ -225,6 +225,28 @@ export async function unifiedWeeks(supa) {
       return { key: `legacy-${w}`, source: "legacy", run_id: null, fiscal_week: w, period: fi?.period ?? null, week: fi?.weekInPeriod ?? null, week_ending: we };
     });
   const weeks = [...hub, ...legacyWeeks].sort((a, b) => (b.fiscal_week ?? 0) - (a.fiscal_week ?? 0));
+
+  // Advance the picker to the current fiscal position even when its data hasn't
+  // landed. The last COMPLETED fiscal week (this week's Monday minus a day) is
+  // the week the board should be showing. If no complete run exists for it yet
+  // — the week-ending Sunday hasn't captured — surface it as a "pending" entry
+  // at the top so the board never silently sits on an older week. Selecting it
+  // shows the last complete run underneath a "stale — awaiting data" banner
+  // until the capture lands and a real run replaces it. Central time, since
+  // that's the clock the KPI capture runs on.
+  const todayCT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+  const fiToday = fiscalForDate(todayCT);
+  const expectedWE = fiToday ? addDaysIso(fiToday.weekStart, -1) : null; // last completed week's Sunday
+  const newestWE = weeks[0]?.week_ending ?? null;
+  if (expectedWE && !weeks.some((w) => w.week_ending === expectedWE) && (!newestWE || expectedWE > newestWE)) {
+    const fe = fiscalForDate(expectedWE);
+    weeks.unshift({
+      key: `pending-${expectedWE}`, source: "pending", run_id: null,
+      fiscal_week: fe?.fiscalWeek ?? null, period: fe?.period ?? null, week: fe?.weekInPeriod ?? null,
+      week_ending: expectedWE, pending: true,
+    });
+  }
+
   return { weeks, legacyImported: (legacy || []).length > 0 };
 }
 
