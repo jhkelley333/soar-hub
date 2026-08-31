@@ -248,9 +248,14 @@ export async function runRankingNow(supa, user, opts = {}) {
   // Expected active-store count — so a week where some stores never polled
   // reads as PARTIAL instead of silently passing as complete. `numbers` is the
   // set of stores that captured labor for this week; compare against every
-  // active store in the org.
+  // active SONIC store in the org. Apricus (Little Caesars) stores share the
+  // stores table for the cross-brand COO map but never feed the Sonic
+  // Skunkworks KPI feed, so they must NOT count toward "expected" — same brand
+  // guard the other Sonic-scoped functions use (keep Sonic + legacy null-brand,
+  // drop Apricus). Without this the partial note is inflated by every LC store.
   const { count: expectedStores } = await supa
-    .from("stores").select("id", { count: "exact", head: true }).eq("is_active", true);
+    .from("stores").select("id", { count: "exact", head: true })
+    .eq("is_active", true).or("brand.eq.sonic,brand.is.null");
 
   // 4. Config slice + live avg wage (B8).
   const rc = await loadRankingConfig(supa, weekEnding);
