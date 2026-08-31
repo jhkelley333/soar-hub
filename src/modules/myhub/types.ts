@@ -29,6 +29,7 @@ export interface HubComment {
   author_name: string | null;
   is_admin: boolean;
   body: string;
+  photo_url?: string | null;   // signed download URL for an attached photo
   created_at: string;
 }
 

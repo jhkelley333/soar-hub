@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bug, Lightbulb, ChevronUp, MessageSquare, Plus, ShieldCheck, ImageIcon, MapPin } from "lucide-react";
+import { Bug, Lightbulb, ChevronUp, MessageSquare, Plus, ShieldCheck, ImageIcon, MapPin, Paperclip, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -17,7 +17,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import {
-  listHubTickets, getHubTicket, voteHubTicket, commentHubTicket, setHubTicketStatus,
+  listHubTickets, getHubTicket, voteHubTicket, commentHubTicket, setHubTicketStatus, uploadHubPhoto,
 } from "./api";
 import { NewTicketModal } from "./NewTicketModal";
 import type { HubTicket, HubStatus, HubKind } from "./types";
@@ -166,6 +166,7 @@ function DetailModal({ id, isAdmin, onClose }: { id: string; isAdmin: boolean; o
   const toast = useToast();
   const qc = useQueryClient();
   const [comment, setComment] = useState("");
+  const [photo, setPhoto] = useState<File | null>(null);
   const [statusDraft, setStatusDraft] = useState<HubStatus | null>(null);
   const [note, setNote] = useState("");
 
@@ -180,10 +181,14 @@ function DetailModal({ id, isAdmin, onClose }: { id: string; isAdmin: boolean; o
   };
 
   const commentMut = useMutation({
-    mutationFn: () => commentHubTicket(id, comment.trim()),
-    onSuccess: () => { setComment(""); refresh(); },
+    mutationFn: async () => {
+      const path = photo ? await uploadHubPhoto(photo) : null;
+      return commentHubTicket(id, comment.trim(), path);
+    },
+    onSuccess: () => { setComment(""); setPhoto(null); refresh(); },
     onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't post.", "error"),
   });
+  const canPost = (comment.trim().length > 0 || !!photo) && !commentMut.isPending;
   const voteMut = useMutation({
     mutationFn: () => voteHubTicket(id),
     onSuccess: refresh,
@@ -273,14 +278,36 @@ function DetailModal({ id, isAdmin, onClose }: { id: string; isAdmin: boolean; o
                     {c.is_admin && <span className="rounded bg-accent-100 px-1 text-[9px] font-bold uppercase text-accent-700">Admin</span>}
                     <span>· {relTime(c.created_at)}</span>
                   </div>
-                  <p className="whitespace-pre-wrap text-zinc-700">{c.body}</p>
+                  {c.body && <p className="whitespace-pre-wrap text-zinc-700">{c.body}</p>}
+                  {c.photo_url && (
+                    <a href={c.photo_url} target="_blank" rel="noreferrer" className="mt-1 block">
+                      <img src={c.photo_url} alt="attachment" className="max-h-56 rounded-lg ring-1 ring-zinc-200" />
+                    </a>
+                  )}
                 </div>
               ))}
             </div>
+            {/* Photo preview before sending */}
+            {photo && (
+              <div className="mt-2 flex items-center gap-2 rounded-lg bg-zinc-50 px-2 py-1.5 text-xs text-zinc-600">
+                <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{photo.name}</span>
+                <button type="button" onClick={() => setPhoto(null)} className="ml-auto rounded p-0.5 text-zinc-400 hover:text-zinc-700" aria-label="Remove photo">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
             <div className="mt-2 flex gap-2">
+              <label className="inline-flex shrink-0 cursor-pointer items-center rounded-lg border border-zinc-200 bg-white px-2.5 text-zinc-500 hover:border-zinc-300 hover:text-zinc-700" title="Attach a photo">
+                <Paperclip className="h-4 w-4" />
+                <input type="file" accept="image/*" className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) setPhoto(f); e.target.value = ""; }} />
+              </label>
               <Input value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Add a comment…"
-                onKeyDown={(e) => { if (e.key === "Enter" && comment.trim()) commentMut.mutate(); }} />
-              <Button onClick={() => commentMut.mutate()} disabled={!comment.trim() || commentMut.isPending}>Post</Button>
+                onKeyDown={(e) => { if (e.key === "Enter" && canPost) commentMut.mutate(); }} />
+              <Button onClick={() => commentMut.mutate()} disabled={!canPost}>
+                {commentMut.isPending ? "Posting…" : "Post"}
+              </Button>
             </div>
           </div>
         </div>
