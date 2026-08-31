@@ -53,8 +53,8 @@ export function voteHubTicket(id: string): Promise<{ upvotes: number; my_vote: b
   return req(`${FN}?action=vote`, { method: "POST", body: JSON.stringify({ id }) });
 }
 
-export function commentHubTicket(id: string, body: string): Promise<{ comment: HubComment }> {
-  return req(`${FN}?action=comment`, { method: "POST", body: JSON.stringify({ id, body }) });
+export function commentHubTicket(id: string, body: string, photo_path?: string | null): Promise<{ comment: HubComment }> {
+  return req(`${FN}?action=comment`, { method: "POST", body: JSON.stringify({ id, body, photo_path: photo_path ?? undefined }) });
 }
 
 export function setHubTicketStatus(id: string, status: HubStatus, resolution_note?: string): Promise<{ ok: true; status: HubStatus }> {

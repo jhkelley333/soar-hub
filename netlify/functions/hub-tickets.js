@@ -16,6 +16,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { sendEmail } from "./_lib/ticketEmail.js";
 import { sendPushToUsers } from "./_lib/push.js";
+import { resolveNextLevelLeader } from "./_lib/eaApprovers.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
@@ -54,6 +55,35 @@ const isAdmin = (u) => String(u?.role || "").toLowerCase() === "admin";
 async function adminRecipients(supa) {
   const { data } = await supa.from("profiles").select("id, email").eq("role", "admin").eq("is_active", true);
   return { ids: (data || []).map((p) => p.id).filter(Boolean), emails: (data || []).map((p) => p.email).filter(Boolean) };
+}
+
+// Everyone looped into a ticket's conversation: the submitter, the submitter's
+// next-level leader (their DO / SDO / RVP / COO up the org), and — unless
+// opted out — the admins who triage the board. Deduped; the caller passes
+// excludeUserId so the actor isn't notified of their own action.
+async function ticketAudience(supa, ticket, { includeAdmins = true } = {}) {
+  let leaders = [];
+  if (ticket.created_by) {
+    const { data: sub } = await supa
+      .from("profiles").select("id, email, full_name, preferred_name, role, primary_store_id")
+      .eq("id", ticket.created_by).maybeSingle();
+    if (sub) {
+      try { leaders = await resolveNextLevelLeader(supa, sub); }
+      catch (e) { console.log(`[hub-tickets] leader resolve failed: ${e?.message || e}`); }
+    }
+  }
+  const adm = includeAdmins ? await adminRecipients(supa) : { ids: [], emails: [] };
+  const userIds = [...new Set([
+    ...(ticket.created_by ? [ticket.created_by] : []),
+    ...leaders.map((l) => l.id),
+    ...adm.ids,
+  ].filter(Boolean))];
+  const emails = [...new Set([
+    ...(ticket.created_by_email ? [ticket.created_by_email] : []),
+    ...leaders.map((l) => l.email),
+    ...adm.emails,
+  ].filter(Boolean).map((e) => String(e).toLowerCase()))];
+  return { userIds, emails, leaders };
 }
 
 // Fire-and-forget notify: push to userIds + email to emails. Never throws.
@@ -132,13 +162,17 @@ async function getTicket(supa, user, id) {
   const { data: ticket } = await supa.from("hub_tickets").select("*").eq("id", id).maybeSingle();
   if (!ticket) return { error: "Ticket not found.", status: 404 };
   const [{ data: comments }, { data: myVote }] = await Promise.all([
-    supa.from("hub_ticket_comments").select("id, author_name, is_admin, body, created_at").eq("ticket_id", id).order("created_at", { ascending: true }),
+    supa.from("hub_ticket_comments").select("id, author_name, is_admin, body, photo_path, created_at").eq("ticket_id", id).order("created_at", { ascending: true }),
     supa.from("hub_ticket_votes").select("ticket_id").eq("ticket_id", id).eq("user_id", user.id).maybeSingle(),
   ]);
   // Mark read.
   await supa.from("hub_ticket_reads").upsert({ user_id: user.id, ticket_id: id, seen_at: new Date().toISOString() }, { onConflict: "user_id,ticket_id" });
   const photo_url = await signPhoto(supa, ticket.photo_path);
-  return { ticket: { ...ticket, my_vote: !!myVote, photo_url }, comments: comments || [] };
+  // Sign each comment's photo (if any) for the thread.
+  const commentsOut = await Promise.all((comments || []).map(async (c) => ({
+    ...c, photo_url: await signPhoto(supa, c.photo_path), photo_path: undefined,
+  })));
+  return { ticket: { ...ticket, my_vote: !!myVote, photo_url }, comments: commentsOut };
 }
 
 async function createTicket(supa, user, body) {
@@ -156,9 +190,11 @@ async function createTicket(supa, user, body) {
   }).select().single();
   if (error) return { error: error.message, status: 500 };
 
-  const { ids, emails } = await adminRecipients(supa);
+  // Loop in the admins AND the submitter's next-level leader from the start.
+  const aud = await ticketAudience(supa, data);
+  const emails = aud.emails.filter((e) => e !== String(user.email || "").toLowerCase());
   await notify(supa, {
-    userIds: ids, emails,
+    userIds: aud.userIds, emails,
     title: `New support ${kind}: ${title}`,
     body: `${displayName(user)} filed a${kind === "idea" ? "n idea" : "n issue"}: “${title}”.${page_path ? ` (on ${page_path})` : ""}`,
     url: `${SITE_URL}/myhub`, excludeUserId: user.id,
@@ -179,26 +215,33 @@ async function toggleVote(supa, user, id) {
 async function addComment(supa, user, body) {
   const id = clean(body?.id, 64);
   const text = clean(body?.body, 4000);
-  if (!id || !text) return { error: "A comment is required.", status: 400 };
+  // Only accept a photo path under this user's own folder (defense in depth).
+  const photoRaw = clean(body?.photo_path, 300);
+  const photo_path = photoRaw && photoRaw.startsWith(`tickets/${user.id}/`) ? photoRaw : null;
+  if (!id || (!text && !photo_path)) return { error: "A comment or photo is required.", status: 400 };
   const { data: ticket } = await supa.from("hub_tickets").select("id, title, created_by, created_by_email").eq("id", id).maybeSingle();
   if (!ticket) return { error: "Ticket not found.", status: 404 };
   const admin_ = isAdmin(user);
   const { data: comment, error } = await supa.from("hub_ticket_comments").insert({
-    ticket_id: id, author_id: user.id, author_name: displayName(user), is_admin: admin_, body: text,
-  }).select("id, author_name, is_admin, body, created_at").single();
+    ticket_id: id, author_id: user.id, author_name: displayName(user), is_admin: admin_, body: text, photo_path,
+  }).select("id, author_name, is_admin, body, photo_path, created_at").single();
   if (error) return { error: error.message, status: 500 };
   await touch(supa, id);
 
+  // Message the whole conversation — the submitter, their next-level leader,
+  // and the admins — minus whoever just posted.
   const url = `${SITE_URL}/myhub`;
-  if (admin_ && ticket.created_by && ticket.created_by !== user.id) {
-    // Admin replied → notify the reporter.
-    await notify(supa, { userIds: [ticket.created_by], emails: [ticket.created_by_email], title: `Reply on your support ticket: ${ticket.title}`, body: `${displayName(user)} replied: “${text.slice(0, 160)}”.`, url, excludeUserId: user.id });
-  } else if (!admin_) {
-    // Reporter/other replied → notify admins.
-    const { ids, emails } = await adminRecipients(supa);
-    await notify(supa, { userIds: ids, emails, title: `New reply on support ticket: ${ticket.title}`, body: `${displayName(user)} commented: “${text.slice(0, 160)}”.`, url, excludeUserId: user.id });
-  }
-  return { comment };
+  const aud = await ticketAudience(supa, ticket);
+  const emails = aud.emails.filter((e) => e !== String(user.email || "").toLowerCase());
+  const preview = text ? `“${text.slice(0, 160)}”` : "shared a photo";
+  await notify(supa, {
+    userIds: aud.userIds, emails,
+    title: `New reply on support ticket: ${ticket.title}`,
+    body: `${displayName(user)} commented: ${preview}.`,
+    url, excludeUserId: user.id,
+  });
+  const photo_url = await signPhoto(supa, photo_path);
+  return { comment: { ...comment, photo_url, photo_path: undefined } };
 }
 
 async function setStatus(supa, user, body) {
@@ -216,11 +259,14 @@ async function setStatus(supa, user, body) {
   const { error } = await supa.from("hub_tickets").update(patch).eq("id", id);
   if (error) return { error: error.message, status: 500 };
 
-  // Notify the reporter of the status change (esp. resolved/declined).
+  // Notify the reporter AND their next-level leader of the status change
+  // (esp. resolved/declined). Admins made the change, so skip the admin fan-out.
   if (ticket.created_by && ticket.created_by !== user.id) {
     const verb = status === "resolved" ? "resolved" : status === "declined" ? "closed" : `moved to ${STATUS_LABEL[status]}`;
+    const aud = await ticketAudience(supa, ticket, { includeAdmins: false });
+    const emails = aud.emails.filter((e) => e !== String(user.email || "").toLowerCase());
     await notify(supa, {
-      userIds: [ticket.created_by], emails: [ticket.created_by_email],
+      userIds: aud.userIds, emails,
       title: `Your support ticket was ${verb}: ${ticket.title}`,
       body: `“${ticket.title}” is now ${STATUS_LABEL[status]}.${note ? ` Note: ${note}` : ""}`,
       url: `${SITE_URL}/myhub`, excludeUserId: user.id,
