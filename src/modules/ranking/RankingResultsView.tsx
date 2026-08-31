@@ -20,6 +20,7 @@ import {
 } from "./api";
 import { downloadRankingWorkbook } from "./rankingWorkbook";
 import { RankingStoreView } from "./RankingStoreView";
+import { ExportExecSummaryButton } from "./export/ExportExecSummaryButton";
 import { Modal } from "@/shared/ui/Modal";
 
 // ── formatting ────────────────────────────────────────────────────────
@@ -519,6 +520,7 @@ export function RankingResultsView() {
             title={isLegacy ? "Workbook export is for hub-run weeks" : undefined}>
             <Download className="mr-1 h-3.5 w-3.5" /> {wbBusy ? "Building…" : "Download Ranker"}
           </Button>
+          {!isLegacy && <ExportExecSummaryButton run={run} />}
           {isAdmin && run && !isLegacy && (
             <Button variant="secondary" size="sm" onClick={() => refresh.mutate(run.week_ending)} disabled={refresh.isPending || runNow.isPending}
               title="Recompute this week with the latest labor credits & data">
