@@ -143,7 +143,7 @@ export interface RankingRun {
   week_misaligned: boolean;
   status: string;
   issues: RankingIssue[];
-  source_status: Record<string, { status: string; stores?: number; note?: string; pending_upload?: boolean; latest_upload_at?: string | null; week_ending?: string; as_of?: string }>;
+  source_status: Record<string, { status: string; stores?: number; expected?: number | null; polled?: number; missing?: number; note?: string; pending_upload?: boolean; latest_upload_at?: string | null; week_ending?: string; as_of?: string }>;
   started_at: string;
   completed_at: string | null;
 }
@@ -183,12 +183,15 @@ export function fetchRankingRuns(): Promise<{ runs: RankingRunSummary[] }> {
 // Unified week timeline: hub runs + sheet-era legacy weeks before the cutover.
 export interface RankingWeek {
   key: string;
-  source: "hub" | "legacy";
+  source: "hub" | "legacy" | "pending";
   run_id: string | null;
   fiscal_week: number | null;
   period: number | null;
   week: number | null;
   week_ending: string;
+  // "pending" weeks: the current completed fiscal week that has no run yet (its
+  // KPI capture hasn't landed). Shown at the top of the picker as "awaiting data".
+  pending?: boolean;
 }
 export function fetchRankingWeeks(): Promise<{ weeks: RankingWeek[]; legacyImported: boolean }> {
   return req(`${FN}?action=weeks`);

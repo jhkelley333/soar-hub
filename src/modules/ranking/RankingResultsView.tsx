@@ -332,6 +332,10 @@ export function RankingResultsView() {
   const weekIdx = wIdx < 0 ? 0 : wIdx;
   const selectedWeek = weeks[weekIdx] ?? null;
   const isLegacy = selectedWeek?.source === "legacy";
+  // "pending" = the current completed fiscal week whose data hasn't captured
+  // yet. It has no run of its own; the board falls back to the last complete
+  // run (run_id null → latest) beneath a stale banner until the capture lands.
+  const isPending = selectedWeek?.source === "pending";
   const effectiveTier: RankTier = isLegacy ? "store" : tier;
 
   const q = useQuery({
@@ -497,7 +501,7 @@ export function RankingResultsView() {
               >
                 {weeks.map((w, i) => (
                   <option key={w.key} value={w.key}>
-                    P{w.period}W{w.week} · {fmtDate(w.week_ending)}{i === 0 ? " (latest)" : w.source === "legacy" ? " · sheet" : ""}
+                    P{w.period}W{w.week} · {fmtDate(w.week_ending)}{w.source === "pending" ? " · awaiting data" : i === 0 ? " (latest)" : w.source === "legacy" ? " · sheet" : ""}
                   </option>
                 ))}
               </select>
@@ -532,6 +536,21 @@ export function RankingResultsView() {
           )}
         </div>
       </div>
+
+      {/* Stale / awaiting-data banner — the current completed week hasn't
+          captured yet, so the board falls back to the last complete week. */}
+      {isPending && (
+        <div className="rounded-lg border-l-4 border-amber-500 bg-amber-50 px-3.5 py-2 text-xs text-amber-800">
+          <b>P{selectedWeek?.period}W{selectedWeek?.week} · week ending {fmtDate(selectedWeek?.week_ending)}</b> hasn't finished capturing yet — its KPI data isn't in.
+          {run
+            ? <> Showing the last complete week (<b>P{run.period}W{run.week}, {fmtDate(run.week_ending)}</b>) as <b>stale</b> until it updates.</>
+            : <> No complete week to show yet.</>}
+          {isAdmin && (
+            <> <button className="font-semibold text-amber-900 underline hover:no-underline"
+              onClick={() => runNow.mutate()} disabled={runNow.isPending || refresh.isPending}>Run now</button> to rank whatever's captured.</>
+          )}
+        </div>
+      )}
 
       {/* Viewing-history banner */}
       {weekKey && run && (
@@ -593,15 +612,18 @@ export function RankingResultsView() {
               const asOf = s.week_ending ?? s.as_of ?? null;
               const state = s.pending_upload ? "pending"
                 : s.status === "stale" ? "stale"
+                : s.status === "partial" ? "partial"
                 : s.status === "ok" ? "ok"
                 : s.status === "on_hold" ? "on_hold"
                 : "missing";
-              const dot = { pending: "bg-orange-500", stale: "bg-red-500", ok: "bg-emerald-600", on_hold: "bg-amber-500", missing: "bg-zinc-300" }[state];
+              const dot = { pending: "bg-orange-500", stale: "bg-red-500", partial: "bg-amber-500", ok: "bg-emerald-600", on_hold: "bg-amber-500", missing: "bg-zinc-300" }[state];
               const chip = state === "pending" ? "border-orange-200 bg-orange-50"
                 : state === "stale" ? "border-red-200 bg-red-50"
+                : state === "partial" ? "border-amber-200 bg-amber-50"
                 : state === "on_hold" ? "border-amber-200 bg-amber-50"
                 : "border-zinc-200 bg-white";
               const text = state === "pending" ? "new upload — re-run"
+                : state === "partial" ? `${s.polled ?? s.stores ?? "?"} / ${s.expected ?? "?"} stores — partial`
                 : state === "ok" ? `${s.stores ?? ""} stores`
                 : state === "stale" ? `stale — ${asOf ?? "old"}`
                 : state === "on_hold" ? "on hold"
@@ -621,6 +643,7 @@ export function RankingResultsView() {
             <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-emerald-600" /> current</span>
             <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-orange-500" /> uploaded, not run</span>
             <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-red-500" /> stale</span>
+            <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> partial (not all stores)</span>
             <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-zinc-300" /> missing</span>
           </div>
         </div>

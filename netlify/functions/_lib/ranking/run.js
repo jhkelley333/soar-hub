@@ -245,6 +245,13 @@ export async function runRankingNow(supa, user, opts = {}) {
   const { data: storeMeta } = await supa.from("stores").select("id, number, name, soar_company_name").in("number", numbers);
   const metaByNumber = new Map((storeMeta || []).map((s) => [String(s.number), s]));
 
+  // Expected active-store count — so a week where some stores never polled
+  // reads as PARTIAL instead of silently passing as complete. `numbers` is the
+  // set of stores that captured labor for this week; compare against every
+  // active store in the org.
+  const { count: expectedStores } = await supa
+    .from("stores").select("id", { count: "exact", head: true }).eq("is_active", true);
+
   // 4. Config slice + live avg wage (B8).
   const rc = await loadRankingConfig(supa, weekEnding);
   const missingBands = REQUIRED_BANDS.filter((k) => !rc.bands[k]);
@@ -432,6 +439,14 @@ export async function runRankingNow(supa, user, opts = {}) {
   if (unmatched.length) {
     issues.push({ level: "warn", msg: `${unmatched.length} feed store(s) not in the org: ${unmatched.slice(0, 10).join(", ")}${unmatched.length > 10 ? " …" : ""}` });
   }
+  // Partial week: some active stores never polled labor for this week-ending
+  // date, so the board is incomplete. `numbers` = stores that captured any
+  // labor this week; `expectedStores` = active stores in the org.
+  const polledStores = numbers.length;
+  const missingStores = isNum(expectedStores) ? Math.max(0, expectedStores - polledStores) : 0;
+  if (missingStores > 0) {
+    issues.push({ level: "warn", msg: `${missingStores} of ${expectedStores} store(s) haven't polled labor for week ending ${weekEnding} yet — the week is partial and will fill in as they capture.` });
+  }
   if (onTimeMissing === stores.length) {
     issues.push({ level: "bad", msg: "No on-time data captured yet (run migration 0238, then wait for the next KPI capture) — ops scores and total points will be blank." });
   } else if (onTimeMissing) {
@@ -506,7 +521,7 @@ export async function runRankingNow(supa, user, opts = {}) {
 
   // 6. Persist run + rows.
   const sourceStatus = {
-    skunkworks: { status: "ok", stores: stores.length, week_ending: weekEnding, snapshot_latest: latest },
+    skunkworks: { status: missingStores > 0 ? "partial" : "ok", stores: stores.length, expected: isNum(expectedStores) ? expectedStores : null, polled: polledStores, missing: missingStores, week_ending: weekEnding, snapshot_latest: latest },
     ix: ix.ptd
       ? { status: ix.ptd.stale ? "stale" : "ok", week_ending: ix.ptd.week, stores: ix.ptd.stores.size, flash: ix.ptd.flash, wtd: ix.wtd ? (ix.wtd.stale ? "stale" : "ok") : "missing" }
       : { status: "missing", note: "COGS defaults to 96.0% (sheet's missing-IX rule)" },
