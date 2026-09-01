@@ -4,6 +4,9 @@
 import { isStoreRow, storeNumberOf } from "./kpiOrg.js";
 
 const numOrNull = (v) => (typeof v === "number" && isFinite(v) ? v : null);
+// Preserve a feed timestamp/string exactly (naive local wall-clock, may cross
+// midnight) — null when empty/missing.
+const strOrNull = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
 
 // The feed names its period sections a few different ways; mirror kpi-snapshot.
 const WTD_SECTIONS = ["weekToDateData", "weekToDate", "wtdData", "businessWeekData", "weekData", "wtd"];
@@ -56,6 +59,12 @@ export function extractLaborRows(payload) {
       scheduled_labor_hours: numOrNull(r.scheduledLaborHours),
       actual_vs_scheduled_hours: numOrNull(r.actualVsScheduledHours),
       splh: numOrNull(r.splh),
+      // Store operating timestamps for the day (0321): first/last ticket +
+      // first clock-in / last clock-out. Naive local times, preserved as-is.
+      first_ticket: strOrNull(r.firstTicket),
+      last_ticket: strOrNull(r.lastTicket),
+      first_clock_in: strOrNull(r.firstClockIn),
+      last_clock_out: strOrNull(r.lastClockOut),
       // Ranking-module fields (migration 0238): traffic, on-time, voids.
       tickets: numOrNull(r.tickets),
       prev_year_tickets: numOrNull(r.previousYearTickets),
@@ -201,6 +210,22 @@ export function stripMixCols(rows) {
   return rows.map((r) => {
     const c = { ...r };
     for (const k of MIX_COLS_0296) delete c[k];
+    return c;
+  });
+}
+
+// Store-hours timestamp columns added by migration 0321. Same strip/retry
+// fallback so capture keeps landing the rest of the row until 0321 runs.
+const HOURS_COLS_0321 = ["first_ticket", "last_ticket", "first_clock_in", "last_clock_out"];
+
+export function isPreHoursError(error) {
+  return !!error && /column/i.test(String(error.message)) && /first_ticket|last_ticket|first_clock_in|last_clock_out/.test(String(error.message));
+}
+
+export function stripHoursCols(rows) {
+  return rows.map((r) => {
+    const c = { ...r };
+    for (const k of HOURS_COLS_0321) delete c[k];
     return c;
   });
 }
