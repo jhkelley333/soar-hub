@@ -167,6 +167,9 @@ export const NAV: NavItem[] = [
   // Hours of Operation — SDO/RVP reconcile their stores here; vp/coo/admin reach
   // it via System Settings, so the sidebar entry is scoped to the lower roles.
   { to: "/admin/hours-of-operation", label: "Hours of Operation", icon: Clock, roles: ["sdo", "rvp"] },
+  // Close-Time Watch — flags stores whose last clock-out was before their
+  // scheduled close. Same audience as Hours of Operation (its data source).
+  { to: "/admin/close-time-watch", label: "Close-Time Watch", icon: AlertTriangle, roles: ["sdo", "rvp"] },
   // SOAR QSR Learning Platform — admin-only during the build. The qsr_platform
   // flag broadens access to a pilot cohort at launch (combined with role).
   { to: "/qsr",         label: "Soar MyLearning", icon: Sparkles,    roles: ["admin"], flagKey: "qsr_platform" },
@@ -186,6 +189,7 @@ const HUB_TOOLS = new Set<string>([
   "/culture-index/overview",
   "/admin/metrics-board",
   "/admin/hours-of-operation",
+  "/admin/close-time-watch",
   "/qsr",
   "/admin/paf-config",
 ]);
@@ -265,6 +269,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/coo-map": "OPERATIONS",
   "/territory-map": "OPERATIONS",
   "/labor-v2": "OPERATIONS",
+  "/admin/close-time-watch": "OPERATIONS",
   "/admin/cash-management": "OPERATIONS",
   "/pl": "OPERATIONS",
   "/count": "OPERATIONS",

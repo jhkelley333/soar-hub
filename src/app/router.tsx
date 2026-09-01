@@ -114,6 +114,7 @@ import { MyWalksPage } from "@/modules/walkthrough/MyWalksPage";
 import { StoreGeofencesPage } from "@/modules/walkthrough/storegeo/StoreGeofencesPage";
 import { HoursOfOperationPage } from "@/modules/hours/HoursOfOperationPage";
 import { LocationHoursPage } from "@/modules/hours/LocationHoursPage";
+import { CloseTimeWatchPage } from "@/modules/close-compliance/CloseTimeWatchPage";
 import { WalkthroughHubPage } from "@/modules/walkthrough/WalkthroughHubPage";
 import { ReviewDashboardPage } from "@/modules/walkthrough/review/ReviewDashboardPage";
 import { SubmissionDetailPage } from "@/modules/walkthrough/review/SubmissionDetailPage";
@@ -513,6 +514,16 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["sdo", "rvp", "vp", "coo", "admin"]}>
             <HoursOfOperationPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Close-Time Watch — flags stores whose last clock-out was before their
+        // scheduled close (Hours of Operation). SDO/RVP scoped; org-wide see all.
+        path: "admin/close-time-watch",
+        element: (
+          <ProtectedRoute requireRoles={["sdo", "rvp", "vp", "coo", "admin"]}>
+            <CloseTimeWatchPage />
           </ProtectedRoute>
         ),
       },
