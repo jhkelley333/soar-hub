@@ -115,6 +115,7 @@ import { StoreGeofencesPage } from "@/modules/walkthrough/storegeo/StoreGeofence
 import { HoursOfOperationPage } from "@/modules/hours/HoursOfOperationPage";
 import { LocationHoursPage } from "@/modules/hours/LocationHoursPage";
 import { CloseTimeWatchPage } from "@/modules/close-compliance/CloseTimeWatchPage";
+import { GoogleReviewsPage } from "@/modules/google-reviews/GoogleReviewsPage";
 import { WalkthroughHubPage } from "@/modules/walkthrough/WalkthroughHubPage";
 import { ReviewDashboardPage } from "@/modules/walkthrough/review/ReviewDashboardPage";
 import { SubmissionDetailPage } from "@/modules/walkthrough/review/SubmissionDetailPage";
@@ -514,6 +515,15 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["sdo", "rvp", "vp", "coo", "admin"]}>
             <HoursOfOperationPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Google Reviews — ratings, worst locations, recent reviews (Places API).
+        path: "admin/google-reviews",
+        element: (
+          <ProtectedRoute requireRoles={["sdo", "rvp", "vp", "coo", "admin"]}>
+            <GoogleReviewsPage />
           </ProtectedRoute>
         ),
       },
