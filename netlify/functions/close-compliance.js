@@ -46,7 +46,9 @@ async function visibleIds(supa, user) {
 const isoAddDays = (iso, n) => { const [y, m, d] = iso.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
 // Mon=0 .. Sun=6 for an ISO date (matches store_hours.day_of_week).
 const dow = (iso) => { const [y, m, d] = iso.split("-").map(Number); return (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7; };
-const hhmm = (t) => (t ? String(t).slice(0, 5) : null); // "HH:MM:SS" -> "HH:MM"
+const hhmm = (t) => (t ? String(t).slice(0, 5) : null); // "HH:MM:SS" -> "HH:MM" (time values)
+// "HH:MM" out of a full timestamp "YYYY-MM-DDTHH:MM:SS" (or space-separated).
+const tsHHMM = (s) => { const m = /[ T](\d{2}:\d{2})/.exec(String(s || "")); return m ? m[1] : null; };
 // "HH:MM[:SS]" -> minutes past midnight, or null.
 const tmin = (t) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(t || "")); return m ? (+m[1]) * 60 + (+m[2]) : null; };
 // naive timestamp "YYYY-MM-DDTHH:MM[:SS]" -> absolute minutes (UTC epoch as a
@@ -139,7 +141,7 @@ async function summary(supa, user, params) {
       do: org.get(num)?.doName || (org.get(num)?.district ? `${org.get(num).district} (no DO)` : "Unassigned"),
       days: [],
     };
-    rec.days.push({ date: r.business_date, status: classify(delta), delta, close: sc.closeLabel, out: hhmm(r.last_clock_out), overnight: sc.overnight, special: sc.isSpecial });
+    rec.days.push({ date: r.business_date, status: classify(delta), delta, close: sc.closeLabel, out: tsHHMM(r.last_clock_out), overnight: sc.overnight, special: sc.isSpecial });
     perStore.set(num, rec);
   }
 
