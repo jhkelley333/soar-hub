@@ -88,7 +88,7 @@ export function CloseTimeWatchPage() {
   const t = data?.totals ?? {};
 
   return (
-    <div className="space-y-4">
+    <div className="max-w-5xl space-y-4">
       <PageHeader
         title="Close-Time Watch"
         description="Stores whose last clock-out was before their scheduled close."
@@ -173,7 +173,24 @@ function GroupTable({ g, view }: { g: CloseGroup; view: CloseView }) {
         )}
       </div>
       <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
-        <table className="w-full border-collapse text-sm">
+        {/* Fixed layout with a shared colgroup so every DO group's table lines
+            up column-for-column (separate <table>s otherwise auto-size apart). */}
+        <table className="w-full table-fixed border-collapse text-sm">
+          <colgroup>
+            {view === "daily" ? (
+              <>
+                <col style={{ width: "34%" }} /><col style={{ width: "15%" }} /><col style={{ width: "19%" }} /><col style={{ width: "14%" }} /><col style={{ width: "18%" }} />
+              </>
+            ) : view === "weekly" ? (
+              <>
+                <col style={{ width: "44%" }} /><col style={{ width: "22%" }} /><col style={{ width: "17%" }} /><col style={{ width: "17%" }} />
+              </>
+            ) : (
+              <>
+                <col style={{ width: "36%" }} /><col style={{ width: "30%" }} /><col style={{ width: "17%" }} /><col style={{ width: "17%" }} />
+              </>
+            )}
+          </colgroup>
           <thead>
             <tr className="bg-zinc-50 text-[10px] uppercase tracking-wide text-zinc-400">
               <th className="px-3.5 py-2 text-left font-bold">Store</th>
