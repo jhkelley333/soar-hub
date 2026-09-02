@@ -62,6 +62,7 @@ export interface LeaderRow {
   email: string | null;
   phone: string | null;
   birthday: string | null;   // ISO YYYY-MM-DD, null if opted out / unset
+  cultural_index_trait: string | null; // Culture Index pattern, if on file
   coverage: string[];        // "#code · name" for the markets they lead
   additional?: string[];     // extra (acting) markets, flagged separately
 }
