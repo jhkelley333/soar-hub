@@ -195,7 +195,7 @@ async function listLeaders(supa, user) {
   if (!userIds.length) return { rows: [] };
 
   const { data: profs } = await supa.from("profiles")
-    .select("id, full_name, preferred_name, email, phone, role, birthday, show_birthday, is_active")
+    .select("id, full_name, preferred_name, email, phone, role, birthday, show_birthday, is_active, cultural_index_trait")
     .in("id", userIds).eq("is_active", true).in("role", LEADER_ROLES);
 
   // Coverage label with its market number, e.g. "#12 · Northern Heartland".
@@ -221,6 +221,7 @@ async function listLeaders(supa, user) {
       email: p.email || null,
       phone: p.phone || null,
       birthday: p.show_birthday === false ? null : (p.birthday || null),
+      cultural_index_trait: p.cultural_index_trait || null,
       coverage,
       additional,
     };
