@@ -19,10 +19,12 @@ export interface ReviewRow {
   body: string; review_time: string | null; relative_time: string | null;
 }
 export interface KeywordTag { word: string; count: number }
+export interface TrendPoint { date: string; count: number; avg: number | null }
 export interface ReviewSummary {
   overall: { avg: number; stores: number; total_reviews: number } | null;
   worst: WorstLocation[];
   recent: ReviewRow[];
+  trend: TrendPoint[];
   keywords: { issues: KeywordTag[]; positive: KeywordTag[] };
   distribution: { 1: number; 2: number; 3: number; 4: number; 5: number; total: number } | null;
   coverage: { rated: number; with_place_id: number; total: number };

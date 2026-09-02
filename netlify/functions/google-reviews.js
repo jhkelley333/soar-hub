@@ -124,8 +124,27 @@ async function summary(supa, user) {
   const dist = [0, 0, 0, 0, 0, 0];
   for (const r of allRev || []) if (r.rating >= 1 && r.rating <= 5) dist[r.rating]++;
 
+  // 60-day trend from collected reviews: per day, how many reviews came in and
+  // their average rating. Rolling sample, so it fills out over time.
+  const since = new Date(Date.now() - 60 * 86400000).toISOString();
+  const { data: trendRows } = await supa.from("google_reviews").select("review_time, rating").in("store_id", ids).gte("review_time", since);
+  const byDay = new Map();
+  for (const r of trendRows || []) {
+    if (!r.review_time) continue;
+    const d = new Date(r.review_time).toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+    const b = byDay.get(d) || { count: 0, sum: 0, rated: 0 };
+    b.count++; if (r.rating != null) { b.sum += r.rating; b.rated++; }
+    byDay.set(d, b);
+  }
+  const trend = [];
+  for (let i = 59; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000).toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+    const b = byDay.get(d);
+    trend.push({ date: d, count: b ? b.count : 0, avg: b && b.rated ? Math.round((b.sum / b.rated) * 100) / 100 : null });
+  }
+
   return {
-    overall, worst, recent,
+    overall, worst, recent, trend,
     keywords: keywordTags(allRev || []),
     distribution: { 1: dist[1], 2: dist[2], 3: dist[3], 4: dist[4], 5: dist[5], total: (allRev || []).length },
     coverage: { rated: rated.length, with_place_id: withPlaceId, total: totalStores },
@@ -136,12 +155,26 @@ async function summary(supa, user) {
 export const handler = async (event) => {
   let supa;
   try { supa = admin(); } catch (e) { return respond(500, { error: e.message }); }
+
+  const params = event.queryStringParameters || {};
+  const action = params.action || "summary";
+
+  // Cron path: token-authenticated refresh with no user session (the weekly
+  // Monday workflow). Only active when REVIEWS_CRON_TOKEN is set in Netlify.
+  const cronToken = process.env.REVIEWS_CRON_TOKEN;
+  if (action === "refresh" && cronToken && params.token && params.token === cronToken) {
+    try {
+      const r = await refresh(supa, params);
+      return r.error ? respond(r.status || 500, { error: r.error }) : respond(200, r);
+    } catch (e) {
+      return respond(500, { error: e?.message || "Request failed" });
+    }
+  }
+
   const user = await sessionUser(supa, event);
   if (!user) return respond(401, { error: "Not signed in." });
   if (!VIEW_ROLES.has(user.role)) return respond(403, { error: "Not authorized." });
 
-  const params = event.queryStringParameters || {};
-  const action = params.action || "summary";
   try {
     if (action === "summary") return respond(200, await summary(supa, user));
     if (action === "refresh") {

@@ -1,0 +1,56 @@
+# Google Reviews weekly refresh — pulls every store's Google rating + newest
+# reviews once a week, looping in batches until ALL stores have been refreshed
+# for the day.
+#
+# The refresh endpoint is token-gated (Google Places Details is a paid per-call
+# SKU, so it's not left open like the KPI capture). Set the SAME secret value in
+# two places:
+#   - Netlify env var  REVIEWS_CRON_TOKEN
+#   - GitHub Actions secret  REVIEWS_CRON_TOKEN
+# Optional: SITE_URL secret to override the target (defaults to mysoarhub.com).
+#
+# Each call drains ~20 of the stalest stores (time-boxed under the function
+# limit); the loop repeats until the function reports remaining=0. ~271 stores
+# => ~14 iterations. Runs Mondays ~08:00 America/Chicago (13:00 UTC).
+
+name: Google Reviews weekly refresh
+
+on:
+  schedule:
+    - cron: "0 13 * * 1" # Mondays 13:00 UTC ≈ 08:00 America/Chicago (CDT)
+  workflow_dispatch: {} # manual "Run workflow" from the Actions tab
+
+concurrency:
+  group: google-reviews-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Drain refresh until every store is pulled
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          TOKEN: ${{ secrets.REVIEWS_CRON_TOKEN }}
+        run: |
+          set -euo pipefail
+          base="${SITE_URL:-https://mysoarhub.com}"
+          base="${base%/}"
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::error::REVIEWS_CRON_TOKEN secret is not set — cannot authenticate the refresh."
+            exit 1
+          fi
+          url="${base}/.netlify/functions/google-reviews"
+          for i in $(seq 1 30); do
+            resp=$(curl -fsS --max-time 60 "${url}?action=refresh&limit=20&token=${TOKEN}" || echo '{"error":"request failed"}')
+            echo "iter ${i}: ${resp}"
+            if echo "${resp}" | jq -e '.error' >/dev/null 2>&1; then
+              echo "::error::refresh returned an error"; exit 1
+            fi
+            remaining=$(echo "${resp}" | jq -r '.remaining // 0')
+            if [ "${remaining}" = "0" ] || [ "${remaining}" = "null" ]; then
+              echo "All stores refreshed."; break
+            fi
+            sleep 5
+          done
