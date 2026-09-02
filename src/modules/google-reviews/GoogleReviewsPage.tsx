@@ -13,6 +13,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { fetchReviewSummary, refreshReviews, type ReviewRow, type WorstLocation } from "./api";
+import { ReviewTrends } from "./ReviewTrends";
 
 const ratingTone = (r: number | null): string =>
   r == null ? "text-zinc-400" : r <= 2 ? "text-red-600" : r < 4 ? "text-amber-600" : "text-emerald-600";
@@ -116,6 +117,9 @@ export function GoogleReviewsPage() {
               </div>
             </div>
           </div>
+
+          {/* trend */}
+          {data.trend && <ReviewTrends data={data.trend} />}
 
           {/* worst + keywords */}
           <div className="grid gap-3 md:grid-cols-3">
