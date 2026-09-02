@@ -68,6 +68,42 @@ export async function fetchPlaceHours(placeId) {
   return { periods: json.result?.opening_hours?.periods || null, name: json.result?.name || null };
 }
 
+// Fetch a place's rating, total review count, and its (up to 5) most-relevant
+// reviews via Place Details. The Places API caps reviews at 5 and gives no
+// histogram, so `rating`/`user_ratings_total` are the accurate aggregates and
+// `reviews` is a rolling sample. Each review: author_name, rating, text, time
+// (unix seconds), relative_time_description, language.
+export async function fetchPlaceReviews(placeId) {
+  if (!PLACES_KEY) return { error: "places not configured (GOOGLE_PLACES_API_KEY)" };
+  const url =
+    "https://maps.googleapis.com/maps/api/place/details/json?fields=rating,user_ratings_total,reviews,name,url&reviews_sort=newest" +
+    "&place_id=" + encodeURIComponent(placeId) + "&key=" + PLACES_KEY;
+  let json;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return { error: `places http ${res.status}` };
+    json = await res.json();
+  } catch (e) {
+    return { error: e?.message || "places request failed" };
+  }
+  if (json.status !== "OK") return { error: `places: ${json.status}` };
+  const r = json.result || {};
+  return {
+    rating: typeof r.rating === "number" ? r.rating : null,
+    total: typeof r.user_ratings_total === "number" ? r.user_ratings_total : null,
+    name: r.name || null,
+    url: r.url || null,
+    reviews: Array.isArray(r.reviews) ? r.reviews.map((rv) => ({
+      author: rv.author_name || "Anonymous",
+      rating: typeof rv.rating === "number" ? rv.rating : null,
+      text: rv.text || "",
+      time: typeof rv.time === "number" ? rv.time : null, // unix seconds
+      relative_time: rv.relative_time_description || null,
+      language: rv.language || null,
+    })) : [],
+  };
+}
+
 // "0930" -> "09:30".
 const hm = (t) => (typeof t === "string" && /^\d{4}$/.test(t) ? `${t.slice(0, 2)}:${t.slice(2)}` : null);
 // Google weekday: 0=Sunday..6=Saturday. System weekday: 0=Monday..6=Sunday.

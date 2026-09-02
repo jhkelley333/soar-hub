@@ -9,6 +9,7 @@ import {
   Settings,
   Hammer,
   Sparkles,
+  Star,
   ClipboardCheck,
   MessageCircle,
   Gauge,
@@ -170,6 +171,8 @@ export const NAV: NavItem[] = [
   // Close-Time Watch — flags stores whose last clock-out was before their
   // scheduled close. Same audience as Hours of Operation (its data source).
   { to: "/admin/close-time-watch", label: "Close-Time Watch", icon: AlertTriangle, roles: ["sdo", "rvp"] },
+  // Google Reviews — ratings + reviews across stores (Places API).
+  { to: "/admin/google-reviews", label: "Google Reviews", icon: Star, roles: ["sdo", "rvp"] },
   // SOAR QSR Learning Platform — admin-only during the build. The qsr_platform
   // flag broadens access to a pilot cohort at launch (combined with role).
   { to: "/qsr",         label: "Soar MyLearning", icon: Sparkles,    roles: ["admin"], flagKey: "qsr_platform" },
@@ -190,6 +193,7 @@ const HUB_TOOLS = new Set<string>([
   "/admin/metrics-board",
   "/admin/hours-of-operation",
   "/admin/close-time-watch",
+  "/admin/google-reviews",
   "/qsr",
   "/admin/paf-config",
 ]);
@@ -270,6 +274,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/territory-map": "OPERATIONS",
   "/labor-v2": "OPERATIONS",
   "/admin/close-time-watch": "OPERATIONS",
+  "/admin/google-reviews": "OPERATIONS",
   "/admin/cash-management": "OPERATIONS",
   "/pl": "OPERATIONS",
   "/count": "OPERATIONS",
