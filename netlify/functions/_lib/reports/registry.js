@@ -20,6 +20,7 @@ import { trainingOverBudget } from "./handlers/trainingOverBudget.js";
 import { weeklyBusinessDisruptions } from "./handlers/weeklyBusinessDisruptions.js";
 import { mondayStoreFundsCount } from "./handlers/mondayStoreFundsCount.js";
 import { employeeActionApprovals } from "./handlers/employeeActionApprovals.js";
+import { closeTimeWatchDaily } from "./handlers/closeTimeWatchDaily.js";
 
 // Engine smoke test — no query; confirms the render + Resend path end to end.
 async function smokeTest({ definition, now }) {
@@ -44,6 +45,7 @@ const HANDLERS = {
   weekly_business_disruptions: weeklyBusinessDisruptions,
   monday_store_funds_count: mondayStoreFundsCount,
   employee_action_approvals_reminder: employeeActionApprovals,
+  close_time_watch_daily: closeTimeWatchDaily,
 };
 
 export function getHandler(key) {

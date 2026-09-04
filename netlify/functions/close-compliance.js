@@ -13,14 +13,14 @@
 import { createClient } from "@supabase/supabase-js";
 import { resolveOrg } from "./_lib/kpiOrg.js";
 import { fiscalForDate } from "./_lib/fiscal.js";
+// Shared comparison logic (also used by the daily Close-Time report) so the
+// grace window + overnight/close handling can't drift between the two.
+import { GRACE_MIN, dow, tsHHMM, tsMin, scheduledClose, classify } from "./_lib/closeTime.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const VIEW_ROLES = new Set(["admin", "vp", "coo", "sdo", "rvp"]);
 const ORG_WIDE = new Set(["admin", "vp", "coo"]);
-// A clock-out within GRACE_MIN before close is "borderline" (amber); earlier
-// than that is flagged (red). At/after close is on-time (green).
-const GRACE_MIN = 10;
 
 function admin() {
   return createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -41,45 +41,6 @@ async function visibleIds(supa, user) {
   const { data } = await supa.rpc("user_visible_stores", { uid: user.id });
   return new Set((data ?? []).map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null)).filter(Boolean));
 }
-
-// ── date/time helpers — everything naive & store-local (no timezone) ──
-const isoAddDays = (iso, n) => { const [y, m, d] = iso.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
-// Mon=0 .. Sun=6 for an ISO date (matches store_hours.day_of_week).
-const dow = (iso) => { const [y, m, d] = iso.split("-").map(Number); return (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7; };
-const hhmm = (t) => (t ? String(t).slice(0, 5) : null); // "HH:MM:SS" -> "HH:MM" (time values)
-// "HH:MM" out of a full timestamp "YYYY-MM-DDTHH:MM:SS" (or space-separated).
-const tsHHMM = (s) => { const m = /[ T](\d{2}:\d{2})/.exec(String(s || "")); return m ? m[1] : null; };
-// "HH:MM[:SS]" -> minutes past midnight, or null.
-const tmin = (t) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(t || "")); return m ? (+m[1]) * 60 + (+m[2]) : null; };
-// naive timestamp "YYYY-MM-DDTHH:MM[:SS]" -> absolute minutes (UTC epoch as a
-// tz-neutral number line — both operands use the same basis so the delta is
-// exact regardless of real timezone).
-function tsMin(s) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(s || ""));
-  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) / 60000 : null;
-}
-// absolute minutes for (business date + minutes-past-midnight), shifted dayOffset days.
-const dayMin = (iso, minPastMidnight, dayOffset = 0) => tsMin(isoAddDays(iso, dayOffset) + "T00:00") + minPastMidnight;
-
-// The scheduled close for one store on one business date. A dated special-hours
-// override wins over the standard weekday row. Overnight closes (close <= open,
-// or an early-AM close with no open on file) land on the next calendar day.
-function scheduledClose(bizDate, weekday, special) {
-  const src = special || weekday; // override wins
-  if (!src) return { hasHours: false };
-  if (src.is_closed) return { hasHours: true, closed: true };
-  const closeM = tmin(src.close_time);
-  if (closeM == null) return { hasHours: true, closed: false, closeAbs: null };
-  const openM = tmin(src.open_time);
-  const overnight = (openM != null && closeM <= openM) || (openM == null && closeM < 360);
-  return {
-    hasHours: true, closed: false,
-    closeAbs: dayMin(bizDate, closeM, overnight ? 1 : 0),
-    closeLabel: hhmm(src.close_time), overnight, isSpecial: !!special,
-  };
-}
-
-const classify = (delta) => (delta <= -GRACE_MIN ? "flag" : delta < 0 ? "warn" : "good");
 
 async function summary(supa, user, params) {
   const view = ["daily", "weekly", "monthly"].includes(params.view) ? params.view : "daily";
