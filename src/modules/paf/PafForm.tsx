@@ -105,6 +105,9 @@ const NH_ROLES = ["GM", "DO", "SDO"];
 const PAY_ADJ_SALARY = "Pay Adjustment (Salary)";
 const PAY_ADJ_ROLES = ["GM", "DO", "SDO", "RVP"];
 const PAY_ADJ_SUBMITTER_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
+// DO and above may file a Transfer to a store outside their scope, so the
+// Employee Home Store field lets them enter any store on a Transfer.
+const TRANSFER_CROSS_SCOPE_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
 // "Wed, Jul 15, 10:00 AM CT"
 function fmtCutoff(iso: string): string {
   return new Date(iso).toLocaleString("en-US", {
@@ -848,6 +851,7 @@ export function PafForm({
           onChange={patch}
           cfg={cfg}
           myStores={myStores}
+          allowAnyStore={state.category === "Transfer" && !!profile && TRANSFER_CROSS_SCOPE_ROLES.has(profile.role)}
           extraCategories={
             profile && PAY_ADJ_SUBMITTER_ROLES.has(profile.role) ? [PAY_ADJ_SALARY] : []
           }
@@ -1501,6 +1505,7 @@ function FieldGrid({
   onChange,
   cfg,
   myStores,
+  allowAnyStore = false,
   extraCategories = [],
   omitCategories = [],
 }: {
@@ -1509,6 +1514,7 @@ function FieldGrid({
   onChange: (key: string, value: string) => void;
   cfg: PafConfigDoc;
   myStores: MyStore[];
+  allowAnyStore?: boolean;
   extraCategories?: string[];
   omitCategories?: string[];
 }) {
@@ -1527,6 +1533,7 @@ function FieldGrid({
           onChange={(v) => onChange(k, v)}
           lists={cfg.lists}
           myStores={myStores}
+          allowAnyStore={allowAnyStore}
           extraCategories={extraCategories}
           omitCategories={omitCategories}
         />
@@ -1567,6 +1574,7 @@ function FieldRender({
   lists,
   readOnly,
   myStores,
+  allowAnyStore = false,
   extraCategories = [],
   omitCategories = [],
 }: {
@@ -1577,6 +1585,7 @@ function FieldRender({
   lists: PafConfigDoc["lists"];
   readOnly?: boolean;
   myStores: MyStore[];
+  allowAnyStore?: boolean;
   extraCategories?: string[];
   omitCategories?: string[];
 }) {
@@ -1595,7 +1604,9 @@ function FieldRender({
   // text input if the store list is empty (admin without stores in DB,
   // or a fetch failure — server still validates the value on submit).
   if (fieldKey === "drive_in") {
-    if (!myStores.length) {
+    // Transfers by DO+ may cross scope, so let them enter any store number
+    // (not just the ones in their dropdown). Server validates the value.
+    if (allowAnyStore || !myStores.length) {
       return (
         <div>
           {label}
@@ -1603,9 +1614,13 @@ function FieldRender({
             id={id}
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            placeholder={cfg.placeholder}
+            placeholder={cfg.placeholder || "Store #"}
           />
-          {cfg.helpText && <p className="mt-0.5 text-[11px] text-zinc-500">{cfg.helpText}</p>}
+          {(allowAnyStore || cfg.helpText) && (
+            <p className="mt-0.5 text-[11px] text-zinc-500">
+              {allowAnyStore ? "Enter any store # — transfers can cross your district/market/region." : cfg.helpText}
+            </p>
+          )}
         </div>
       );
     }
