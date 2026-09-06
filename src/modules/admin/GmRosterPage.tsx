@@ -201,7 +201,7 @@ function LeadersTab({ q }: { q: UseQueryResult<{ ok: true; rows: LeaderRow[] }> 
     const all = q.data?.rows ?? [];
     const s = search.trim().toLowerCase();
     return s
-      ? all.filter((r) => `${r.name ?? ""} ${ROLE_LABEL[r.role]} ${r.coverage.join(" ")} ${(r.additional ?? []).join(" ")} ${r.email ?? ""}`.toLowerCase().includes(s))
+      ? all.filter((r) => `${r.name ?? ""} ${ROLE_LABEL[r.role]} ${r.cultural_index_trait ?? ""} ${r.coverage.join(" ")} ${(r.additional ?? []).join(" ")} ${r.email ?? ""}`.toLowerCase().includes(s))
       : all;
   }, [q.data, search]);
 
@@ -230,6 +230,7 @@ function LeadersTab({ q }: { q: UseQueryResult<{ ok: true; rows: LeaderRow[] }> 
                 <tr className="border-b border-zinc-100 text-left text-[10px] uppercase tracking-wide text-zinc-400">
                   <th className="px-4 py-2">Name</th>
                   <th className="px-4 py-2">Role</th>
+                  <th className="px-4 py-2">Trait</th>
                   <th className="px-4 py-2">Coverage</th>
                   <th className="px-4 py-2">Contact</th>
                   <th className="px-4 py-2">Birthday</th>
@@ -253,6 +254,9 @@ function LeaderRowView({ r }: { r: LeaderRow }) {
       <td className="px-4 py-2.5 font-semibold text-midnight">{r.name ?? "—"}</td>
       <td className="px-4 py-2.5">
         <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", tone)}>{ROLE_LABEL[r.role]}</span>
+      </td>
+      <td className="px-4 py-2.5">
+        {r.cultural_index_trait ? <TraitChip trait={r.cultural_index_trait} /> : <span className="text-xs text-zinc-400">—</span>}
       </td>
       <td className="px-4 py-2.5 text-xs text-zinc-500">
         {r.coverage.length ? r.coverage.join(" · ") : "—"}
