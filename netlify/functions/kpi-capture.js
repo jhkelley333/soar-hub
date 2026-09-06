@@ -1,227 +1,96 @@
-// kpi-capture — scheduled puller for the Expressway KPI feed.
+// kpi-capture — synchronous entrypoint for the Expressway KPI feed capture.
 //
-// Captures the raw feed into kpi_snapshots, and fans store-level labor into
-// labor_v2_daily, hourly from 7 AM to 10 PM Central — the same "back office
-// fills it in gradually through the morning" window labor-snapshot.js already
-// uses for the Labor sheet. The feed doesn't have one "done" moment either
-// (Expressway sometimes finishes after the old 7/9/11 AM-only window), so
-// this widens the capture range and relies on idempotent upserts —
-// kpi_snapshots keys on (central_date, central_hour) so each hour gets its
-// own row, and labor_v2_daily keys on (store_number, business_date) so later
-// hours converge it to the final numbers as the day's data lands. Previously
-// this was admins manually checking the KPI Dashboard until the feed looked
-// complete, then hitting "Refresh" on Labor v2 to pull it in — that dance is
-// what this widened window + the GitHub Actions trigger below replace.
+// The heavy lifting lives in _lib/runKpiCapture.js and is shared with
+// kpi-capture-background.js. This synchronous path is the BACKUP + manual +
+// status surface; the reliable primary trigger is the background function
+// (15-min limit, can't time out). See that file and the workflows.
 //
-// Netlify's native scheduled-function trigger has been unreliable in this
-// project before (see .github/workflows/labor-auto-pull.yml, which moved
-// labor-snapshot off it for the same reason) — kept here as a backup, with
-// .github/workflows/kpi-capture-pull.yml as the reliable trigger. Both are
-// safe to fire redundantly: the function gates non-force calls to
-// CAPTURE_HOURS and every write is an upsert.
+// Why this path is fail-fast: Netlify gives a synchronous function ~10 seconds.
+// The old code fetched the feed with up to 3×15s attempts, then did all the
+// downstream work, all behind that wall — so a slow feed (exactly the morning
+// "back office is still filling it in" window) blew past 10s and Netlify
+// returned HTTP 502, writing nothing. Now the feed fetch here is capped tight;
+// a slow feed returns a clean 200 "not ready" and the next poll gets it, and
+// the background function (with minutes to spare) is what actually carries the
+// day. Every write is an idempotent upsert, so both paths are safe to overlap.
 //
-// Netlify cron is UTC-only, so the config.schedule below fires on the union
-// of UTC hours that can map to 7 AM–10 PM Central across DST, and this file
-// gates on the actual America/Chicago hour (so it's always 7 AM–10 PM local,
-// summer or winter).
-//
-// Manual test: GET /.netlify/functions/kpi-capture?force=1 captures now,
-// regardless of the hour.
+// Modes (query params):
+//   ?status=1  read-only — no feed fetch. Reports whether the day's data has
+//              landed, for the catch-up workflow's poll loop. Returns JSON.
+//   ?force=1   capture now regardless of the capture-hours gate (manual test).
+//   (none)     capture if inside CAPTURE_HOURS, else skip.
 
 import { createClient } from "@supabase/supabase-js";
-import { extractLaborRows, feedBusinessDate, isPre0238Error, isPre0272Error, isPreMixError, isPreHoursError, stripMixCols, stripRankingCols, stripTicketCols, stripHoursCols } from "./_lib/kpiLabor.js";
-import { extractCountRows, isPreCountExtrasError, stripCountExtras } from "./_lib/kpiCount.js";
-import { upsertLaborCloses } from "./_lib/laborCloses.js";
-import { logPull } from "./_lib/pullLog.js";
-import { pingHeartbeat } from "./_lib/heartbeat.js";
-import { fiscalForDate } from "./_lib/fiscal.js";
-import { runRankingNow } from "./_lib/ranking/run.js";
+import { runKpiCapture, CAPTURE_HOURS, TZ } from "./_lib/runKpiCapture.js";
+import { wallClockInTz } from "./_lib/kpiLabor.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const KPI_URL = process.env.SKUNKWORKS_KPI_URL;
-const KPI_TOKEN = process.env.SKUNKWORKS_KPI_TOKEN;
 
-const TZ = "America/Chicago";
-const CAPTURE_HOURS = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
+// Fail-fast fetch budget: one short attempt so the whole synchronous request
+// finishes well inside Netlify's ~10s wall even when the feed hangs.
+const SYNC_FETCH = { attempts: 1, timeoutMs: 7000, backoffMs: 0 };
 
-// Wall-clock parts in a timezone (DST-safe). Mirrors the digest functions.
-function wallClockInTz(utcDate, tz) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
-  }).formatToParts(utcDate);
-  const get = (t) => parts.find((p) => p.type === t)?.value;
-  let hour = parseInt(get("hour"), 10);
-  if (hour === 24) hour = 0;
-  return { year: +get("year"), month: +get("month"), day: +get("day"), hour };
+const iso = (y, m, d) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+
+// The business date today's captures should be landing (feed lags ~1 day).
+function expectedBusinessDate(wc) {
+  const t = new Date(Date.UTC(wc.year, wc.month - 1, wc.day) - 86400000);
+  return iso(t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate());
 }
 
 export const handler = async (event) => {
-  const force = event?.queryStringParameters?.force === "1";
+  const q = event?.queryStringParameters || {};
+  const force = q.force === "1";
   const wc = wallClockInTz(new Date(), TZ);
+
+  if (!SUPABASE_URL || !SERVICE_KEY) {
+    return { statusCode: 200, body: "kpi-capture not configured (env vars missing)" };
+  }
+  const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+
+  // ── Status read: does the day's data appear to have landed yet? ────────────
+  // Used by the catch-up loop to decide whether to keep polling. Read-only, no
+  // feed fetch, so it always returns fast. Threshold via CATCHUP_MIN_ROWS
+  // (default 200 of ~271 stores) — "landed" means a healthy pull, not just >0,
+  // so a thin early-fill-in pull doesn't stop the loop prematurely.
+  if (q.status === "1") {
+    const businessDate = expectedBusinessDate(wc);
+    const minRows = parseInt(process.env.CATCHUP_MIN_ROWS, 10) || 200;
+    const { count } = await supa
+      .from("labor_v2_daily").select("store_number", { count: "exact", head: true })
+      .eq("business_date", businessDate);
+    const { data: lastOk } = await supa
+      .from("kpi_pull_log").select("created_at")
+      .eq("ok", true).order("created_at", { ascending: false }).limit(1);
+    const rows = count ?? 0;
+    return {
+      statusCode: 200,
+      headers: { "content-type": "application/json", "cache-control": "no-store" },
+      body: JSON.stringify({
+        business_date: businessDate,
+        rows,
+        min_rows: minRows,
+        landed: rows >= minRows,
+        last_ok_pull: lastOk?.[0]?.created_at || null,
+        checked_at: new Date().toISOString(),
+      }),
+    };
+  }
 
   if (!force && !CAPTURE_HOURS.includes(wc.hour)) {
     return { statusCode: 200, body: `skip — ${wc.hour}:00 CT is not a capture hour` };
   }
-  const started = Date.now();
-  const centralDate = `${wc.year}-${String(wc.month).padStart(2, "0")}-${String(wc.day).padStart(2, "0")}`;
-  if (!KPI_URL || !KPI_TOKEN || !SUPABASE_URL || !SERVICE_KEY) {
-    return { statusCode: 200, body: "kpi-capture not configured (env vars missing)" };
-  }
 
-  // Build the URL: strip any token already on the env URL, then set ours.
-  let url;
-  try {
-    const u = new URL(KPI_URL);
-    u.searchParams.delete("token");
-    u.searchParams.set("token", KPI_TOKEN);
-    url = u.toString();
-  } catch {
-    return { statusCode: 500, body: "SKUNKWORKS_KPI_URL is not a valid URL" };
-  }
-
-  // Fetch the feed with a few retries — the feed occasionally returns a
-  // non-JSON error page / 5xx, and a single blip shouldn't skip the capture.
-  let payload;
-  let lastErr = "";
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 15000);
-    try {
-      const res = await fetch(url, { headers: { Accept: "application/json" }, signal: ctrl.signal });
-      const text = await res.text();
-      if (!res.ok) { lastErr = `responded ${res.status}: ${text.slice(0, 150)}`; }
-      else { try { payload = JSON.parse(text); break; } catch { lastErr = `non-JSON: ${text.slice(0, 120).replace(/\s+/g, " ")}`; } }
-    } catch (e) {
-      lastErr = e?.name === "AbortError" ? "timed out" : (e?.message || String(e));
-    } finally {
-      clearTimeout(timer);
-    }
-    if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 2000)); // 2s, 4s backoff
-  }
-  const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
-  if (!payload) {
-    console.log(`[kpi-capture] feed failed after retries: ${lastErr}`);
-    await logPull(supa, { source: "cron", ok: false, central_date: centralDate, central_hour: wc.hour, error: lastErr, duration_ms: Date.now() - started });
-    return { statusCode: 502, body: `Couldn't reach the KPI feed after retries: ${lastErr}` };
-  }
-
-  // Store the raw snapshot. Retry a couple times so a transient Supabase blip
-  // (pooler hiccup, brief unavailability) doesn't fail an otherwise-good pull,
-  // and — critically — log the failure to the Pull Log if it still fails, so a
-  // 500 here is diagnosable instead of invisible (it previously returned before
-  // any logPull, so DB-write failures never showed up in /admin/labor-v2/log).
-  let snapErr = null;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const { error } = await supa
-      .from("kpi_snapshots")
-      .upsert(
-        { captured_at: new Date().toISOString(), central_date: centralDate, central_hour: wc.hour, payload },
-        { onConflict: "central_date,central_hour" },
-      );
-    if (!error) { snapErr = null; break; }
-    snapErr = error;
-    if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 1000)); // 1s, 2s
-  }
-  if (snapErr) {
-    console.log(`[kpi-capture] kpi_snapshots insert failed after retries: ${snapErr.message}`);
-    await logPull(supa, { source: "cron", ok: false, central_date: centralDate, central_hour: wc.hour, error: `kpi_snapshots insert failed: ${snapErr.message}`, duration_ms: Date.now() - started });
-    return { statusCode: 500, body: `DB insert failed: ${snapErr.message}` };
-  }
-
-  // Also fan the store-level labor numbers into labor_v2_daily (per store + the
-  // feed's business date), so Labor v2 has its history without a separate fetch.
-  let laborStored = 0;
-  const businessDate = feedBusinessDate(payload, wc);
-  const extracted = extractLaborRows(payload);
-  const laborRows = extracted.map((r) => ({ ...r, business_date: businessDate, captured_at: new Date().toISOString() }));
-  if (laborRows.length) {
-    let { error: lerr } = await supa.from("labor_v2_daily").upsert(laborRows, { onConflict: "store_number,business_date" });
-    if (lerr && isPreHoursError(lerr)) {
-      // Migration 0321 (store-hours timestamps) not applied yet — drop just those.
-      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripHoursCols(laborRows), { onConflict: "store_number,business_date" }));
-    }
-    if (lerr && isPreMixError(lerr)) {
-      // Migration 0296 (order-ahead/delivery) not applied yet — drop just those.
-      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripHoursCols(stripMixCols(laborRows)), { onConflict: "store_number,business_date" }));
-    }
-    if (lerr && isPre0272Error(lerr)) {
-      // Migration 0272 (ticket-time) not applied yet — drop just those columns.
-      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripHoursCols(stripMixCols(stripTicketCols(laborRows))), { onConflict: "store_number,business_date" }));
-    }
-    if (lerr && isPre0238Error(lerr)) {
-      // Migration 0238 (ranking fields) not applied yet — land the old column set.
-      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripHoursCols(stripMixCols(stripRankingCols(stripTicketCols(laborRows)))), { onConflict: "store_number,business_date" }));
-    }
-    if (lerr) console.log(`[kpi-capture] labor upsert failed: ${lerr.message}`);
-    else laborStored = laborRows.length;
-  }
-
-  // Also fan the per-store daily COUNT scores into count_daily (same feed,
-  // same business date) so the Daily Count page has trend history.
-  let countStored = 0;
-  const countRows = extractCountRows(payload).map((r) => ({
-    ...r, business_date: businessDate, captured_at: new Date().toISOString(),
-  }));
-  if (countRows.length) {
-    let { error: cerr } = await supa.from("count_daily").upsert(countRows, { onConflict: "store_number,business_date" });
-    if (cerr && isPreCountExtrasError(cerr)) {
-      // Migration 0276 (count_variance / item_efficiency) not applied yet.
-      ({ error: cerr } = await supa.from("count_daily").upsert(stripCountExtras(countRows), { onConflict: "store_number,business_date" }));
-    }
-    if (cerr) console.log(`[kpi-capture] count upsert failed: ${cerr.message}`);
-    else countStored = countRows.length;
-  }
-
-  // When the captured day closes a fiscal week / period, snapshot the final
-  // WTD / PTD into the close ledgers (idempotent upsert).
-  let closes = { weeks: 0, periods: 0 };
-  try { closes = await upsertLaborCloses(supa, extracted, businessDate); }
-  catch (e) { console.log(`[kpi-capture] close snapshot failed: ${e.message}`); }
-
-  // Auto-advance the Ranker. When the captured business day is a fiscal
-  // week-ending Sunday (Monday's capture serves Sunday's numbers), that week is
-  // complete — kick a ranking run so the board rolls to the new week without
-  // anyone clicking Refresh. Gated to fire once per week (skip if a complete run
-  // for this weekEnding already exists); best-effort so a ranking hiccup never
-  // fails the capture. Runs are ~0.5s, headless (started_by null).
-  let ranked = null;
-  try {
-    const fx = fiscalForDate(businessDate);
-    if (fx && fx.isWeekEnd) {
-      const { data: existing } = await supa
-        .from("ranking_runs").select("id")
-        .eq("week_ending", businessDate).eq("status", "complete").limit(1);
-      if (existing && existing.length) {
-        ranked = `week ${businessDate} already ranked`;
-      } else {
-        const r = await runRankingNow(supa, { id: null }, { weekEnding: businessDate });
-        ranked = r?.error ? `run error: ${r.error}` : `auto-ran week ${r.week_ending} (${r.rows} rows)`;
-      }
-    }
-  } catch (e) {
-    ranked = `run error: ${e.message}`;
-  }
-  if (ranked) console.log(`[kpi-capture] ranker: ${ranked}`);
-
-  await logPull(supa, {
-    source: "cron", ok: true, business_date: businessDate, store_rows: laborStored,
-    wtd_rows: extracted.filter((r) => r.wtd_net_sales != null).length,
-    ptd_rows: extracted.filter((r) => r.ptd_net_sales != null).length,
-    kpi_snapshot: true, central_date: centralDate, central_hour: wc.hour, duration_ms: Date.now() - started,
-  });
-  console.log(`[kpi-capture] stored snapshot for ${centralDate} ${wc.hour}:00 CT · labor rows ${laborStored} · count rows ${countStored} (${businessDate}) · closes w${closes.weeks}/p${closes.periods}`);
-  // Dead-man's-switch: we reached the feed and wrote a snapshot — tell the
-  // external monitor the capture pipeline is alive. Best-effort.
-  await pingHeartbeat("kpi");
-  return { statusCode: 200, body: `captured ${centralDate} ${wc.hour}:00 CT · labor ${laborStored} · count ${countStored} rows for ${businessDate} · closes ${closes.weeks}w/${closes.periods}p${ranked ? ` · ranker: ${ranked}` : ""}` };
+  const result = await runKpiCapture(supa, { wc, source: force ? "manual" : "cron", fetch: SYNC_FETCH });
+  return { statusCode: result.statusCode, body: result.body };
 };
 
-// Fire on every UTC hour that could be 7 AM–10 PM Central (CST or CDT); the
-// handler gates to the real Central hour, so exactly sixteen captures land
-// each day regardless of DST. 7 AM–10 PM Central spans UTC 12–23 + 00–04
-// (10 PM Central wraps past midnight UTC). Backup trigger only — see the file
-// header and .github/workflows/kpi-capture-pull.yml for the reliable one.
+// Backup Netlify-native trigger. The reliable primary is the GitHub Actions
+// workflow driving kpi-capture-background. Fire on every UTC hour that could be
+// 7 AM–10 PM Central (CST or CDT); the handler's CAPTURE_HOURS gate then keeps
+// it to the real Central window regardless of DST, and idempotent upserts make
+// a redundant fire (alongside the background path) a no-op.
 export const config = {
   schedule: "0 0-4,12-23 * * *",
 };

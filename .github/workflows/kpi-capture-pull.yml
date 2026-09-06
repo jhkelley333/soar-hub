@@ -1,21 +1,30 @@
-# KPI capture auto-pull — external trigger for the kpi-capture function.
+# KPI capture auto-pull — external trigger for the kpi-capture-background function.
 #
 # Netlify's native scheduled-function trigger has been unreliable in this
 # project (see labor-auto-pull.yml, which moved labor-snapshot off it for the
-# same reason) — kpi-capture.js never got that same fix, which is why admins
-# had to manually check the KPI Dashboard until the feed looked complete,
-# then hit "Refresh" on Labor v2 to pull it in. This workflow drives the same
-# capture from GitHub's scheduler instead, which is reliable and gives a
-# visible run history in the Actions tab.
+# same reason). This workflow drives the capture from GitHub's scheduler
+# instead, which is reliable and gives a visible run history in the Actions tab.
 #
-# It just pings the (unauthenticated, idempotent) kpi-capture function. The
-# function itself still:
+# It pings the BACKGROUND capture function (kpi-capture-background). That
+# function runs asynchronously with Netlify's 15-minute limit instead of the
+# ~10-second synchronous wall, so it can no longer return HTTP 502 when the feed
+# is slow (the old failure that lost whole days). The background endpoint
+# returns 202 immediately, so this workflow going green means "capture kicked
+# off", not "capture succeeded" — the actual outcome is recorded in
+# kpi_pull_log (source "cron-bg"), which the KPI pull log and capture-watchdog
+# read. The function still:
 #   - gates to its capture hours (7 AM–10 PM Central), so off-window pings
 #     return instantly without writing, and
 #   - upserts on (central_date, central_hour) for kpi_snapshots and on
 #     (store_number, business_date) for labor_v2_daily, so a retry — or the
-#     Netlify-native schedule firing at the same time — never duplicates.
+#     Netlify-native schedule / the catch-up loop firing at the same time —
+#     never duplicates.
 # So running every 30 minutes all day is cheap and safe.
+#
+# NOTE on cadence: GitHub throttles scheduled workflows on low-traffic repos, so
+# this */30 realistically fires closer to hourly. That's fine for steady-state
+# convergence; the first-of-day pull is covered by kpi-capture-catchup.yml,
+# which loops internally every 5 minutes until the day's data lands.
 #
 # SETUP:
 #   - Nothing required beyond merging this to the default branch and having
@@ -24,9 +33,9 @@
 #     domain changes) — Settings → Secrets and variables → Actions.
 #   - Scheduled workflows only run from the default branch.
 #
-# Verify: the Actions tab shows a run every ~30 min, and /admin/labor-v2's
-# date list + the KPI Dashboard both pick up same-day numbers without anyone
-# clicking Refresh. (You can also run it on demand here via "Run workflow".)
+# Verify: the Actions tab shows a run every ~30 min, /admin/labor-v2's date list
+# + the KPI Dashboard pick up same-day numbers without anyone clicking Refresh,
+# and the KPI pull log shows "cron-bg" rows. (Run on demand via "Run workflow".)
 
 name: KPI capture auto-pull
 
@@ -47,22 +56,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Ping kpi-capture
+      - name: Ping kpi-capture-background
         env:
           SITE_URL: ${{ secrets.SITE_URL }}
         run: |
           set -euo pipefail
           base="${SITE_URL:-https://mysoarhub.com}"
           base="${base%/}"
-          url="${base}/.netlify/functions/kpi-capture"
+          url="${base}/.netlify/functions/kpi-capture-background"
           echo "Pinging ${url}"
-          code=$(curl -fsS --max-time 120 -o /tmp/kpi-capture.json -w "%{http_code}" "${url}" || true)
+          code=$(curl -fsS --max-time 60 -o /tmp/kpi-capture.json -w "%{http_code}" "${url}" || true)
           echo "HTTP ${code}"
           echo "--- response ---"
           cat /tmp/kpi-capture.json 2>/dev/null || echo "(no body)"
           echo
-          # Treat any non-2xx as a failure so a broken pull shows red here.
+          # Background functions return 202 Accepted. Treat any 2xx as "kicked
+          # off OK"; the real capture outcome is in the KPI pull log (cron-bg).
           case "${code}" in
-            2*) echo "OK" ;;
-            *) echo "::error::kpi-capture returned HTTP ${code}"; exit 1 ;;
+            2*) echo "OK (capture running in background; see KPI pull log)" ;;
+            *) echo "::error::kpi-capture-background returned HTTP ${code}"; exit 1 ;;
           esac
