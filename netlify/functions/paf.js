@@ -98,6 +98,10 @@ const BONUS_BYPASS_ROLES = new Set(["rvp", "vp", "coo", "admin"]);
 // Roles that may edit + resubmit a REJECTED PAF on behalf of someone else
 // (still scope-checked). The original submitter can always resubmit their own.
 const ON_BEHALF_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
+// A Transfer inherently moves an employee across stores, so DO and above may
+// file one that touches a store outside their district/market/region — the
+// normal drive_in scope rejection is waived for them on Transfers.
+const TRANSFER_CROSS_SCOPE_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
 
 // Pay Adjustment (Salary) — SDO/RVP submit a salary change for a GM/DO/SDO;
 // the VP approves it (reusing the SDO-approval machinery: same approver +
@@ -798,7 +802,10 @@ async function buildPafRowFromBody(supa, user, body) {
   // OR when the store is on the PAF_RESTRICTED_STORES allowlist for this
   // role — those are intentionally global for allowed roles even when they
   // sit outside the org tree (e.g. Store 8100 corporate/hold).
-  if (driveIn && user.role !== "admin" && !PAF_RESTRICTED_STORES[String(driveIn)]) {
+  // A Transfer by DO+ may involve a store outside their scope (moving an
+  // employee across districts/markets/regions), so waive the rejection there.
+  const transferCrossScope = submitCategory === "Transfer" && TRANSFER_CROSS_SCOPE_ROLES.has(user.role);
+  if (driveIn && user.role !== "admin" && !PAF_RESTRICTED_STORES[String(driveIn)] && !transferCrossScope) {
     const numbers = await resolveVisibleStoreNumbers(supa, user.id);
     if (!numbers.includes(driveIn)) {
       return { error: `Store ${driveIn} is outside your scope.`, status: 403 };
@@ -1092,10 +1099,13 @@ async function applyBonusRouting(supa, submitterRole, row, driveIn, category) {
     return;
   }
   if (category === "Bonus" && !BONUS_BYPASS_ROLES.has(submitterRole)) {
-    // Bonuses are approved by the COO (was the scoped SDO). Keeps the
-    // "Pending SDO Approval" status + bonus templates; the assigned approver
-    // is the COO, and the approve gate already lets COO/admin act on it.
-    let approverId = await resolveCooApprover(supa);
+    // Bonuses route to the SCOPED approver: a DO/GM bonus to the SDO over the
+    // store's area, an SDO bonus to the RVP over the region — so RVPs/SDOs can
+    // approve the bonuses in their reach. Falls back to the COO (then admin)
+    // only when no scoped approver is assigned, so the PAF is never stuck
+    // unassigned. Keeps the "Pending SDO Approval" status + bonus templates.
+    let approverId = await resolveBonusApprover(supa, driveIn, submitterRole);
+    if (!approverId) approverId = await resolveCooApprover(supa);
     if (!approverId) approverId = await resolveAdminFallback(supa);
     row.status = "Pending SDO Approval";
     row.sdo_approver_id = approverId; // may still be null; the widget filters by id-match
@@ -1788,16 +1798,34 @@ async function listSdoQueue(supa, user) {
   if (!isAdmin && !["sdo", "rvp", "vp", "coo"].includes(user.role)) {
     return { error: "not authorized", status: 403 };
   }
-  let q = supa
+  const { data, error } = await supa
     .from("paf_submissions")
     .select("*")
     .in("status", APPROVAL_PENDING_STATUSES)
     .eq("archived", false)
-    .order("created_at", { ascending: false });
-  if (!isAdmin) q = q.eq("sdo_approver_id", user.id);
-  const { data, error } = await q.limit(200);
+    .order("created_at", { ascending: false })
+    .limit(400);
   if (error) return { error: error.message, status: 500 };
-  const rows = data ?? [];
+  let rows = data ?? [];
+
+  // Scope the queue to what the caller can actually act on — the SAME rule as
+  // canApprovePaf, so nothing shows that they couldn't approve and (crucially)
+  // nothing they CAN approve is hidden. Admins + org-wide roles (VP/COO) see
+  // every pending row; an SDO sees the bonuses assigned to them; an RVP sees
+  // those assigned to them AND any bonus pending in their region, so they can
+  // approve when their SDO is out. Previously this filtered strictly to
+  // sdo_approver_id === user.id, which hid every in-scope PAF from RVPs (and
+  // any unassigned pending from VP/COO).
+  if (!isAdmin && !ORG_WIDE_READ.has(user.role)) {
+    const visible = new Set(await resolveVisibleStoreNumbers(supa, user.id));
+    rows = rows.filter((r) => {
+      if (r.sdo_approver_id === user.id) return true;
+      const isVpFlow = r.status === "Pending VP Approval";
+      const escalate = isVpFlow ? new Set(["vp", "coo"]) : new Set(["rvp", "vp", "coo"]);
+      return escalate.has(user.role) && r.drive_in && visible.has(String(r.drive_in));
+    });
+  }
+  rows = rows.slice(0, 200);
   // Enrich with store_name for the dashboard widget. Same pattern as
   // listPafs — one indexed query keyed by drive_in.
   const distinctDriveIns = Array.from(
