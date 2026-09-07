@@ -71,6 +71,11 @@ export function NewTicketModal({ open, onClose, pagePath }: { open: boolean; onC
         </Button>
       </>}>
       <div className="space-y-4">
+        <p className="rounded-lg bg-accent/5 px-3 py-2 text-xs text-zinc-600 ring-1 ring-accent/10">
+          For <span className="font-semibold text-midnight">MySoarHub</span> — report a bug or suggest an idea about
+          the Hub app itself. It goes straight to the SOAR Hub team (not store/operations support).
+        </p>
+
         <Segmented value={kind} onChange={(v) => setKind(v as HubKind)}
           options={[{ value: "issue", label: "🐞 Issue" }, { value: "idea", label: "💡 Idea" }]} />
 
