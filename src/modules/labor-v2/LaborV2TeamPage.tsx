@@ -382,7 +382,7 @@ export function LaborV2TeamPage() {
         <div className="mb-4 flex items-start gap-3 rounded-xl bg-amber-50 p-4 ring-1 ring-amber-200">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
           <div className="min-w-0 text-sm text-amber-800">
-            <p className="font-semibold">Numbers may be skewed — {missing.length} store{missing.length === 1 ? "" : "s"} had no Expressway polling for this day.</p>
+            <p className="font-semibold">Numbers may be skewed — {missing.length} store{missing.length === 1 ? "" : "s"} {missing.length === 1 ? "has" : "have"} no labor data for this day (not polled, or sales came in without labor).</p>
             <p className="mt-1 break-words text-xs text-amber-700">{missing.map((m) => `#${m.number} ${m.name}`).join(" · ")}</p>
           </div>
         </div>
@@ -619,8 +619,9 @@ function MobileRow({ row, isStore, period, summary, onDrill }: {
     : `${grp!.leader || "—"} · ${grp!.storeCount} store${grp!.storeCount === 1 ? "" : "s"}`;
   const tap = summary ? undefined : isStore ? () => store!.note && setOpen((o) => !o) : onDrill;
 
-  const statusLabel = store ? (store.note_due ? "Note due" : store.explained ? "Explained" : over ? "Over" : "On chart") : null;
-  const statusCls = store?.note_due ? "bg-amber-50 text-amber-700" : store?.explained ? "bg-accent-100 text-accent-700" : over ? "bg-sonic-50 text-sonic-700" : "bg-emerald-50 text-emerald-700";
+  const noData = !!store && store.day.labor_pct == null;
+  const statusLabel = store ? (store.note_due ? "Note due" : store.explained ? "Explained" : noData ? "No data" : over ? "Over" : "On chart") : null;
+  const statusCls = store?.note_due ? "bg-amber-50 text-amber-700" : store?.explained ? "bg-accent-100 text-accent-700" : noData ? "bg-amber-100 text-amber-800" : over ? "bg-sonic-50 text-sonic-700" : "bg-emerald-50 text-emerald-700";
 
   return (
     <div className={cn("overflow-hidden rounded-xl ring-1", summary ? "bg-zinc-50 ring-zinc-300" : "bg-white ring-zinc-200", over && !summary && "ring-red-200")}>
@@ -685,9 +686,11 @@ function GroupRow({ g, onDrill, period }: { g: TeamGroup; onDrill: () => void; p
 function StoreRow({ s, period }: { s: TeamStore; period: LaborPeriod }) {
   const [open, setOpen] = useState(false);
   const over = s.status === "over";
-  const label = s.note_due ? "Note due" : s.explained ? "Explained" : over ? "Over" : "On chart";
-  const chip = s.note_due ? "bg-amber-50 text-amber-700" : s.explained ? "bg-accent-100 text-accent-700" : over ? "bg-sonic-50 text-sonic-700" : "bg-emerald-50 text-emerald-700";
-  const dot = s.note_due ? "bg-amber-500" : s.explained ? "bg-accent" : over ? "bg-sonic" : "bg-emerald-500";
+  // No labor number captured for the day → flag it, don't show a green "On chart".
+  const noData = s.day.labor_pct == null;
+  const label = s.note_due ? "Note due" : s.explained ? "Explained" : noData ? "No data" : over ? "Over" : "On chart";
+  const chip = s.note_due ? "bg-amber-50 text-amber-700" : s.explained ? "bg-accent-100 text-accent-700" : noData ? "bg-amber-100 text-amber-800" : over ? "bg-sonic-50 text-sonic-700" : "bg-emerald-50 text-emerald-700";
+  const dot = s.note_due ? "bg-amber-500" : s.explained ? "bg-accent" : noData ? "bg-amber-500" : over ? "bg-sonic" : "bg-emerald-500";
   return (
     <div>
       <button onClick={() => s.note && setOpen((o) => !o)} className={cn("flex w-full items-center gap-3 p-4 text-left", s.note && "hover:bg-zinc-50")}>
