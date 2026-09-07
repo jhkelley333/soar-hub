@@ -1072,9 +1072,23 @@ function ShopsUploadPanel() {
       const XLSX = await import("xlsx");
       const wb = XLSX.read(new Uint8Array(buf), { type: "array", raw: true });
       const grid = XLSX.utils.sheet_to_json<(string | number | null)[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true });
-      const hIdx = grid.findIndex((r) => String(r?.[2] ?? "").toLowerCase().includes("visit date"));
+      // Find the header row by content (any column), not a fixed row/column.
+      const norm = (v: unknown) => String(v ?? "").trim().toLowerCase();
+      const hIdx = grid.findIndex((r) => Array.isArray(r) && r.some((c) => norm(c).includes("visit date")));
       if (hIdx < 0) throw new Error('Couldn\'t find the "Visit Date" header — is this the Mystery Shops DataDump?');
-      // Site ID at col 4 (#001242 → 1242), Visit Date at col 2 (M/D/YY or MM/DD/YYYY), Score at col 12 (percent).
+      // Resolve columns BY HEADER NAME, falling back to the historical fixed
+      // positions if a header is missing. The export gains columns over time —
+      // e.g. a "District Manager Email" column was inserted before Score,
+      // shifting Score from index 12 to 13 and silently voiding every row.
+      const header = (grid[hIdx] ?? []).map(norm);
+      const colOf = (name: string, fallback: number) => {
+        const i = header.indexOf(name);
+        return i >= 0 ? i : fallback;
+      };
+      const cVisit = colOf("visit date", 2);   // M/D/YY or MM/DD/YYYY
+      const cSite = colOf("site id", 4);        // #001242 → 1242
+      const cName = colOf("site name", 5);
+      const cScore = colOf("score", 13);        // a percent
       const code = (v: unknown) => String(v ?? "").replace(/\D/g, "").replace(/^0+/, "");
       const parseDate = (v: unknown) => {
         const m = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/.exec(String(v ?? "").trim());
@@ -1087,12 +1101,12 @@ function ShopsUploadPanel() {
         return isFinite(n) ? n / 100 : null;
       };
       const rows = grid.slice(hIdx + 1)
-        .filter((r) => r && r[4])
+        .filter((r) => r && r[cSite])
         .map((r) => ({
-          store_code: code(r[4]),
-          store_name: String(r[5] ?? "").trim() || null,
-          visit_date: parseDate(r[2]),
-          score: parseScore(r[12]),
+          store_code: code(r[cSite]),
+          store_name: String(r[cName] ?? "").trim() || null,
+          visit_date: parseDate(r[cVisit]),
+          score: parseScore(r[cScore]),
         }))
         .filter((r) => /^\d+$/.test(r.store_code) && r.visit_date && r.score != null);
       if (!rows.length) throw new Error("No shop rows with a store #, visit date and score found.");
