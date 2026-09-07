@@ -38,10 +38,16 @@ import { sendEmail } from "./_lib/ticketEmail.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+const SITE_URL = (process.env.SITE_URL || process.env.URL || "https://mysoarhub.com").replace(/\/$/, "");
 
 const TZ = "America/Chicago";
 const WINDOW_START_MIN = 7 * 60;   // 7:00 AM CT — capture window opens
 const WINDOW_END_MIN = 22 * 60;    // 10:00 PM CT — capture window closes
+
+// Incident kinds worth an automatic re-pull (a fresh feed pull can recover
+// them). A consecutive-fail streak usually means the feed itself is down, so a
+// re-pull won't help — alert only.
+const REPULL_KINDS = new Set(["missing-day", "heartbeat-gap"]);
 
 const GAP_MIN = intEnv(process.env.CAPTURE_ALERT_GAP_MIN, 180);
 const COOLDOWN_MIN = intEnv(process.env.CAPTURE_ALERT_COOLDOWN_MIN, 360);
@@ -78,6 +84,31 @@ function yesterdayIso(wc) {
 }
 
 const minutesAgo = (isoTs, nowMs) => Math.round((nowMs - new Date(isoTs).getTime()) / 60000);
+
+// Self-heal: kick a forced background capture so a detected gap / missing day
+// re-pulls itself instead of only emailing. Best-effort and fire-and-forget —
+// the background function returns 202 immediately and writes its result to the
+// pull log. force=1 bypasses the capture-hours gate (the missing-day check can
+// run after 10 PM CT). Only worth it while the feed can still be re-pulled;
+// gated by the caller to fresh incidents so a standing outage re-pulls on the
+// alert cadence, not every run.
+async function triggerRepull() {
+  const url = `${SITE_URL}/.netlify/functions/kpi-capture-background?force=1`;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    try {
+      await fetch(url, { method: "GET", signal: ctrl.signal });
+      console.log(`[capture-watchdog] triggered re-pull → ${url}`);
+      return true;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (e) {
+    console.log(`[capture-watchdog] re-pull trigger failed: ${e?.message || e}`);
+    return false;
+  }
+}
 
 export const handler = async (event) => {
   if (!SUPABASE_URL || !SERVICE_KEY) {
@@ -141,7 +172,7 @@ export const handler = async (event) => {
   {
     const { data: recent } = await supa
       .from("kpi_pull_log").select("ok, created_at, error, central_hour")
-      .eq("source", "cron").order("created_at", { ascending: false }).limit(FAIL_STREAK);
+      .in("source", ["cron", "cron-bg"]).order("created_at", { ascending: false }).limit(FAIL_STREAK);
     if (recent && recent.length >= FAIL_STREAK && recent.every((r) => r.ok === false)) {
       const lastErr = recent[0]?.error || "unknown";
       incidents.push({
@@ -168,7 +199,16 @@ export const handler = async (event) => {
   }
 
   if (dry) {
-    return { statusCode: 200, body: `DRY — would alert on: ${fresh.map((i) => i.kind).join(", ")}` };
+    return { statusCode: 200, body: `DRY — would alert on: ${fresh.map((i) => i.kind).join(", ")} (would re-pull: ${fresh.some((i) => REPULL_KINDS.has(i.kind))})` };
+  }
+
+  // Self-heal: for a fresh gap / missing-day, kick a forced background re-pull
+  // before emailing, so the day can recover on its own. Fires on the same
+  // (cooldown-gated) cadence as the alert, so a standing outage re-pulls
+  // periodically rather than every run.
+  let repulled = false;
+  if (fresh.some((i) => REPULL_KINDS.has(i.kind))) {
+    repulled = await triggerRepull();
   }
 
   // Send one combined email covering the fresh incidents.
@@ -179,6 +219,7 @@ export const handler = async (event) => {
     <p>The KPI / Labor v2 capture watchdog flagged a problem at
        <strong>${todayCentral} ${String(wc.hour).padStart(2, "0")}:${String(wc.minute).padStart(2, "0")} CT</strong>.</p>
     <ul>${rows}</ul>
+    ${repulled ? `<p style="color:#0a7">A forced background re-pull was triggered automatically — check the KPI pull log in a few minutes to confirm it recovered before acting.</p>` : ""}
     <p><strong>What to check:</strong></p>
     <ul>
       <li>Admin → Labor Sync — set the date picker to <strong>${yesterday}</strong> and confirm rows are present.</li>
@@ -208,8 +249,8 @@ export const handler = async (event) => {
     console.log(`[capture-watchdog] marker insert failed: ${e?.message || e}`);
   }
 
-  console.log(`[capture-watchdog] alerted: ${fresh.map((i) => i.kind).join(", ")} → ${JSON.stringify(sendResult)}`);
-  return { statusCode: 200, body: `alerted on ${fresh.map((i) => i.kind).join(", ")} → sent=${sendResult?.sent}` };
+  console.log(`[capture-watchdog] alerted: ${fresh.map((i) => i.kind).join(", ")} → ${JSON.stringify(sendResult)}${repulled ? " · re-pull triggered" : ""}`);
+  return { statusCode: 200, body: `alerted on ${fresh.map((i) => i.kind).join(", ")} → sent=${sendResult?.sent}${repulled ? " · re-pull triggered" : ""}` };
 };
 
 // Backup Netlify trigger (native cron is unreliable in this project — see

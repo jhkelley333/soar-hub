@@ -1,0 +1,80 @@
+# KPI capture catch-up — first-of-day poller that loops INTERNALLY every 5
+# minutes until the day's data has landed, then stops.
+#
+# Why this exists: the Skunkworks feed doesn't have the day's numbers ready the
+# moment the capture window opens — the back office fills them in through the
+# morning ("it doesn't pull right away and tries again an hour later"). The
+# every-30-min puller (kpi-capture-pull.yml) eventually catches it, but GitHub
+# throttles scheduled workflows on low-traffic repos, so a */5 cron would NOT
+# actually fire every 5 minutes — GitHub would drop most of them. A single run
+# that loops internally with `sleep` gives real 5-minute cadence that GitHub
+# can't throttle.
+#
+# Each iteration:
+#   1. Reads kpi-capture?status=1 (a cheap, read-only check of whether the
+#      day's expected business date has landed with a healthy row count).
+#   2. If it has → done, exit. If not → kick a background capture and wait 5 min.
+# Exits early the moment data lands (usually the first iteration on a good day),
+# so it only burns the full window on a genuinely slow morning. After it exits,
+# the every-30-min puller keeps converging late-arriving store numbers.
+#
+# "Landed" threshold is CATCHUP_MIN_ROWS on the Netlify side (default 200 of
+# ~271 stores) so a thin early fill-in doesn't stop the loop prematurely.
+#
+# SETUP: none beyond merging to the default branch with Actions enabled.
+# Defaults to https://mysoarhub.com; override with a SITE_URL repo secret.
+# Scheduled workflows only run from the default branch.
+#
+# Verify: run on demand ("Run workflow") — the log prints rows/landed each
+# iteration and stops when the day's data is in.
+
+name: KPI capture catch-up
+
+on:
+  schedule:
+    # Daily 13:00 UTC ≈ 7:00 AM CST / 8:00 AM CDT — just as the capture window
+    # opens (7 AM–10 PM Central). GitHub may delay the start; that's fine, the
+    # loop still runs its full 5-minute cadence once it does.
+    - cron: "0 13 * * *"
+  workflow_dispatch: {} # manual "Run workflow" from the Actions tab
+
+concurrency:
+  group: kpi-capture-catchup
+  cancel-in-progress: false
+
+jobs:
+  catchup:
+    runs-on: ubuntu-latest
+    # 10 iterations × 5-min sleep = up to ~50 min of polling, + overhead.
+    timeout-minutes: 60
+    steps:
+      - name: Poll every 5 minutes until the day's data lands
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          set -euo pipefail
+          base="${SITE_URL:-https://mysoarhub.com}"
+          base="${base%/}"
+          status_url="${base}/.netlify/functions/kpi-capture?status=1"
+          bg_url="${base}/.netlify/functions/kpi-capture-background"
+          landed=false
+          for i in $(seq 1 10); do
+            status=$(curl -fsS --max-time 30 "${status_url}" || echo '{}')
+            rows=$(echo "${status}" | jq -r '.rows // 0')
+            is_landed=$(echo "${status}" | jq -r '.landed // false')
+            bd=$(echo "${status}" | jq -r '.business_date // "?"')
+            minr=$(echo "${status}" | jq -r '.min_rows // "?"')
+            echo "iter ${i}: business_date=${bd} rows=${rows}/${minr} landed=${is_landed}"
+            if [ "${is_landed}" = "true" ]; then
+              echo "Data landed for ${bd} (${rows} rows). Done."
+              landed=true
+              break
+            fi
+            # Not in yet — kick a background capture (202, fire-and-forget) and
+            # wait one 5-minute cycle before re-checking.
+            curl -fsS --max-time 60 -o /dev/null "${bg_url}" || true
+            if [ "${i}" -lt 10 ]; then sleep 300; fi
+          done
+          if [ "${landed}" != "true" ]; then
+            echo "::warning::Day's data had not reached the row threshold after the catch-up window. The 30-min puller and the evening watchdog will keep trying."
+          fi
