@@ -1898,21 +1898,24 @@ async function teamView(supa, user, params) {
   const reviewByStore = new Map((reviews || []).map((r) => [String(r.store_number), r]));
   const orgMap = await resolveOrg(supa, numbers);
 
-  // Visible stores with no Expressway poll for this date (no row, or a row
-  // with no daily sales) — surfaced so the numbers can be flagged as skewed.
-  // Only genuine Sonic operating restaurants can be "missing a poll":
+  // Stores with NO usable labor number for the anchor day — surfaced so the
+  // numbers can be flagged as skewed and the missing stores chased down.
+  // "No labor" covers BOTH cases: the store never polled (no row at all), AND
+  // the feed gap where sales came through but labor didn't (a day row exists
+  // with labor_pct null). That second case is what silently slipped by before —
+  // sales-only stores like #4134 showed a Day "—" and an "On chart" pill
+  // instead of being flagged — because the old check keyed on net_sales.
+  // Only genuine Sonic operating restaurants qualify:
   //   - Non-Sonic brands (Apricus / Little Caesars) are already excluded
-  //     upstream — resolveVisibleStoreRows restricts `visible` to SONIC_ONLY —
-  //     so they never reach this list.
-  //   - Corporate / hold stores (#8100) ARE Sonic-branded but never receive
-  //     Expressway polling, so they're not real skew. The old `district` guard
-  //     was meant to drop them, but #8100 carries a district and slipped
-  //     through (showing "1 store had no polling — #8100 Corporate / Hold").
-  //     Exclude corporate/hold explicitly, and keep the district guard as a
-  //     secondary filter for stores not yet placed in the org tree.
-  const polled = new Set((rows || []).filter((r) => r.net_sales != null).map((r) => String(r.store_number)));
+  //     upstream — resolveVisibleStoreRows restricts `visible` to SONIC_ONLY.
+  //   - Corporate / hold stores (#8100) are Sonic-branded but never poll, and
+  //     #8100 carries a district (so the district guard alone missed it) —
+  //     exclude CORPORATE_STORE_NUMBERS explicitly. The district guard stays as
+  //     a secondary filter for stores not yet placed in the org tree.
+  const dayRow = new Map((rows || []).map((r) => [String(r.store_number), r]));
+  const hasDayLabor = (n) => { const r = dayRow.get(n); return r != null && r.labor_pct != null; };
   const missing = visible
-    .filter((s) => !polled.has(String(s.number)))
+    .filter((s) => !hasDayLabor(String(s.number)))
     .filter((s) => !CORPORATE_STORE_NUMBERS.has(String(s.number)))
     .filter((s) => orgMap.get(String(s.number))?.district)
     .map((s) => ({ number: String(s.number), name: s.name }))
