@@ -1256,10 +1256,6 @@ async function editCloseout(supa, user, body) {
     return { error: "That store is outside your scope.", status: 403 };
   }
 
-  // GMs cannot move a closeout to a different business date — that's DO+ only.
-  if (isGmEdit && body?.business_date && body.business_date !== co.business_date) {
-    return { error: "Changing the business date requires a DO or higher.", status: 403 };
-  }
 
   // Editing a prior-day deposit is a control event — a reason is required.
   const editReason = String(body?.reason || "").trim();
