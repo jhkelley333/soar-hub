@@ -28,6 +28,7 @@ import {
   addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestOttRows, ingestPtdRankingRows, ingestShopRows, ingestTotzoneRows, ingestVogRows, setFcTargetEfficiency, setLaborPad,
   fetchRankerCredentials, upsertRankerCredential, deleteRankerCredential,
   fetchRankerAccess, fetchRankerDelegations, grantRankerDelegation, revokeRankerDelegation,
+  fetchRankingRuns,
   type RankingConfigRow, type RankingStoreRow, type RankerCredential, type RankerDelegation, type RvpOption,
 } from "./api";
 
@@ -378,6 +379,10 @@ export function RankingAdminPage() {
   const delegated = accessQ.data?.delegated ?? false;
   const canSettings = isAdmin || delegated;
 
+  const [gmRunId, setGmRunId] = useState<string | null>(null);
+  const runsQ = useQuery({ queryKey: ["ranking-runs"], queryFn: fetchRankingRuns, staleTime: 5 * 60_000, enabled: isGm });
+  const runs = runsQ.data?.runs ?? [];
+
   // A GM owns a single store — land them straight on the legacy-style store
   // dashboard, no tier tabs or board to wade through.
   if (isGm) {
@@ -387,7 +392,23 @@ export function RankingAdminPage() {
           title="My Store Ranking"
           description="Your store's weekly ranking and scorecard."
         />
-        <MyStoreView />
+        {runs.length > 1 && (
+          <div className="mb-4 flex items-center gap-2">
+            <label className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Period / Week</label>
+            <select
+              value={gmRunId ?? runs[0]?.id ?? ""}
+              onChange={(e) => setGmRunId(e.target.value || null)}
+              className="h-8 rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            >
+              {runs.map((r) => (
+                <option key={r.id} value={r.id}>
+                  P{r.period}W{r.week} — {fmtDate(r.week_ending)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <MyStoreView runId={gmRunId} />
       </>
     );
   }
