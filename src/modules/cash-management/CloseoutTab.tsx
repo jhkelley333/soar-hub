@@ -28,7 +28,7 @@ export function CloseoutTab({
   const qc = useQueryClient();
   const toast = useToast();
   const { profile } = useAuth();
-  const LEADER_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
+  const LEADER_ROLES = ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"];
 
   const configQuery = useQuery({ queryKey: ["cash-config"], queryFn: fetchConfig, staleTime: 5 * 60_000 });
   const overviewQuery = useQuery({ queryKey: ["cash-overview", storeId], queryFn: () => fetchOverview(storeId) });
@@ -98,8 +98,8 @@ export function CloseoutTab({
   const [dayConfirm, setDayConfirm] = useState<{ today: string; suggested: string } | null>(null);
 
   // Lock: a submitted closeout for today is read-only until unlocked. Who can
-  // unlock depends on lifecycle — a verified day needs a DO/SDO+; an
-  // unverified day, its original closer or a leader.
+  // unlock depends on lifecycle — a verified day needs a GM+; an
+  // unverified day, its original closer or a GM+.
   const [unlocked, setUnlocked] = useState(false);
   const [correctionReason, setCorrectionReason] = useState("");
   const isLeader = LEADER_ROLES.includes(profile?.role ?? "");
@@ -343,8 +343,8 @@ export function CloseoutTab({
                 {canUnlock
                   ? " Unlock to correct an error — you'll add a reason and it's logged."
                   : verified
-                    ? " Verified days can only be corrected by a DO/SDO."
-                    : " Only the closer or a DO/SDO can correct this."}
+                    ? " Verified days can only be corrected by a GM or higher."
+                    : " Only the closer or a GM/DO can correct this."}
               </div>
             </div>
             {canUnlock && (
@@ -362,8 +362,8 @@ export function CloseoutTab({
           <div className="text-sm font-semibold text-amber-900">Correcting {bizLabel}</div>
           <p className="mt-0.5 text-xs text-amber-800">
             {verified
-              ? "This day was verified — your DO/SDO will be notified and the deposit re-opened for re-verification."
-              : "Adjust the figures below, then give a reason for the change."}
+              ? "This day was verified — your DO & SDO will be notified and the deposit re-opened for re-verification."
+              : "Adjust the figures below. A reason is required and will be logged."}
           </p>
           <textarea
             value={correctionReason}
