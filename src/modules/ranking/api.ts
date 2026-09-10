@@ -159,11 +159,14 @@ export interface RankingResultRow {
   metrics: RankMetrics;
 }
 
-export function fetchRankingLatest(scope: RankScope, tier: RankTier, runId?: string | null): Promise<{
+export type ViewScope = "own" | "district" | "company";
+
+export function fetchRankingLatest(scope: RankScope, tier: RankTier, runId?: string | null, viewScope?: ViewScope): Promise<{
   run: RankingRun | null; scope: RankScope; tier: RankTier; rows: RankingResultRow[];
 }> {
   const p = new URLSearchParams({ action: "run-latest", scope, tier });
   if (runId) p.set("run_id", runId);
+  if (viewScope && viewScope !== "own") p.set("view_scope", viewScope);
   return req(`${FN}?${p.toString()}`);
 }
 

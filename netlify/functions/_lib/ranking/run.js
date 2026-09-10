@@ -701,19 +701,45 @@ export async function latestRun(supa, params, storeNums = null) {
     .order("rank", { ascending: true });
   if (rowsErr) return { error: rowsErr.message, status: 500 };
 
+  // view_scope = "company" → treat caller as org-wide for this request.
+  // view_scope = "district" → expand a scoped caller to their full DO's stores.
+  // default ("own") → use storeNums as-is.
+  let effectiveNums = storeNums;
+  const viewScope = params.view_scope || "own";
+  if (viewScope === "company") {
+    effectiveNums = null;
+  } else if (viewScope === "district" && storeNums != null && storeNums.size > 0) {
+    // Load ALL store rows for this run to find the caller's DO name, then
+    // expand to every store under that DO.
+    const { data: allStoreRows } = await supa
+      .from("ranking_rows").select("entity_key, metrics")
+      .eq("run_id", run.id).eq("scope", scope).eq("tier", "store");
+    const doNames = new Set();
+    for (const r of allStoreRows || []) {
+      if (storeNums.has(String(r.entity_key)) && r.metrics?.doName) doNames.add(String(r.metrics.doName));
+    }
+    if (doNames.size) {
+      const expanded = new Set(storeNums);
+      for (const r of allStoreRows || []) {
+        if (r.metrics?.doName && doNames.has(String(r.metrics.doName))) expanded.add(String(r.entity_key));
+      }
+      effectiveNums = expanded;
+    }
+  }
+
   // Scope to the caller (null = org-wide, unrestricted). Leader tiers need the
   // chain names above the caller's stores; load this run's store rows once.
   let out = rows || [];
-  if (storeNums != null) {
+  if (effectiveNums != null) {
     let vis = { dos: new Set(), sdos: new Set(), rvps: new Set(), ents: new Set() };
     if (tier !== "store" && tier !== "company" && tier !== "entity") {
       const { data: storeRows } = await supa
         .from("ranking_rows")
         .select("entity_key, metrics")
         .eq("run_id", run.id).eq("scope", scope).eq("tier", "store");
-      vis = deriveVisibleNames(storeRows || [], storeNums);
+      vis = deriveVisibleNames(storeRows || [], effectiveNums);
     }
-    out = filterTier(out, tier, storeNums, vis);
+    out = filterTier(out, tier, effectiveNums, vis);
   }
   return { run, scope, tier, rows: out };
 }
