@@ -649,18 +649,19 @@ async function submitCloseout(supa, user, body) {
   }
 
   // Correction gate — a submitted day is locked. Editing it needs an unlock
-  // reason and the right authority: a verified day requires a DO/SDO+; an
-  // unverified day can be corrected by the original closer or a leader.
+  // reason and the right authority: a verified day requires the GM or a leader;
+  // an unverified day can be corrected by the original closer, the GM, or a leader.
   let correctionReason = null;
   if (existing) {
     const wasVerified = existing.status === "verified";
     const isLeader = ACT_ROLES.has(String(user.role));
+    const isGm = String(user.role) === "gm";
     const isSubmitter = existing.submitted_by === user.id;
-    if (wasVerified && !isLeader) {
-      return { error: "This day is verified and locked. A DO or SDO must unlock it to make a correction.", status: 403 };
+    if (wasVerified && !isLeader && !isGm) {
+      return { error: "This day is verified and locked. The GM or a DO/SDO must unlock it to make a correction.", status: 403 };
     }
-    if (!wasVerified && !isSubmitter && !isLeader) {
-      return { error: "Only the closer or a DO/SDO can correct this closeout.", status: 403 };
+    if (!wasVerified && !isSubmitter && !isLeader && !isGm) {
+      return { error: "Only the closer, the GM, or a DO/SDO can correct this closeout.", status: 403 };
     }
     correctionReason = String(body?.correction_reason || "").trim();
     if (correctionReason.length < 8) {
@@ -771,6 +772,29 @@ async function notifyCloseoutCorrection(supa, { store, businessDate, managerName
   }
 }
 
+// Email the store's DO/SDO that a verified deposit was corrected by a GM or
+// leader. Best-effort; never blocks the save.
+async function notifyDepositCorrection(supa, { store, dep, mgr, bank, variance, correctionReason }) {
+  try {
+    const leaders = await resolveStoreLeaders(supa, store.id);
+    const emails = [leaders.do?.email, leaders.sdo?.email].filter(Boolean);
+    if (!emails.length) return;
+    const fmt = (c) => `$${((c || 0) / 100).toFixed(2)}`;
+    const subject = `[Cash MGT] Deposit corrected — Store ${store.number} for ${dep.for_date}`;
+    const text =
+      `A previously-verified deposit at Store ${store.number}` +
+      `${store.name ? ` (${store.name})` : ""} was corrected by ${mgr}.\n\n` +
+      `For date: ${dep.for_date}\n` +
+      `Previous bank credit: ${fmt(dep.bank_credited_cents)} → New: ${fmt(bank)}\n` +
+      `New variance: ${fmt(variance)}\n` +
+      `Reason: ${correctionReason}\n\n` +
+      `Review it in the hub: ${appBaseUrl()}/admin/cash-management`;
+    await sendEmail(emails, subject, text);
+  } catch {
+    /* best-effort */
+  }
+}
+
 // Email the store's DO/SDO that a missed day was backfilled. Best-effort —
 // never blocks the closeout. Mirrors escalate()'s leader resolution.
 async function notifyLateCloseout(supa, { store, businessDate, managerName, lateNote, variance }) {
@@ -826,12 +850,26 @@ async function getDeposit(supa, user, params) {
   // (longer over weekends), so a Friday deposit may still be unverified when
   // Monday's closeout lands. Old behavior — returning only the latest — hid
   // the older one from the validation screen.
-  const { data: deps } = await supa
-    .from("cash_deposits").select("*").eq("store_id", active.id).eq("status", "pending")
-    .order("for_date", { ascending: true });
   const settings = await getSettings(supa);
+  const [{ data: deps }, { data: recentVerified }] = await Promise.all([
+    supa.from("cash_deposits").select("*").eq("store_id", active.id).eq("status", "pending")
+      .order("for_date", { ascending: true }),
+    // Also fetch the most recently verified deposit so GMs can amend it if needed.
+    supa.from("cash_deposits").select("*").eq("store_id", active.id)
+      .in("status", ["verified", "flagged"])
+      .order("for_date", { ascending: false }).limit(1).maybeSingle(),
+  ]);
   if (!deps || deps.length === 0) {
-    return { deposits: [], deposit: null, toleranceCents: settings.deposit };
+    const corrDep = recentVerified
+      ? {
+          id: recentVerified.id, code: `DEP-${coCode(recentVerified.for_date).slice(3)}`,
+          for_date: recentVerified.for_date, expected_cents: recentVerified.expected_cents,
+          bank_credited_cents: recentVerified.bank_credited_cents,
+          variance_cents: recentVerified.variance_cents,
+          status: recentVerified.status, closeout_id: recentVerified.closeout_id,
+        }
+      : null;
+    return { deposits: [], deposit: null, toleranceCents: settings.deposit, correction_deposit: corrDep };
   }
   const coIds = deps.map((d) => d.closeout_id);
   const { data: cos } = await supa
@@ -850,6 +888,7 @@ async function getDeposit(supa, user, params) {
     // paths that still read it continue to work.
     deposit: list[0],
     toleranceCents: settings.deposit,
+    correction_deposit: null,
   };
 }
 
@@ -864,7 +903,21 @@ async function verifyDeposit(supa, user, body) {
   if (!depId) return { error: "deposit_id is required.", status: 400 };
   const { data: dep } = await supa.from("cash_deposits").select("*").eq("id", depId).maybeSingle();
   if (!dep) return { error: "Deposit not found.", status: 404 };
-  if (dep.status === "verified") return { error: "This deposit is already validated.", status: 400 };
+
+  // Correction path — a verified or flagged deposit may be re-verified by the
+  // GM or a DO/SDO with a required explanation.
+  const isCorrection = dep.status === "verified" || dep.status === "flagged";
+  if (isCorrection) {
+    const isLeader = ACT_ROLES.has(String(user.role));
+    const isGm = String(user.role) === "gm";
+    if (!isLeader && !isGm) {
+      return { error: "Only the GM or a DO/SDO can correct a verified deposit.", status: 403 };
+    }
+    const corrReason = String(body?.correction_reason || "").trim();
+    if (corrReason.length < 8) {
+      return { error: "A correction reason (min 8 chars) is required to amend a verified deposit.", status: 422, needs_correction_reason: true };
+    }
+  }
 
   // Scope check.
   const access = await storeRowsForUser(supa, user);
@@ -913,7 +966,7 @@ async function verifyDeposit(supa, user, body) {
 
   const mgr = user.preferred_name || user.full_name || user.email;
   let storeRow = null;
-  if (flagged || hasCarry) {
+  if (flagged || hasCarry || isCorrection) {
     const { data } = await supa.from("stores").select("id, number, name").eq("id", dep.store_id).maybeSingle();
     storeRow = data || { id: dep.store_id, number: dep.store_number, name: null };
   }
@@ -933,15 +986,24 @@ async function verifyDeposit(supa, user, body) {
       managerName: mgr, source: "carryover", closeoutId: dep.closeout_id,
     });
   }
+  // Correction to a verified deposit → notify DO/SDO for oversight.
+  if (isCorrection) {
+    await notifyDepositCorrection(supa, {
+      store: storeRow, dep, mgr, bank, variance,
+      correctionReason: String(body?.correction_reason || "").trim(),
+    });
+  }
   await logCash(supa, {
-    scope: "deposit", action: "verify-deposit", store_id: dep.store_id, closeout_id: dep.closeout_id, deposit_id: dep.id,
+    scope: "deposit", action: isCorrection ? "correct-deposit" : "verify-deposit",
+    store_id: dep.store_id, closeout_id: dep.closeout_id, deposit_id: dep.id,
     detail: {
       bank_credited_cents: bank, variance_cents: variance, flagged,
+      ...(isCorrection ? { correction_reason: String(body?.correction_reason || "").trim() } : {}),
       carried_over_count: carriedCount, carried_over_cents: carriedCents,
     },
     actor_id: user.id, actor_name: mgr,
   });
-  return { ok: true, flagged, carried_acknowledged: hasCarry, carried_fwd_cents: carriedCents };
+  return { ok: true, flagged, carried_acknowledged: hasCarry, carried_fwd_cents: carriedCents, corrected: isCorrection };
 }
 
 // ============================================================================

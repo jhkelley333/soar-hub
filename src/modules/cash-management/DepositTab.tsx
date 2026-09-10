@@ -11,7 +11,7 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fetchDeposit, uploadSlip, verifyDeposit } from "./api";
+import { fetchDeposit, uploadSlip, verifyDeposit, type CorrectionDeposit } from "./api";
 import { toCents, usd } from "./money";
 import { InfoDot, MoneyInput, Pill } from "./ui";
 
@@ -51,6 +51,7 @@ export function DepositTab({
   const depQuery = useQuery({ queryKey: ["cash-deposit", storeId], queryFn: () => fetchDeposit(storeId) });
   const deposits = depQuery.data?.deposits ?? [];
   const tol = depQuery.data?.toleranceCents ?? 500;
+  const correctionDeposit = depQuery.data?.correction_deposit ?? null;
 
   // Which pending deposit the closer is validating. When there's only one
   // (the common case) it's auto-selected; with multiple (banks taking 2–3
@@ -70,6 +71,12 @@ export function DepositTab({
   const [carriedDollars, setCarriedDollars] = useState("");
   const [carriedAck, setCarriedAck] = useState(false);
   const [carriedNote, setCarriedNote] = useState("");
+  // Correction mode — amending an already-verified deposit.
+  const [correcting, setCorrecting] = useState(false);
+  const [correctionReason, setCorrectionReason] = useState("");
+
+  // Active deposit: a pending one (normal path) or the verified one being corrected.
+  const formDep: (typeof dep | CorrectionDeposit) = correcting && correctionDeposit ? correctionDeposit : dep;
 
   // Switching which deposit is being validated must reset all of the
   // validator's inputs so the bank-credit / slip / carried-over numbers from
@@ -83,18 +90,22 @@ export function DepositTab({
     setCarriedDollars("");
     setCarriedAck(false);
     setCarriedNote("");
-  }, [dep?.id]);
+    setCorrectionReason("");
+  }, [dep?.id, correctionDeposit?.id, correcting]);
 
   const bankCents = toCents(bankCredit);
   const hasBank = bankCredit !== "";
-  const variance = dep ? bankCents - dep.expected_cents : 0;
+  const variance = formDep ? bankCents - formDep.expected_cents : 0;
   const matched = hasBank && Math.abs(variance) <= tol;
   const overTol = hasBank && Math.abs(variance) > tol;
   const carriedCountN = parseInt(carriedCount || "0", 10) || 0;
   const carriedCents = toCents(carriedDollars);
   const hasCarry = carriedCountN > 0 || carriedCents !== 0;
   const canVerify =
-    !!dep && hasBank && !!slipPath && (matched || reason.trim().length >= 8) && (!hasCarry || carriedAck);
+    !!formDep && hasBank && !!slipPath &&
+    (matched || reason.trim().length >= 8) &&
+    (!hasCarry || carriedAck) &&
+    (!correcting || correctionReason.trim().length >= 8);
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -115,7 +126,7 @@ export function DepositTab({
   const verify = useMutation({
     mutationFn: () =>
       verifyDeposit({
-        deposit_id: dep!.id,
+        deposit_id: formDep!.id,
         bank_credited_cents: bankCents,
         slip_path: slipPath!,
         reason: reason.trim(),
@@ -123,26 +134,73 @@ export function DepositTab({
         carried_over_cents: carriedCents,
         carried_ack: hasCarry ? carriedAck : undefined,
         carried_note: hasCarry ? carriedNote.trim() : undefined,
+        ...(correcting ? { correction_reason: correctionReason.trim() } : {}),
       }),
     onSuccess: (res) => {
-      toast.push(res.flagged ? "Verified with exception — DO/SDO alerted." : "Deposit validated.", "success");
+      toast.push(
+        res.corrected
+          ? "Deposit correction saved — DO/SDO notified."
+          : res.flagged
+          ? "Verified with exception — DO/SDO alerted."
+          : "Deposit validated.",
+        "success"
+      );
       qc.invalidateQueries({ queryKey: ["cash-overview"] });
       qc.invalidateQueries({ queryKey: ["cash-deposit", storeId] });
       qc.invalidateQueries({ queryKey: ["cash-dsr", storeId] });
+      setCorrecting(false);
       onDone();
     },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Verify failed.", "error"),
   });
 
   if (depQuery.isLoading) return <Skeleton className="h-80 w-full" />;
-  if (deposits.length === 0 || !dep)
+  if ((deposits.length === 0 || !dep) && !correcting) {
+    if (!correctionDeposit) {
+      return (
+        <EmptyState
+          title="No deposit awaiting validation"
+          description="Once tonight's closeout is submitted, its deposit shows up here the next day."
+        />
+      );
+    }
     return (
-      <EmptyState
-        title="No deposit awaiting validation"
-        description="Once tonight's closeout is submitted, its deposit shows up here the next day."
-      />
+      <div className="space-y-5">
+        <EmptyState
+          title="No deposit awaiting validation"
+          description="The most recent deposit has already been verified. You can correct it below if needed."
+        />
+        <Card className="p-5">
+          <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Most Recent Deposit</div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <div className="text-base font-semibold text-midnight">
+                Deposit <span className="font-mono">{correctionDeposit.code}</span>
+              </div>
+              <div className="mt-0.5 flex items-center gap-2 text-[13px] text-zinc-500">
+                For date {correctionDeposit.for_date}
+                <Pill tone={correctionDeposit.status === "verified" ? "green" : "amber"} dot>
+                  {correctionDeposit.status}
+                </Pill>
+              </div>
+              {correctionDeposit.bank_credited_cents != null && (
+                <div className="mt-1 text-xs text-zinc-400">
+                  Expected {usd(correctionDeposit.expected_cents)} · Bank credited {usd(correctionDeposit.bank_credited_cents)}
+                  {correctionDeposit.variance_cents != null && (
+                    <> · Variance {usd(correctionDeposit.variance_cents, { signed: true })}</>
+                  )}
+                </div>
+              )}
+            </div>
+            <Button variant="secondary" onClick={() => setCorrecting(true)}>
+              Correct this deposit
+            </Button>
+          </div>
+        </Card>
+      </div>
     );
-  const multiPending = deposits.length > 1;
+  }
+  const multiPending = !correcting && deposits.length > 1;
 
   // Verify control — inline on desktop, portaled to the mobile sticky footer.
   const verifyAction = (
@@ -158,11 +216,26 @@ export function DepositTab({
   return (
     <div>
       <div className="mb-5">
-        <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Deposit Validation</div>
-        <h2 className="mt-1 text-2xl font-bold tracking-tight text-midnight">Validate next-day deposit</h2>
+        <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+          {correcting ? "Deposit Correction" : "Deposit Validation"}
+        </div>
+        <h2 className="mt-1 text-2xl font-bold tracking-tight text-midnight">
+          {correcting ? "Correct a verified deposit" : "Validate next-day deposit"}
+        </h2>
         <p className="mt-1.5 max-w-xl text-sm text-zinc-500">
-          Confirm the bank credited the deposit, attach the stamped slip, and record anything carried forward from the DSR.
+          {correcting
+            ? "Enter the corrected bank-credit amount, attach an updated slip, and provide a reason. Your DO/SDO will be notified."
+            : "Confirm the bank credited the deposit, attach the stamped slip, and record anything carried forward from the DSR."}
         </p>
+        {correcting && (
+          <button
+            type="button"
+            onClick={() => setCorrecting(false)}
+            className="mt-2 text-xs text-accent underline underline-offset-2 hover:text-accent/80"
+          >
+            ← Cancel correction
+          </button>
+        )}
       </div>
 
       {/* Pending-deposits picker — only shown when more than one deposit is
@@ -218,16 +291,18 @@ export function DepositTab({
           </div>
           <div>
             <div className="text-base font-semibold text-midnight">
-              Deposit <span className="font-mono">{dep.code}</span>
+              Deposit <span className="font-mono">{formDep!.code}</span>
+              {correcting && <span className="ml-2"><Pill tone="amber" dot>Correcting</Pill></span>}
             </div>
             <div className="mt-0.5 text-[13px] text-zinc-500">
-              Closeout {dep.for_date} · by {dep.closed_by}
+              {correcting ? "Originally for" : "Closeout"} {formDep!.for_date}
+              {!correcting && (formDep as any).closed_by && ` · by ${(formDep as any).closed_by}`}
             </div>
           </div>
         </div>
         <div className="text-right">
           <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Expected at bank</div>
-          <div className="mt-1 text-2xl font-bold tabular-nums text-midnight">{usd(dep.expected_cents)}</div>
+          <div className="mt-1 text-2xl font-bold tabular-nums text-midnight">{usd(formDep!.expected_cents)}</div>
         </div>
       </Card>
 
@@ -361,6 +436,26 @@ export function DepositTab({
             )}
           </Card>
 
+          {correcting && (
+            <Card className="p-5">
+              <div className="mb-1.5 flex items-center gap-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+                  Correction reason <span className="text-red-600">*</span>
+                </span>
+              </div>
+              <textarea
+                value={correctionReason}
+                onChange={(e) => setCorrectionReason(e.target.value)}
+                rows={2}
+                placeholder="Why is this deposit being corrected? (min 8 chars)…"
+                className="block w-full resize-y rounded-md border-0 px-3 py-2 text-sm ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+              />
+              <div className="mt-1.5 text-[11px] text-zinc-400">
+                Required. Your DO/SDO will be notified of this correction.
+              </div>
+            </Card>
+          )}
+
           <Card className="p-5">
             <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Before you verify</div>
             <div className="mt-2.5 border-t border-zinc-100">
@@ -373,6 +468,9 @@ export function DepositTab({
               <CheckRow done={!!slipPath} label="Deposit slip attached" sub="Stamped slip photo on file" />
               {hasCarry && (
                 <CheckRow done={carriedAck} label="Carried-over addressed" sub="Recorded; alert raised to DO/SDO" />
+              )}
+              {correcting && (
+                <CheckRow done={correctionReason.trim().length >= 8} label="Correction reason entered" sub="Required to amend a verified deposit" />
               )}
             </div>
             {!actionSlot && <div className="mt-4">{verifyAction}</div>}

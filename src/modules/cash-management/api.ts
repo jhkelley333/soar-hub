@@ -57,11 +57,30 @@ export function fetchLeaderOverview(): Promise<LeaderOverview> {
 export function fetchCashBadges(): Promise<{ pending_deposits: number; open_alerts: number; deposits_verified_today: number }> {
   return request<{ pending_deposits: number; open_alerts: number; deposits_verified_today: number }>(`${FN}?action=badges`);
 }
+export interface CorrectionDeposit {
+  id: string;
+  code: string;
+  for_date: string;
+  expected_cents: number;
+  bank_credited_cents: number | null;
+  variance_cents: number | null;
+  status: string;
+  closeout_id: string;
+  closed_by?: string;
+}
+
 // `deposits` is the full pending list (oldest first). `deposit` is kept on the
 // shape for back-compat but always equals deposits[0] when there's at least
 // one — callers should prefer `deposits` going forward.
-export function fetchDeposit(storeId?: string | null): Promise<{ deposits: PendingDeposit[]; deposit: PendingDeposit | null; toleranceCents: number }> {
-  return request<{ deposits: PendingDeposit[]; deposit: PendingDeposit | null; toleranceCents: number }>(`${FN}?action=deposit${sp(storeId)}`);
+// `correction_deposit` is the most recent verified/flagged deposit when no
+// pending deposits exist — lets GMs amend a prior verified deposit.
+export function fetchDeposit(storeId?: string | null): Promise<{
+  deposits: PendingDeposit[];
+  deposit: PendingDeposit | null;
+  toleranceCents: number;
+  correction_deposit?: CorrectionDeposit | null;
+}> {
+  return request<{ deposits: PendingDeposit[]; deposit: PendingDeposit | null; toleranceCents: number; correction_deposit?: CorrectionDeposit | null }>(`${FN}?action=deposit${sp(storeId)}`);
 }
 export function fetchAlerts(storeId?: string | null): Promise<AlertsResponse> {
   return request<AlertsResponse>(`${FN}?action=alerts${sp(storeId)}`);
@@ -143,10 +162,12 @@ export interface VerifyDepositInput {
   // Required when a nonzero carried-over is entered.
   carried_ack?: boolean;
   carried_note?: string;
+  // Required when correcting an already-verified/flagged deposit (GM or DO+).
+  correction_reason?: string;
 }
 export function verifyDeposit(
   input: VerifyDepositInput
-): Promise<{ ok: true; flagged: boolean; carried_acknowledged?: boolean; carried_fwd_cents: number }> {
+): Promise<{ ok: true; flagged: boolean; carried_acknowledged?: boolean; carried_fwd_cents: number; corrected?: boolean }> {
   return request(`${FN}?action=verify-deposit`, { method: "POST", body: JSON.stringify(input) });
 }
 
