@@ -1225,9 +1225,9 @@ async function detail(supa, user, params) {
       .eq("closeout_id", closeoutId)
       .order("created_at", { ascending: true })
       .limit(50)).data ?? []),
-    // DOs and above can correct a prior-day deposit (scope already enforced
-    // above); editCloseout re-checks role + scope + requires a reason.
-    can_edit: ACT_ROLES.has(String(user.role)),
+    // DOs and above can always edit; GMs can correct unverified/flagged
+    // closeouts at their own store (verified ones need DO+).
+    can_edit: ACT_ROLES.has(String(user.role)) || (String(user.role) === "gm" && co.status !== "verified"),
   };
 }
 
@@ -1235,19 +1235,30 @@ async function detail(supa, user, params) {
 // edit-closeout — admin fix for a closeout (e.g. wrong business date)
 // ============================================================================
 async function editCloseout(supa, user, body) {
-  if (!ACT_ROLES.has(String(user.role))) {
-    return { error: "Only a DO or above can edit a closeout.", status: 403 };
+  const isGmEdit = String(user.role) === "gm";
+  if (!ACT_ROLES.has(String(user.role)) && !isGmEdit) {
+    return { error: "Only the GM, DO, or above can edit a closeout.", status: 403 };
   }
   const id = body?.closeout_id;
   if (!id) return { error: "closeout_id is required.", status: 400 };
   const { data: co } = await supa.from("cash_closeouts").select("*").eq("id", id).maybeSingle();
   if (!co) return { error: "Closeout not found.", status: 404 };
 
+  // GMs can only correct unverified/flagged closeouts — verified ones need DO+.
+  if (isGmEdit && co.status === "verified") {
+    return { error: "Verified closeouts can only be corrected by a DO or higher.", status: 403 };
+  }
+
   // Scope: a DO/SDO/RVP can only edit closeouts at stores they oversee
   // (org-wide roles see everything).
   const access = await storeRowsForUser(supa, user);
   if (!access.all && !access.rows.some((r) => r.id === co.store_id)) {
     return { error: "That store is outside your scope.", status: 403 };
+  }
+
+  // GMs cannot move a closeout to a different business date — that's DO+ only.
+  if (isGmEdit && body?.business_date && body.business_date !== co.business_date) {
+    return { error: "Changing the business date requires a DO or higher.", status: 403 };
   }
 
   // Editing a prior-day deposit is a control event — a reason is required.
