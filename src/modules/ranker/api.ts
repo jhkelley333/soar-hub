@@ -109,6 +109,54 @@ export async function downloadRankerCsv(week: string, scopeFilter: "all" | "mine
   setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
 }
 
+export async function downloadStoreExcel(args: {
+  week: string;
+  store: string;
+  peerStore?: string;
+}): Promise<void> {
+  const [XLSX, data] = await Promise.all([
+    import("xlsx"),
+    fetchStoreDashboard({ week: args.week, store: args.store, peerStore: args.peerStore, trendWeeks: 8 }),
+  ]);
+
+  const wb = XLSX.utils.book_new();
+  const m = (data.metrics ?? {}) as Record<string, unknown>;
+  const pm = (data.priorMetrics ?? {}) as Record<string, unknown>;
+  const fmt = (v: unknown) =>
+    v == null ? "" : typeof v === "number" ? Number(v.toFixed(4)) : String(v);
+
+  const scorecard: unknown[][] = [
+    ["Store", data.store, "", "GM", m.gmName ?? ""],
+    ["Week", data.week, "", "Rank", m.storeRank ?? ""],
+    [],
+    ["Metric", "Current Week", "Prior Week"],
+    ["Weekly Sales ($)", fmt(m.weeklySales), fmt(pm.weeklySales)],
+    ["vs Last Year (%)", fmt(m.vsLastYear), fmt(pm.vsLastYear)],
+    ["COGS Eff (%)", fmt(m.cogsEff), fmt(pm.cogsEff)],
+    ["Labor (%)", fmt(m.laborPct), fmt(pm.laborPct)],
+    ["Var to Chart", fmt(m.varToChart), fmt(pm.varToChart)],
+    ["Annualized FC Miss ($)", fmt(m.annualizedFcMiss), fmt(pm.annualizedFcMiss)],
+    ["BSC Training (%)", fmt(m.bscTraining), fmt(pm.bscTraining)],
+    ["On-Time Tickets (%)", fmt(m.onTimeTickets), fmt(pm.onTimeTickets)],
+    ["VOG Week", fmt(m.vogWeek), fmt(pm.vogWeek)],
+    ["VOG Count", fmt(m.vogCount), fmt(pm.vogCount)],
+    ["Complaints", fmt(m.complaints), fmt(pm.complaints)],
+    ["Calls /10k", fmt(m.callsPer10k), fmt(pm.callsPer10k)],
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(scorecard), "Scorecard");
+
+  if (data.trends?.weeks && data.trends.seriesByMetric) {
+    const { weeks, seriesByMetric } = data.trends;
+    const trendRows: unknown[][] = [["Metric", ...weeks]];
+    for (const [key, vals] of Object.entries(seriesByMetric)) {
+      trendRows.push([key, ...(vals ?? []).map(fmt)]);
+    }
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(trendRows), "Trends");
+  }
+
+  XLSX.writeFile(wb, `ranker-${data.store}-week-${data.week}.xlsx`);
+}
+
 export function generateAISummary(args: {
   store: string;
   week: number;
