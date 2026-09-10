@@ -1,19 +1,19 @@
 // Ranker — module entry. Toolbar with week + tab-specific selects,
 // four-tab UI (Portfolio / Store View / Head-to-Head / FC Miss), state
 // lifted here for cross-tab drilldown navigation. Route gating is
-// handled by router.tsx (do/sdo/rvp/vp/coo/admin only), so we don't
+// handled by router.tsx (gm/do/sdo/rvp/vp/coo/admin), so we don't
 // repeat it.
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { cn } from "@/lib/cn";
 import { fiscalWeekLabel } from "@/lib/fiscal";
-import { fetchInit } from "./api";
+import { fetchInit, downloadRankerCsv } from "./api";
 import { money } from "./format";
 import { PortfolioView } from "./PortfolioView";
 import { StoreView } from "./StoreView";
@@ -31,6 +31,8 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 export function RankerPage() {
+  const [downloading, setDownloading] = useState(false);
+
   const init = useQuery({
     queryKey: ["ranker", "init"],
     queryFn: fetchInit,
@@ -259,6 +261,19 @@ export function RankerPage() {
             aria-label="Next week"
           >
             <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            disabled={!week || downloading}
+            onClick={async () => {
+              setDownloading(true);
+              try { await downloadRankerCsv(week); } finally { setDownloading(false); }
+            }}
+            className="ml-1 flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50 hover:text-midnight disabled:opacity-40"
+            aria-label="Download CSV"
+          >
+            <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
+            {downloading ? "…" : "CSV"}
           </button>
         </div>
       </Card>

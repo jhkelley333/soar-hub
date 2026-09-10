@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import type {
   AISummaryResponse,
   InitResponse,
+  PortfolioRow,
   StoreDashboardResponse,
   WarRoomResponse,
 } from "./types";
@@ -62,6 +63,49 @@ export function fetchStoreDashboard(args: {
   if (args.peerStore) u.searchParams.set("peerStore", args.peerStore);
   u.searchParams.set("trendWeeks", String(args.trendWeeks));
   return fetchJson<StoreDashboardResponse>(u.pathname + u.search);
+}
+
+export async function downloadRankerCsv(week: string): Promise<void> {
+  const u = new URL("/.netlify/functions/ranker", window.location.origin);
+  u.searchParams.set("action", "getWarRoom");
+  u.searchParams.set("week", week);
+  const data = await fetchJson<WarRoomResponse>(u.pathname + u.search);
+
+  const rows = data.portfolioRows ?? [];
+  const header = [
+    "Rank", "Store #", "Store Name", "GM", "Weekly Sales", "vs LY %",
+    "Labor %", "VOG Week", "VOG Count", "Complaints", "Calls/10k",
+    "Var to Chart", "Rank Change", "Ann. FC Miss",
+  ];
+  const toRow = (r: PortfolioRow) => [
+    r.storeRank ?? "",
+    r.store,
+    r.storeName ?? "",
+    r.gmName ?? "",
+    r.weeklySales != null ? (r.weeklySales / 100).toFixed(2) : "",
+    r.vsLastYear != null ? r.vsLastYear.toFixed(2) : "",
+    r.laborPct != null ? r.laborPct.toFixed(2) : "",
+    r.vogWeek ?? "",
+    r.vogCount ?? "",
+    r.complaints ?? "",
+    r.callsPer10k != null ? r.callsPer10k.toFixed(2) : "",
+    r.varToChart != null ? r.varToChart.toFixed(2) : "",
+    r.rankChange ?? "",
+    r.annualizedFcMiss != null ? r.annualizedFcMiss.toFixed(2) : "",
+  ];
+
+  const csv = [header, ...rows.map(toRow)]
+    .map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
+    .join("\r\n");
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `ranker-week-${week}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
 }
 
 export function generateAISummary(args: {
