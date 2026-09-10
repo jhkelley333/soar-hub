@@ -28,9 +28,6 @@ export function CloseoutTab({
   const qc = useQueryClient();
   const toast = useToast();
   const { profile } = useAuth();
-  // Roles that can unlock any submitted closeout (regardless of who closed it).
-  // GMs can correct deposits but not closeout figures — that's DO+ only.
-  const LEADER_ROLES = ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"];
   const ACT_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
 
   const configQuery = useQuery({ queryKey: ["cash-config"], queryFn: fetchConfig, staleTime: 5 * 60_000 });
