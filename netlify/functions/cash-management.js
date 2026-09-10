@@ -655,13 +655,12 @@ async function submitCloseout(supa, user, body) {
   if (existing) {
     const wasVerified = existing.status === "verified";
     const isLeader = ACT_ROLES.has(String(user.role));
-    const isGm = String(user.role) === "gm";
     const isSubmitter = existing.submitted_by === user.id;
-    if (wasVerified && !isLeader && !isGm) {
-      return { error: "This day is verified and locked. The GM or a DO/SDO must unlock it to make a correction.", status: 403 };
+    if (wasVerified && !isLeader) {
+      return { error: "This day has been verified. A DO/SDO must unlock it to make a correction.", status: 403 };
     }
-    if (!wasVerified && !isSubmitter && !isLeader && !isGm) {
-      return { error: "Only the closer, the GM, or a DO/SDO can correct this closeout.", status: 403 };
+    if (!wasVerified && !isSubmitter && !isLeader) {
+      return { error: "Only the original closer or a DO/SDO can correct this closeout.", status: 403 };
     }
     correctionReason = String(body?.correction_reason || "").trim();
     if (correctionReason.length < 8) {
