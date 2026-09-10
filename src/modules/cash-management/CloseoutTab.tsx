@@ -105,7 +105,6 @@ export function CloseoutTab({
   // unverified day, its original closer or a GM+.
   const [unlocked, setUnlocked] = useState(false);
   const [correctionReason, setCorrectionReason] = useState("");
-  const isLeader = LEADER_ROLES.includes(profile?.role ?? "");
   const isActLeader = ACT_ROLES.includes(profile?.role ?? "");
   const isGmRole = profile?.role === "gm";
   const isSubmitter = !!existing?.submitted_by && existing.submitted_by === profile?.id;
