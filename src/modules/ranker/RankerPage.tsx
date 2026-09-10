@@ -1,8 +1,8 @@
 // Ranker — module entry. Toolbar with week + tab-specific selects,
 // four-tab UI (Portfolio / Store View / Head-to-Head / FC Miss), state
 // lifted here for cross-tab drilldown navigation. Route gating is
-// handled by router.tsx (gm/do/sdo/rvp/vp/coo/admin), so we don't
-// repeat it.
+// handled by router.tsx (gm/do/sdo/rvp/vp/coo/admin). Scope toggle
+// (All Company / My Stores) shown when user's scope < full company.
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -32,6 +32,7 @@ const TABS: { id: Tab; label: string }[] = [
 
 export function RankerPage() {
   const [downloading, setDownloading] = useState(false);
+  const [scopeFilter, setScopeFilter] = useState<"all" | "mine">("all");
 
   const init = useQuery({
     queryKey: ["ranker", "init"],
@@ -179,6 +180,29 @@ export function RankerPage() {
           </select>
         </Field>
 
+        {/* Scope toggle — only shown when user's visible stores < full company */}
+        {(init.data.companyStores ?? []).length > init.data.allStores.length && (
+          <Field label="View">
+            <div className="flex h-9 overflow-hidden rounded-md border border-zinc-200 bg-white text-sm">
+              {(["all", "mine"] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setScopeFilter(v)}
+                  className={cn(
+                    "px-3 transition",
+                    scopeFilter === v
+                      ? "bg-accent text-white"
+                      : "text-zinc-600 hover:bg-zinc-50",
+                  )}
+                >
+                  {v === "all" ? "All Company" : "My Stores"}
+                </button>
+              ))}
+            </div>
+          </Field>
+        )}
+
         {tab === "store" && (
           <>
             <Field label="Store">
@@ -267,7 +291,7 @@ export function RankerPage() {
             disabled={!week || downloading}
             onClick={async () => {
               setDownloading(true);
-              try { await downloadRankerCsv(week); } finally { setDownloading(false); }
+              try { await downloadRankerCsv(week, scopeFilter); } finally { setDownloading(false); }
             }}
             className="ml-1 flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50 hover:text-midnight disabled:opacity-40"
             aria-label="Download CSV"
@@ -282,6 +306,7 @@ export function RankerPage() {
       {tab === "portfolio" && (
         <PortfolioView
           week={week}
+          scopeFilter={scopeFilter}
           onDrillStore={handleDrillStore}
           onDrillH2H={handleDrillH2H}
         />
@@ -298,6 +323,7 @@ export function RankerPage() {
       {tab === "fcmiss" && (
         <FcMissView
           week={week}
+          scopeFilter={scopeFilter}
           onDrillStore={handleDrillStore}
           onDrillH2H={handleDrillH2H}
         />
