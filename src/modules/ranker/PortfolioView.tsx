@@ -19,6 +19,7 @@ import type { PortfolioRow } from "./types";
 
 interface Props {
   week: string;
+  scopeFilter: "all" | "mine";
   onDrillStore: (store: string) => void;
   onDrillH2H: (store: string) => void;
 }
@@ -52,12 +53,12 @@ function buildTiers(rows: PortfolioRow[]): Map<string, Tier> {
   return m;
 }
 
-export function PortfolioView({ week, onDrillStore, onDrillH2H }: Props) {
+export function PortfolioView({ week, scopeFilter, onDrillStore, onDrillH2H }: Props) {
   const [tier, setTier] = useState<TierFilter>("all");
 
   const query = useQuery({
-    queryKey: ["ranker", "war-room", week],
-    queryFn: () => fetchWarRoom(week),
+    queryKey: ["ranker", "war-room", week, scopeFilter],
+    queryFn: () => fetchWarRoom(week, scopeFilter),
     staleTime: 60_000,
   });
 
