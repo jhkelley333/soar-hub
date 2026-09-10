@@ -11,7 +11,6 @@ import { Drawer } from "@/shared/ui/Drawer";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { useToast } from "@/shared/ui/Toaster";
-import { useAuth } from "@/auth/AuthProvider";
 import { editCloseout, fetchDetail, fetchSlipUrl } from "./api";
 import { centsToInput, toCents, usd } from "./money";
 import { MoneyInput, Pill, StatusPill } from "./ui";
@@ -50,9 +49,6 @@ export function DepositDetailDrawer({
 }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const { profile } = useAuth();
-  const ACT_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
-  const canChangeDate = ACT_ROLES.includes(profile?.role ?? "");
   const query = useQuery({
     queryKey: ["cash-detail", closeoutId],
     queryFn: () => fetchDetail(closeoutId!),
@@ -146,18 +142,16 @@ export function DepositDetailDrawer({
                 </button>
               </div>
               <div className="space-y-3">
-                {canChangeDate && (
-                  <label className="block">
-                    <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-amber-800">Business date</div>
-                    <input
-                      type="date"
-                      value={date}
-                      onChange={(e) => setDate(e.target.value)}
-                      className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm ring-1 ring-inset ring-amber-200 focus:outline-none focus:ring-2 focus:ring-accent"
-                    />
-                    <div className="mt-1 text-[11px] text-amber-700">Fix a wrong-day entry here.</div>
-                  </label>
-                )}
+                <label className="block">
+                  <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-amber-800">Business date</div>
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm ring-1 ring-inset ring-amber-200 focus:outline-none focus:ring-2 focus:ring-accent"
+                  />
+                  <div className="mt-1 text-[11px] text-amber-700">Fix a wrong-day entry here.</div>
+                </label>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   <label className="block">
                     <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-amber-800">Cash due</div>
