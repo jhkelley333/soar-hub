@@ -17,14 +17,15 @@ import type { PortfolioRow } from "./types";
 
 interface Props {
   week: string;
+  scopeFilter: "all" | "mine";
   onDrillStore: (store: string) => void;
   onDrillH2H: (store: string) => void;
 }
 
-export function FcMissView({ week, onDrillStore, onDrillH2H }: Props) {
+export function FcMissView({ week, scopeFilter, onDrillStore, onDrillH2H }: Props) {
   const query = useQuery({
-    queryKey: ["ranker", "war-room", week],
-    queryFn: () => fetchWarRoom(week),
+    queryKey: ["ranker", "war-room", week, scopeFilter],
+    queryFn: () => fetchWarRoom(week, scopeFilter),
     staleTime: 60_000,
   });
 

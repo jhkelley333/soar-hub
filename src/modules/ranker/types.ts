@@ -71,6 +71,7 @@ export interface InitResponse {
   currentWeek: number | null;
   availableWeeks: number[];
   allStores: string[];
+  companyStores: string[];
 }
 
 export interface StoreDashboardResponse {

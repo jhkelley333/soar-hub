@@ -6,7 +6,6 @@ import { supabase } from "@/lib/supabase";
 import type {
   AISummaryResponse,
   InitResponse,
-  PortfolioRow,
   StoreDashboardResponse,
   WarRoomResponse,
 } from "./types";
@@ -43,10 +42,11 @@ export function fetchInit(): Promise<InitResponse> {
   );
 }
 
-export function fetchWarRoom(week: string): Promise<WarRoomResponse> {
+export function fetchWarRoom(week: string, scopeFilter: "all" | "mine" = "mine"): Promise<WarRoomResponse> {
   const u = new URL("/.netlify/functions/ranker", window.location.origin);
   u.searchParams.set("action", "getWarRoom");
   u.searchParams.set("week", week);
+  u.searchParams.set("scopeFilter", scopeFilter);
   return fetchJson<WarRoomResponse>(u.pathname + u.search);
 }
 
@@ -65,11 +65,12 @@ export function fetchStoreDashboard(args: {
   return fetchJson<StoreDashboardResponse>(u.pathname + u.search);
 }
 
-export async function downloadRankerCsv(week: string): Promise<void> {
+export async function downloadRankerCsv(week: string, scopeFilter: "all" | "mine" = "mine"): Promise<void> {
   const u = new URL("/.netlify/functions/ranker", window.location.origin);
   u.searchParams.set("action", "getWarRoom");
   u.searchParams.set("week", week);
-  const data = await fetchJson<WarRoomResponse>(u.pathname + u.search);
+  u.searchParams.set("scopeFilter", scopeFilter);
+  const data = await fetchJson<import("./types").WarRoomResponse>(u.pathname + u.search);
 
   const rows = data.portfolioRows ?? [];
   const header = [
@@ -77,7 +78,7 @@ export async function downloadRankerCsv(week: string): Promise<void> {
     "Labor %", "VOG Week", "VOG Count", "Complaints", "Calls/10k",
     "Var to Chart", "Rank Change", "Ann. FC Miss",
   ];
-  const toRow = (r: PortfolioRow) => [
+  const toRow = (r: import("./types").PortfolioRow) => [
     r.storeRank ?? "",
     r.store,
     r.storeName ?? "",

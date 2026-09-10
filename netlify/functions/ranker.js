@@ -59,17 +59,19 @@ export const handler = async (event) => {
 
 // ── getInit ────────────────────────────────────────────────────────────────
 async function getInit(supa, sheets, profile) {
-  const [availableWeeks, allStores] = await Promise.all([
+  const [availableWeeks, allStores, companyStoresRes] = await Promise.all([
     getAvailableWeeks(sheets),
     getCallerStoreNumbers(supa, profile),
+    supa.from("stores").select("number").eq("is_active", true),
   ]);
-  // Default "current week" = most recent available tab. The legacy
-  // calendar-week formula drifted from Sonic's fiscal calendar; using
-  // "latest tab" lets corporate define the cadence by adding tabs.
+  const companyStores = (companyStoresRes.data ?? [])
+    .map(s => String(s.number || "").trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
   const currentWeek = availableWeeks.length
     ? availableWeeks[availableWeeks.length - 1]
     : null;
-  return respond(200, { ok: true, currentWeek, availableWeeks, allStores });
+  return respond(200, { ok: true, currentWeek, availableWeeks, allStores, companyStores });
 }
 
 // ── getStoreDashboard ──────────────────────────────────────────────────────
@@ -171,8 +173,14 @@ async function getWarRoom(supa, sheets, profile, params) {
   const week = String(params.week || "").trim();
   if (!week) return respond(400, { ok: false, message: "week required." });
 
+  // scopeFilter=all → show every store in the sheet (company-wide view).
+  // scopeFilter=mine (default) → restrict to the caller's visible stores.
+  const scopeFilter = params.scopeFilter === "all" ? "all" : "mine";
+
   const visible = await getCallerStoreNumbers(supa, profile);
-  if (!visible.length) {
+  const storesFilter = scopeFilter === "all" ? null : visible;
+
+  if (scopeFilter === "mine" && !visible.length) {
     return respond(200, {
       ok: true, week, storeCount: 0,
       avgWeeklySales: null, avgLaborPct: null, avgRank: null, avgVogCount: null,
@@ -186,13 +194,13 @@ async function getWarRoom(supa, sheets, profile, params) {
   const wkMap  = await batchGetWeeks(sheets, needed);
   const wk     = wkMap.get(week) || { headers: [], idx: {}, rows: [] };
 
-  const portfolio = getPortfolioRows(wk.rows, wk.idx, visible);
+  const portfolio = getPortfolioRows(wk.rows, wk.idx, storesFilter);
 
   // Prior-week rank for rankChange.
   const priorRankByStore = new Map();
   if (weekNum > 1) {
     const pw = wkMap.get(String(weekNum - 1)) || { headers: [], idx: {}, rows: [] };
-    const priorPortfolio = getPortfolioRows(pw.rows, pw.idx, visible);
+    const priorPortfolio = getPortfolioRows(pw.rows, pw.idx, storesFilter);
     for (const p of priorPortfolio) priorRankByStore.set(p.store, p.storeRank);
   }
 
@@ -275,12 +283,14 @@ function getPeerCandidates(rows, idxMap, store) {
   return peers.slice(0, 12);
 }
 
+// stores=null means "all stores in the sheet" (company-wide view).
 function getPortfolioRows(rows, idxMap, stores) {
-  const wanted = new Set((stores || []).map(s => String(s).trim()));
+  const wanted = stores ? new Set(stores.map(s => String(s).trim())) : null;
   const out = [];
   for (const r of rows) {
     const store = getStoreDigits(r[FIXED_COL.storeNum]);
-    if (!store || !wanted.has(store)) continue;
+    if (!store) continue;
+    if (wanted && !wanted.has(store)) continue;
     out.push({
       store,
       storeName:   String(r[FIXED_COL.storeName] || "").trim(),
