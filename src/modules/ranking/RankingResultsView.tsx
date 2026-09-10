@@ -16,7 +16,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { toCSV, downloadCSV } from "@/lib/csv";
 import {
   fetchRankingFull, fetchRankingLatest, fetchRankingWeeks, fetchLegacyWeek, triggerRankingRun,
-  type RankMetrics, type RankScope, type RankTier, type RankingResultRow,
+  type RankMetrics, type RankScope, type RankTier, type RankingResultRow, type ViewScope,
 } from "./api";
 import { downloadRankingWorkbook } from "./rankingWorkbook";
 import { RankingStoreView } from "./RankingStoreView";
@@ -299,14 +299,15 @@ function Cell({ v, kind }: { v: unknown; kind: Kind }) {
 }
 
 // ── main view ────────────────────────────────────────────────────────
-export function RankingResultsView() {
+export function RankingResultsView({ viewScope = "own" }: { viewScope?: ViewScope }) {
   const toast = useToast();
   const qc = useQueryClient();
   const { profile } = useAuth();
   const isAdmin = profile?.role === "admin";
   // Org-wide roles see the Company + Entity roll-ups; scoped leaders don't
   // (the backend returns nothing there), so hide those tabs for them.
-  const isOrgWide = ["payroll", "admin", "vp", "coo"].includes(String(profile?.role ?? ""));
+  // When viewScope is "company" or "district", also allow entity/company tabs.
+  const isOrgWide = ["payroll", "admin", "vp", "coo"].includes(String(profile?.role ?? "")) || viewScope !== "own";
   const tierTabs = useMemo(
     () => (isOrgWide ? TIER_TABS : TIER_TABS.filter((t) => t.id !== "entity" && t.id !== "company")),
     [isOrgWide],
@@ -340,11 +341,11 @@ export function RankingResultsView() {
   const effectiveTier: RankTier = isLegacy ? "store" : tier;
 
   const q = useQuery({
-    queryKey: ["ranking-week", scope, effectiveTier, selectedWeek?.key ?? "latest"],
+    queryKey: ["ranking-week", scope, effectiveTier, selectedWeek?.key ?? "latest", viewScope],
     queryFn: () =>
-      !selectedWeek ? fetchRankingLatest(scope, effectiveTier, null)
+      !selectedWeek ? fetchRankingLatest(scope, effectiveTier, null, viewScope)
         : selectedWeek.source === "legacy" ? fetchLegacyWeek(selectedWeek.fiscal_week as number)
-        : fetchRankingLatest(scope, effectiveTier, selectedWeek.run_id),
+        : fetchRankingLatest(scope, effectiveTier, selectedWeek.run_id, viewScope),
     staleTime: 60_000,
   });
   const run = q.data?.run ?? null;

@@ -380,35 +380,65 @@ export function RankingAdminPage() {
   const canSettings = isAdmin || delegated;
 
   const [gmRunId, setGmRunId] = useState<string | null>(null);
+  const [gmViewScope, setGmViewScope] = useState<"store" | "district" | "company">("store");
   const runsQ = useQuery({ queryKey: ["ranking-runs"], queryFn: fetchRankingRuns, staleTime: 5 * 60_000, enabled: isGm });
   const runs = runsQ.data?.runs ?? [];
 
-  // A GM owns a single store — land them straight on the legacy-style store
-  // dashboard, no tier tabs or board to wade through.
+  // Non-admin scoped leaders (DO/SDO/RVP) can optionally expand to company view.
+  const isDo = profile?.role === "do" || profile?.role === "sdo";
+  const [leaderViewScope, setLeaderViewScope] = useState<"own" | "company">("own");
+
+  // A GM owns a single store — show a view switcher so they can see
+  // their store scorecard, their district board, or the full company board.
   if (isGm) {
+    const gmViewOpts = [
+      { value: "store" as const, label: "My Store" },
+      { value: "district" as const, label: "District" },
+      { value: "company" as const, label: "Company" },
+    ];
     return (
       <>
         <PageHeader
           title="My Store Ranking"
           description="Your store's weekly ranking and scorecard."
         />
-        {runs.length > 1 && (
-          <div className="mb-4 flex items-center gap-2">
-            <label className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Period / Week</label>
-            <select
-              value={gmRunId ?? runs[0]?.id ?? ""}
-              onChange={(e) => setGmRunId(e.target.value || null)}
-              className="h-8 rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-            >
-              {runs.map((r) => (
-                <option key={r.id} value={r.id}>
-                  P{r.period}W{r.week} — {fmtDate(r.week_ending)}
-                </option>
-              ))}
-            </select>
+        {/* View switcher */}
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <div className="flex overflow-hidden rounded-lg border border-zinc-200 bg-white text-sm">
+            {gmViewOpts.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => setGmViewScope(o.value)}
+                className={cn(
+                  "px-4 py-1.5 font-medium transition",
+                  gmViewScope === o.value ? "bg-accent text-white" : "text-zinc-600 hover:bg-zinc-50",
+                )}
+              >
+                {o.label}
+              </button>
+            ))}
           </div>
-        )}
-        <MyStoreView runId={gmRunId} />
+          {gmViewScope === "store" && runs.length > 1 && (
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Period / Week</label>
+              <select
+                value={gmRunId ?? runs[0]?.id ?? ""}
+                onChange={(e) => setGmRunId(e.target.value || null)}
+                className="h-8 rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                {runs.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    P{r.period}W{r.week} — {fmtDate(r.week_ending)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+        {gmViewScope === "store" && <MyStoreView runId={gmRunId} />}
+        {gmViewScope === "district" && <RankingResultsView viewScope="district" />}
+        {gmViewScope === "company" && <RankingResultsView viewScope="company" />}
       </>
     );
   }
@@ -426,16 +456,34 @@ export function RankingAdminPage() {
     ...(canSettings ? [{ value: "settings" as AdminView, label: isAdmin ? "System settings" : "Ranker uploads" }] : []),
   ];
   const active = view === "settings" && !canSettings ? "ranking" : view;
+  const boardViewScope = isDo ? leaderViewScope : "own";
   return (
     <>
       <PageHeader
         title="Ranker"
         description="Weekly performance ranking, scoped to your stores and team."
       />
-      <div className="mb-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <Segmented<AdminView> value={active} onChange={setView} options={options} />
+        {isDo && active === "ranking" && (
+          <div className="flex overflow-hidden rounded-lg border border-zinc-200 bg-white text-sm">
+            {(["own", "company"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setLeaderViewScope(s)}
+                className={cn(
+                  "px-3 py-1.5 font-medium transition",
+                  boardViewScope === s ? "bg-accent text-white" : "text-zinc-600 hover:bg-zinc-50",
+                )}
+              >
+                {s === "own" ? "My District" : "Company"}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
-      {active === "ranking" ? <RankingResultsView />
+      {active === "ranking" ? <RankingResultsView viewScope={boardViewScope} />
         : active === "top" ? <RankingTopPerformersView />
         : active === "sevenup" ? <RankingSevenUpView />
         : active === "evening" ? <RankingEveningView />
