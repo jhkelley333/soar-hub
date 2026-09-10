@@ -192,7 +192,7 @@ export function DepositTab({
                 </div>
               )}
             </div>
-            <Button variant="outline" onClick={() => setCorrecting(true)}>
+            <Button variant="secondary" onClick={() => setCorrecting(true)}>
               Correct this deposit
             </Button>
           </div>
