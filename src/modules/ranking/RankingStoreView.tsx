@@ -4,7 +4,9 @@
 // run's new-engine data. No week/peer selectors: it always shows the run the
 // board is on. Historical week navigation lives on the board's week picker.
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Download } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -91,6 +93,7 @@ function KpiCard({ label, value, delta, deltaTone, series, lowerIsBetter }: {
 }
 
 export function RankingStoreView({ row, run }: { row: RankingResultRow; run?: RankingRun | null }) {
+  const [dlXlsx, setDlXlsx] = useState(false);
   const m = row.metrics;
   const num = String(row.entity_key);
 
@@ -130,6 +133,50 @@ export function RankingStoreView({ row, run }: { row: RankingResultRow; run?: Ra
   if (isNum(m.laborScore)) bits.push((m.laborScore as number) >= 4 ? "labor is well-controlled" : (m.laborScore as number) <= 2 ? "labor is running over chart" : "labor is on the line");
   if (vogCount != null) bits.push(vogCount >= 21 ? "VOG count is on target" : "VOG count is below the 21-mark");
   const narrative = bits.length ? bits.join(" · ") + "." : "";
+
+  async function downloadExcel() {
+    setDlXlsx(true);
+    try {
+      const XLSX = await import("xlsx");
+      const wb = XLSX.utils.book_new();
+      const fmt = (v: unknown) => v == null ? "" : typeof v === "number" ? Number(v.toFixed(4)) : String(v);
+      const scorecard = [
+        ["Store", num, "", "Store Name", String(m.location ?? "")],
+        ["GM", String(m.gm ?? ""), "", "Period/Week", run ? `P${run.period}W${run.week}` : ""],
+        [],
+        ["Metric", "Value"],
+        ["Weekly Sales ($)", fmt(m.sales)],
+        ["% vs LY", fmt(m.pctVsLy)],
+        ["COGS Eff %", fmt(m.cogsEff)],
+        ["Labor %", fmt(m.laborPct)],
+        ["On Time %", fmt(m.onTimePct)],
+        ["Annualized FC Miss ($)", fmt(m.fcAnnualized)],
+        ["Var to Chart", fmt(m.varianceToChart)],
+        ["BSC Training %", fmt(m.bscTrainingPct)],
+        ["VOG Week", fmt(m.vog)],
+        ["VOG Count", fmt(m.vogResponses)],
+        ["Complaints", fmt(m.complaints)],
+        ["Calls /10k", fmt(m.callsPer10k)],
+        ["Rank", fmt(row.rank)],
+      ];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(scorecard), "Scorecard");
+      const tData = trendsQ.data?.stores?.[num];
+      if (tData) {
+        const maxLen = Math.max(...(Object.values(tData) as (number | null)[][]).map((s) => s?.length ?? 0));
+        const weekLabels = Array.from({ length: maxLen }, (_, i) => `Week -${maxLen - i}`);
+        const trendRows: unknown[][] = [["Metric", ...weekLabels]];
+        const seriesMap: Record<string, (number | null)[]> = {
+          "Sales": tData.sales ?? [], "% vs LY": tData.vsly ?? [], "COGS Eff %": tData.cogs ?? [],
+          "Labor %": tData.labor ?? [], "On Time %": tData.ontime ?? [], "Rank": tData.rank ?? [],
+        };
+        for (const [key, vals] of Object.entries(seriesMap)) trendRows.push([key, ...(vals).map(fmt)]);
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(trendRows), "Trends");
+      }
+      XLSX.writeFile(wb, `store-${num}-${run ? `P${run.period}W${run.week}` : "latest"}.xlsx`);
+    } finally {
+      setDlXlsx(false);
+    }
+  }
 
   const KPIS: { label: string; value: string; series?: (number | null)[]; lowerIsBetter?: boolean; deltaPts?: number | null; deltaTone?: "good" | "bad" | "warn" }[] = [
     { label: "Weekly Sales", value: fmtMoney(m.sales), series: t?.sales, deltaPts: null, deltaTone: salesDelta != null && salesDelta >= 0 ? "good" : "bad" },
@@ -212,8 +259,19 @@ export function RankingStoreView({ row, run }: { row: RankingResultRow; run?: Ra
 
       {/* KPI scorecard */}
       <div>
-        <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-          Full Scorecard{run ? ` — P${run.period}W${run.week}` : ""}
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+            Full Scorecard{run ? ` — P${run.period}W${run.week}` : ""}
+          </div>
+          <button
+            type="button"
+            disabled={dlXlsx}
+            onClick={downloadExcel}
+            className="flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50 hover:text-midnight disabled:opacity-40"
+          >
+            <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
+            {dlXlsx ? "…" : "Excel"}
+          </button>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {KPIS.map((k) => (
@@ -227,9 +285,14 @@ export function RankingStoreView({ row, run }: { row: RankingResultRow; run?: Ra
   );
 }
 
-// The GM's landing — their own store's dashboard for the current run.
-export function MyStoreView() {
-  const q = useQuery({ queryKey: ["ranking-mystore", "ptd"], queryFn: () => fetchRankingLatest("ptd" as RankScope, "store"), staleTime: 60_000 });
+// The GM's landing — their own store's dashboard. Accepts an optional runId
+// for historical week navigation; omitting it fetches the latest run.
+export function MyStoreView({ runId }: { runId?: string | null }) {
+  const q = useQuery({
+    queryKey: ["ranking-mystore", "ptd", runId ?? "latest"],
+    queryFn: () => fetchRankingLatest("ptd" as RankScope, "store", runId ?? undefined),
+    staleTime: 60_000,
+  });
   if (q.isLoading) return <Skeleton className="h-96 w-full" />;
   if (q.isError) return <EmptyState title="Couldn't load" description={(q.error as Error)?.message ?? "Try again."} />;
   const run = q.data?.run ?? null;
