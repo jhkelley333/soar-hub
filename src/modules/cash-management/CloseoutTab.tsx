@@ -28,7 +28,10 @@ export function CloseoutTab({
   const qc = useQueryClient();
   const toast = useToast();
   const { profile } = useAuth();
+  // Roles that can unlock any submitted closeout (regardless of who closed it).
+  // GMs can correct deposits but not closeout figures — that's DO+ only.
   const LEADER_ROLES = ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"];
+  const ACT_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
 
   const configQuery = useQuery({ queryKey: ["cash-config"], queryFn: fetchConfig, staleTime: 5 * 60_000 });
   const overviewQuery = useQuery({ queryKey: ["cash-overview", storeId], queryFn: () => fetchOverview(storeId) });
@@ -103,10 +106,13 @@ export function CloseoutTab({
   const [unlocked, setUnlocked] = useState(false);
   const [correctionReason, setCorrectionReason] = useState("");
   const isLeader = LEADER_ROLES.includes(profile?.role ?? "");
+  const isActLeader = ACT_ROLES.includes(profile?.role ?? "");
   const isSubmitter = !!existing?.submitted_by && existing.submitted_by === profile?.id;
   const verified = existing?.status === "verified";
   const locked = !isLate && !!existing;
-  const canUnlock = locked && (verified ? isLeader : (isSubmitter || isLeader));
+  // Verified days: only DO+ can unlock (GMs correct deposits, not closeout figures).
+  // Unverified days: the original closer, any leader (incl. GM), or DO+.
+  const canUnlock = locked && (verified ? isActLeader : (isSubmitter || isLeader));
   const isCorrecting = locked && unlocked;
   const showForm = !locked || unlocked;
 
@@ -343,8 +349,8 @@ export function CloseoutTab({
                 {canUnlock
                   ? " Unlock to correct an error — you'll add a reason and it's logged."
                   : verified
-                    ? " Verified days can only be corrected by a GM or higher."
-                    : " Only the closer or a GM/DO can correct this."}
+                    ? " Verified days can only be corrected by a DO or higher."
+                    : " Only the original closer or a DO can correct this."}
               </div>
             </div>
             {canUnlock && (
