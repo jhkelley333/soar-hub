@@ -107,12 +107,14 @@ export function CloseoutTab({
   const [correctionReason, setCorrectionReason] = useState("");
   const isLeader = LEADER_ROLES.includes(profile?.role ?? "");
   const isActLeader = ACT_ROLES.includes(profile?.role ?? "");
+  const isGmRole = profile?.role === "gm";
   const isSubmitter = !!existing?.submitted_by && existing.submitted_by === profile?.id;
   const verified = existing?.status === "verified";
   const locked = !isLate && !!existing;
-  // Verified days: only DO+ can unlock (GMs correct deposits, not closeout figures).
-  // Unverified days: the original closer, any leader (incl. GM), or DO+.
-  const canUnlock = locked && (verified ? isActLeader : (isSubmitter || isLeader));
+  // Verified days: only DO+ can unlock.
+  // Unverified/flagged days: the original closer, GM, or DO+ can unlock
+  // (GM needs to fix a shift manager's wrong figures to keep the deposit correct).
+  const canUnlock = locked && (verified ? isActLeader : (isSubmitter || isGmRole || isActLeader));
   const isCorrecting = locked && unlocked;
   const showForm = !locked || unlocked;
 
@@ -350,7 +352,7 @@ export function CloseoutTab({
                   ? " Unlock to correct an error — you'll add a reason and it's logged."
                   : verified
                     ? " Verified days can only be corrected by a DO or higher."
-                    : " Only the original closer or a DO can correct this."}
+                    : " Only the original closer, GM, or DO can correct this."}
               </div>
             </div>
             {canUnlock && (
