@@ -656,11 +656,15 @@ async function submitCloseout(supa, user, body) {
     const wasVerified = existing.status === "verified";
     const isLeader = ACT_ROLES.has(String(user.role));
     const isSubmitter = existing.submitted_by === user.id;
+    const isGm = String(user.role) === "gm";
     if (wasVerified && !isLeader) {
       return { error: "This day has been verified. A DO/SDO must unlock it to make a correction.", status: 403 };
     }
-    if (!wasVerified && !isSubmitter && !isLeader) {
-      return { error: "Only the original closer or a DO/SDO can correct this closeout.", status: 403 };
+    // Unverified/flagged: the original closer, the store GM, or DO+ can correct.
+    // GMs are store-responsible — they need to fix a shift manager's wrong figures
+    // to keep the deposit record accurate before the DO verifies.
+    if (!wasVerified && !isSubmitter && !isLeader && !isGm) {
+      return { error: "Only the original closer, the GM, or a DO/SDO can correct this closeout.", status: 403 };
     }
     correctionReason = String(body?.correction_reason || "").trim();
     if (correctionReason.length < 8) {
