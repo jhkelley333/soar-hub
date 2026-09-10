@@ -112,3 +112,1042 @@ import { WalkthroughPage } from "@/modules/walkthrough/WalkthroughPage";
 import { WalkthroughRunner } from "@/modules/walkthrough/WalkthroughRunner";
 import { MyWalksPage } from "@/modules/walkthrough/MyWalksPage";
 import { StoreGeofencesPage } from "@/modules/walkthrough/storegeo/StoreGeofencesPage";
+import { HoursOfOperationPage } from "@/modules/hours/HoursOfOperationPage";
+import { LocationHoursPage } from "@/modules/hours/LocationHoursPage";
+import { CloseTimeWatchPage } from "@/modules/close-compliance/CloseTimeWatchPage";
+import { GoogleReviewsPage } from "@/modules/google-reviews/GoogleReviewsPage";
+import { WalkthroughHubPage } from "@/modules/walkthrough/WalkthroughHubPage";
+import { ReviewDashboardPage } from "@/modules/walkthrough/review/ReviewDashboardPage";
+import { SubmissionDetailPage } from "@/modules/walkthrough/review/SubmissionDetailPage";
+import { AssignmentsPage as WalkthroughAssignmentsPage } from "@/modules/walkthrough/assign/AssignmentsPage";
+import { DirectoryPage } from "@/modules/directory/DirectoryPage";
+import { ChatLayout } from "@/modules/chat/ChatLayout";
+import { GroupInfoPage } from "@/modules/chat/GroupInfoPage";
+import { CoachingToolkitPage } from "@/modules/coaching/CoachingToolkitPage";
+import { ToolDetailPage } from "@/modules/coaching/ToolDetailPage";
+import { TeamPipelinePage } from "@/modules/team-pipeline/TeamPipelinePage";
+import { NlaTakePage } from "@/modules/nla/NlaTakePage";
+import { NlaComparePage } from "@/modules/nla/NlaComparePage";
+import { NlaAdminPage } from "@/modules/nla/NlaAdminPage";
+import { ManualSearchPage } from "@/modules/manuals/ManualSearchPage";
+import { ManualAdminPage } from "@/modules/manuals/ManualAdminPage";
+import { WeatherPage } from "@/modules/weather/WeatherPage";
+import { WeatherSyncPage } from "@/modules/weather/WeatherSyncPage";
+
+export const router = createBrowserRouter([
+  { path: "/login", element: <LoginPage /> },
+  { path: "/reset-password", element: <ResetPasswordPage /> },
+  { path: "/accept-invite", element: <AcceptInvitePage /> },
+  { path: "/paf/accept", element: <PafAcceptPage /> },
+  // Public anonymous vendor portal — opens directly from QR sticker.
+  // Token in the URL is the only credential; no login required.
+  { path: "/v/:token", element: <VendorPortalPage /> },
+  // Public shared Territory Map — token in the URL is the credential;
+  // scope resolves live to whatever the link's creator can see.
+  { path: "/map/:token", element: <SharedTerritoryMapPage /> },
+  // Public shared Labor sheet — per-RVP or company drill-down; read-only.
+  { path: "/labor/:token", element: <SharedLaborPage /> },
+  // Public ticket-submission page — anyone with the URL can search
+  // for a store and file a work order. Lives outside the auth tree.
+  { path: "/submit", element: <PublicSubmitPage /> },
+  // Public no-login QSR player — crew scan their store's QR, pick their
+  // name, and take courses. Token in the URL is the only credential.
+  { path: "/learn/:token", element: <PublicLearnPage /> },
+  // Store Command Center — the per-store desktop bookmark. Token in the URL,
+  // bound to the first device that opens it (store-portal.js enforces).
+  { path: "/s/:token", element: <StorePortalPage /> },
+  // Phone side of the Command Center photo handoff — signed short-lived
+  // token from the QR the store screen displays.
+  { path: "/p/:token", element: <PhoneUploadPage /> },
+  // Standing "stay logged in" link — token in the URL signs the bound user in
+  // on this device and keeps it logged in until the link is revoked.
+  { path: "/go/:token", element: <AccessLinkPage /> },
+  {
+    path: "/",
+    element: <RootRoute />,
+    children: [
+      { index: true, element: <DashboardPage /> },
+      { path: "work-orders", element: <WorkOrdersPage /> },
+      {
+        path: "paf",
+        element: (
+          <FlagOrRoleRoute roles={["do", "payroll", "admin"]} flagKey="paf_pilot">
+            <PafPage />
+          </FlagOrRoleRoute>
+        ),
+      },
+      {
+        path: "paf/queue",
+        element: (
+          <ProtectedRoute requireRoles={["payroll", "admin"]}>
+            <PafQueuePage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "employee-actions",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <EmployeeActionsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "schedule",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <SchedulePage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "operations",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
+            <OpsToolsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "site-audits",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
+            <SiteAuditPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "changeover",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ChangeoverListPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "changeover/:id",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ChangeoverDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "business-disruptions",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <BusinessDisruptionsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "labor",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <LaborPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/weather-sync",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <WeatherSyncPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/kpi",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <KpiDashboardPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/metrics-board",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "associate_manager", "first_assistant_manager", "shift_manager", "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <MetricsBoardPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/ranking",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
+            <RankingAdminPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Bottom performers by SDO (year trend) — SDO and above.
+        path: "admin/ranking/bottom-performers",
+        element: (
+          <ProtectedRoute requireRoles={["sdo", "rvp", "vp", "coo", "admin"]}>
+            <BottomPerformersPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/labor-v2",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <LaborV2Page />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/labor-v2/log",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <PullLogPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/user-activity",
+        element: (
+          <ProtectedRoute requireRoles={["admin", "coo", "vp"]}>
+            <UserActivityPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "myhub",
+        element: (
+          <ProtectedRoute>
+            <MyHubPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "labor-v2",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <LaborV2Entry />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "rvp-commitments",
+        element: (
+          <ProtectedRoute requireRoles={["rvp", "vp", "coo", "admin"]}>
+            <RvpCommitmentsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "period-commitments",
+        element: (
+          <ProtectedRoute requireRoles={["rvp", "vp", "coo", "admin"]}>
+            <PeriodCommitmentsPage />
+          </ProtectedRoute>
+        ),
+      },
+      { path: "contacts", element: <ContactsPage /> },
+      { path: "manuals", element: <ManualSearchPage /> },
+      {
+        path: "weather",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WeatherPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/manuals",
+        element: (
+          <ProtectedRoute requireRoles={["rvp", "vp", "coo", "admin"]}>
+            <ManualAdminPage />
+          </ProtectedRoute>
+        ),
+      },
+      { path: "chat", element: <ChatLayout /> },
+      { path: "chat/:threadId", element: <ChatLayout /> },
+      { path: "chat/:threadId/info", element: <GroupInfoPage /> },
+      {
+        path: "resources",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ResourcesPage />
+          </ProtectedRoute>
+        ),
+      },
+      { path: "account", element: <AccountPage /> },
+      { path: "my-stores", element: <MyStoresPage /> },
+      {
+        // Store Visit — mobile-first visit app for DO+ (District Ops and above).
+        path: "visit",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <StoreVisitPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Region rollup (mobile-first preview). Visible to DO+ — GMs
+        // only see one store and don't need a rollup. Placeholder
+        // scores; see src/modules/region/scoring.ts.
+        path: "region",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <RegionPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Approvals queue (mobile-first preview). Pulls real pending
+        // workspace sign-offs scoped to the caller via the existing
+        // listMySignoffs() function. Tier + score come from the real
+        // audit_outcome / audit_score_percent — no placeholders here.
+        // Not in the sidebar (preview convention); open via /approvals.
+        path: "approvals",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ApprovalsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Walkthrough (mobile-first preview). Hardcoded sample data —
+        // a "Weekly Walkthrough" template with 7 sections, currently
+        // on the Drive-thru section. Pass/Watch/Fail toggles + save-
+        // status pill all interact locally. Real form fills still live
+        // in /assignments/:id/fill (SubmissionFormPage). Preview-only
+        // route, no sidebar entry.
+        path: "walkthrough",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WalkthroughPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Walkthrough runner (mobile-first preview). The real GM in-field
+        // flow: GPS check-in gate → sectioned checklist → review. Offline-
+        // first (Dexie) — rate items, add photos, switch sections, refresh
+        // mid-walk with nothing lost. Mounts the SAMPLE_* fixture; the
+        // submit transaction + backend table are the next ticket, so Review
+        // renders Publish disabled. Open via /walkthrough/run.
+        path: "walkthrough/run",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WalkthroughRunner />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // GM "my walks" landing — assigned walks to start/continue + recent
+        // submissions. Mobile-first; same assignee roles as the runner.
+        path: "my-walks",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <MyWalksPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Live runner for a real assignment (drafts + photos sync; Publish
+        // calls the submit transaction). Get an id from the dev-seed action
+        // until the assignment UI lands.
+        path: "walkthrough/run/:assignmentId",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WalkthroughRunner />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Walkthroughs hub (DO+) — Review / Assignments / Templates as tabs,
+        // plus an admin-only Geofences tab. The standalone routes below still
+        // work for deep links (submission detail, builder edit, etc.).
+        path: "walkthroughs",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WalkthroughHubPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // DO walkthrough review + corrective-action tracker. RLS scopes to
+        // the caller's stores. DO and up.
+        path: "walkthrough-review",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ReviewDashboardPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "walkthrough-review/s/:id",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <SubmissionDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // DO assigns walkthroughs to GMs (template + store + assignee + due).
+        // RLS scopes inserts/reads to the caller's stores. DO and up.
+        path: "walkthrough-assignments",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WalkthroughAssignmentsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Store geofence backfill — admin-only resource (also a tab in the
+        // Walkthroughs hub for admins).
+        path: "admin/store-geofences",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <StoreGeofencesPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Hours of Operation — standard + special hours per location. SDO/RVP
+        // can reconcile their own stores (scoped server-side); org-wide roles
+        // see all.
+        path: "admin/hours-of-operation",
+        element: (
+          <ProtectedRoute requireRoles={["sdo", "rvp", "vp", "coo", "admin"]}>
+            <HoursOfOperationPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Google Reviews — ratings, worst locations, recent reviews (Places API).
+        path: "admin/google-reviews",
+        element: (
+          <ProtectedRoute requireRoles={["sdo", "rvp", "vp", "coo", "admin"]}>
+            <GoogleReviewsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Close-Time Watch — flags stores whose last clock-out was before their
+        // scheduled close (Hours of Operation). SDO/RVP scoped; org-wide see all.
+        path: "admin/close-time-watch",
+        element: (
+          <ProtectedRoute requireRoles={["sdo", "rvp", "vp", "coo", "admin"]}>
+            <CloseTimeWatchPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/hours-of-operation/:storeNumber",
+        element: (
+          <ProtectedRoute requireRoles={["sdo", "rvp", "vp", "coo", "admin"]}>
+            <LocationHoursPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Directory (mobile-first preview). Real org data via
+        // fetchMyTree() — RLS-scoped to the caller. Pinned section
+        // adapts to the caller's role; segmented control switches
+        // between District / Region / Above-store. Lives at /directory
+        // so it doesn't collide with the existing /contacts page
+        // (which is the admin-curated vendor + regional directory).
+        // Preview-only route, no sidebar entry.
+        path: "directory",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <DirectoryPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "team",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <TeamPage />
+          </ProtectedRoute>
+        ),
+      },
+      { path: "cfm-expiring", element: <CfmExpiringPage /> },
+      {
+        // Coaching for Performance Tool Kit — a reference card chooser for
+        // hourly managers and above. Home chooser + per-tool detail routes.
+        path: "coaching",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <CoachingToolkitPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "coaching/:toolId",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ToolDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Team Pipeline (Talent Planning) — GM and up. Scoped to the viewer's
+        // own org tree in-app (a GM sees only their store). Pilot flag removed.
+        path: "team-pipeline",
+        element: (
+          <FlagOrRoleRoute roles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <TeamPipelinePage />
+          </FlagOrRoleRoute>
+        ),
+      },
+      // Next Level Assessment. The list now lives in the Training hub's
+      // Assessments tab; detail routes stay standalone. The nla function
+      // enforces per-assessment access.
+      { path: "nla", element: <Navigate to="/training?tab=assessments" replace /> },
+      {
+        path: "admin/store-portal",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <StorePortalAdminPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Live admin view of one store's Command Center screen.
+        path: "admin/store-portal/:storeId",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <StorePortalLivePage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/nla-templates",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <NlaAdminPage />
+          </ProtectedRoute>
+        ),
+      },
+      { path: "nla/:id", element: <NlaTakePage /> },
+      { path: "nla/:id/compare", element: <NlaComparePage /> },
+      {
+        path: "admin/system-settings",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <SystemSettingsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/org",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <OrgPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/bulk-import",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <BulkImportPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/bulk-org-import",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <BulkOrgImportPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/cultural-index-import",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <CulturalIndexImportPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "cancun",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <CancunPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "culture-index",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <CultureIndexPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "culture-index/playbook",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <DoPlaybookPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "culture-index/overview",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <ExecOverviewPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/ranker-backfill",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <RankerBackfillPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/labor-settings",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <LaborSettingsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/acquisitions",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <AcquisitionsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/acquisitions/:id",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <AcquisitionDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/org-alignment",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <OrgAlignmentPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/bulk-attributes",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <BulkAttributesPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/gm-roster",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <GmRosterPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/access-links",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <AccessLinksPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/feature-flags",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <FeatureFlagsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/reports",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <ReportsAdminPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/definitions",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <DefinitionsAdminPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/role-access",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <RoleAccessPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/region-access",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <RegionAccessPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // SOAR QSR Learning Platform — admin-only during the build.
+        path: "qsr",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <QsrHomePage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Training hub — the single home for training: My Training, Team
+        // Training, and Assessments as tabs, plus the QR-codes launcher.
+        // Open to every signed-in user; tabs gate themselves by role/flag.
+        path: "training",
+        element: <TrainingHubPage />,
+      },
+      // Old entry points redirect into the hub (deep links + the login
+      // required-training prompt keep working).
+      { path: "my-training", element: <Navigate to="/training" replace /> },
+      {
+        // The course player is open to any signed-in user (it's training
+        // content; the server only serves published courses and tracks
+        // per-user progress). Home / Builder / Manager stay admin-only.
+        path: "qsr/course/:courseId",
+        element: <LessonPlayer />,
+      },
+      {
+        path: "qsr/builder",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <BuilderCoursesPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "qsr/builder/:courseId",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <CourseEditorPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "qsr/manage",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "associate_manager", "first_assistant_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
+            <ManagerDashboardPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "qsr/share",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "associate_manager", "first_assistant_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <SharePage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/paf-config",
+        element: (
+          <ProtectedRoute requireRoles={["payroll", "admin"]}>
+            <PafConfigPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Walkthrough template builder — DO+ author the checklists GMs run.
+        // Direct-to-Supabase writes (walkthrough_templates RLS allows DO+).
+        path: "admin/walkthrough-templates",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <TemplatesListPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/walkthrough-templates/new",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WalkthroughBuilderPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/walkthrough-templates/:id",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WalkthroughBuilderPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/work-orders-v2",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WorkOrdersV2Route />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Cash Management — night-close → next-day deposit cycle. Store
+        // leaders run closeouts/deposits; DO+ act on alerts (enforced in
+        // cash-management.js). Rolled out by role now (pilot flag retired).
+        path: "admin/cash-management",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin", "accounting"]}>
+            <CashManagementRoute />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "ranker",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
+            <RankerPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Cross-brand executive map. Authenticated route; the page itself gates
+        // on company_access > 1 (and the backend enforces it too), so a normal
+        // user who reaches the URL is redirected home.
+        path: "coo-map",
+        element: (
+          <ProtectedRoute>
+            <CooMapPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "territory-map",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
+            <TerritoryMapPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "pl",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc", "accounting"]}>
+            <PlPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "count",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc", "accounting"]}>
+            <CountPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "workspaces",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <WorkspacesPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "workspaces/:id",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <WorkspaceDetail />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "workspaces/:wsId/templates/:tplId",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <TemplateDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "assignments",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <AssignmentsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "assignments/:id",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <AssignmentDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "assignments/:id/fill",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <SubmissionFormPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "submissions/:id",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <SubmissionViewerPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "signoffs",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <SignoffQueuePage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "caps",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <MyCapsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "caps/:id",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <CapDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "reno-scoping",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <RenoScopingPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "reno-scoping/new",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <NewScopePage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "reno-scoping/:id",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ScopeDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // QR Codes — dynamic QR generator, reached from the Operations Tools
+        // hub. GM and above; the backend re-checks role on every write.
+        path: "qr-codes",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <QrCodesPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // New Store Opening planner — interactive 3-week NSO plan builder,
+        // reached from the Operations Tools hub. DO and above (opening owners).
+        path: "nso",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
+            <NsoPlannerPage />
+          </ProtectedRoute>
+        ),
+      },
+    ],
+  },
+  { path: "*", element: <Navigate to="/" replace /> },
+]);
+
+// RootRoute decides what fills the "/" slot:
+//   • loading auth         → LaunchSplash (boot)
+//   • no session + path /  → LaunchSplash landing variant (Sign in CTA
+//                             + descriptor; firewall-friendly)
+//   • no session + sub-path → bounce to /login like ProtectedRoute did
+//   • session              → AppShell, which renders the child Outlet
+function RootRoute() {
+  const { session, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return <LaunchSplash subline="Starting up…" />;
+  }
+
+  if (!session) {
+    if (location.pathname === "/") return <LaunchSplash showSignIn />;
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  return <AppShell />;
+}
+
+// FlagOrRoleRoute — pilot-friendly route guard. Lets a user in if their
+// role matches OR if the named feature flag resolves to ON for them.
+// Used to widen access to specific testers (per-user allowlist on the
+// flag) without changing the role rule. Profile-load failure is handled
+// the same way as ProtectedRoute(requireRoles).
+function FlagOrRoleRoute({
+  roles,
+  flagKey,
+  children,
+}: {
+  roles: UserRole[];
+  flagKey?: string;
+  children: ReactNode;
+}) {
+  const { session, profile, loading } = useAuth();
+  const flagOn = useFlag(flagKey ?? "");
+  const { overrides, isLoaded } = useOverrides();
+  const location = useLocation();
+
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+        Loading...
+      </div>
+    );
+  }
+  if (!session) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+  if (!profile) {
+    return <Navigate to="/" replace />;
+  }
+  const role = profile.role;
+  const staticOk = roles.includes(role) || flagOn;
+  const moduleKey = moduleKeyForPath(location.pathname);
+  const ov = isLoaded && moduleKey ? overrides[moduleKey]?.[role] : undefined;
+  const allowed = role === "admin" || (ov !== undefined ? ov : staticOk);
+  if (allowed) {
+    return <>{children}</>;
+  }
+  return <Navigate to="/" replace />;
+}
