@@ -13,7 +13,7 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { cn } from "@/lib/cn";
 import { fiscalWeekLabel } from "@/lib/fiscal";
-import { fetchInit, downloadRankerCsv } from "./api";
+import { fetchInit, downloadRankerCsv, downloadStoreExcel } from "./api";
 import { money } from "./format";
 import { PortfolioView } from "./PortfolioView";
 import { StoreView } from "./StoreView";
@@ -32,6 +32,7 @@ const TABS: { id: Tab; label: string }[] = [
 
 export function RankerPage() {
   const [downloading, setDownloading] = useState(false);
+  const [downloadingXlsx, setDownloadingXlsx] = useState(false);
   const [scopeFilter, setScopeFilter] = useState<"all" | "mine">("all");
 
   const init = useQuery({
@@ -214,7 +215,7 @@ export function RankerPage() {
                 }}
                 className="h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               >
-                {init.data.allStores.map((s) => (
+                {(scopeFilter === "all" ? (init.data.companyStores ?? init.data.allStores) : init.data.allStores).map((s) => (
                   <option key={s} value={s}>
                     Store {s}
                   </option>
@@ -246,7 +247,7 @@ export function RankerPage() {
                 onChange={(e) => setStoreA(e.target.value)}
                 className="h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               >
-                {init.data.allStores.map((s) => (
+                {(scopeFilter === "all" ? (init.data.companyStores ?? init.data.allStores) : init.data.allStores).map((s) => (
                   <option key={s} value={s}>
                     Store {s}
                   </option>
@@ -259,7 +260,7 @@ export function RankerPage() {
                 onChange={(e) => setStoreB(e.target.value)}
                 className="h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               >
-                {init.data.allStores.map((s) => (
+                {(scopeFilter === "all" ? (init.data.companyStores ?? init.data.allStores) : init.data.allStores).map((s) => (
                   <option key={s} value={s}>
                     Store {s}
                   </option>
@@ -286,19 +287,35 @@ export function RankerPage() {
           >
             <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
           </button>
-          <button
-            type="button"
-            disabled={!week || downloading}
-            onClick={async () => {
-              setDownloading(true);
-              try { await downloadRankerCsv(week, scopeFilter); } finally { setDownloading(false); }
-            }}
-            className="ml-1 flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50 hover:text-midnight disabled:opacity-40"
-            aria-label="Download CSV"
-          >
-            <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
-            {downloading ? "…" : "CSV"}
-          </button>
+          {tab === "store" ? (
+            <button
+              type="button"
+              disabled={!week || !store || downloadingXlsx}
+              onClick={async () => {
+                setDownloadingXlsx(true);
+                try { await downloadStoreExcel({ week, store, peerStore: peerStore || undefined }); } finally { setDownloadingXlsx(false); }
+              }}
+              className="ml-1 flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50 hover:text-midnight disabled:opacity-40"
+              aria-label="Download Excel"
+            >
+              <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
+              {downloadingXlsx ? "…" : "Excel"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={!week || downloading}
+              onClick={async () => {
+                setDownloading(true);
+                try { await downloadRankerCsv(week, scopeFilter); } finally { setDownloading(false); }
+              }}
+              className="ml-1 flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50 hover:text-midnight disabled:opacity-40"
+              aria-label="Download CSV"
+            >
+              <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
+              {downloading ? "…" : "CSV"}
+            </button>
+          )}
         </div>
       </Card>
 
