@@ -780,6 +780,7 @@ async function buildPafRowFromBody(supa, user, body) {
   // Demotion when an SDO+ submitter marks it not applicable.
   const driveInWaived =
     submitCategory === "New Hire (Salary Leader)" ||
+    submitCategory === "Promotion (Salary Leader)" ||
     submitCategory === PAY_ADJ_SALARY ||
     (submitCategory === "Demotion" &&
       DRIVEIN_OVERRIDE_ROLES.has(user.role) &&
@@ -859,6 +860,9 @@ async function buildPafRowFromBody(supa, user, body) {
     }
     crossClockedOther = ans === "yes";
     if (crossClockedOther) {
+      if (!sanitizeText(body?.job_position, 100)) {
+        return { error: '"Position Title" is required when the team member clocked in at the other store.', status: 400 };
+      }
       if (!sanitizeText(body?.store_chrged_ot, 20)) {
         return { error: '"Store Charged OT" is required when the team member clocked in at the other store.', status: 400 };
       }
@@ -867,6 +871,18 @@ async function buildPafRowFromBody(supa, user, body) {
       }
       if (!(num(body?.reg_pay_rate) > 0)) {
         return { error: '"Pay Rate" is required for the cross-store charge.', status: 400 };
+      }
+    }
+  }
+
+  if (category === "Backpay" && String(body?.backpay_type ?? "").toLowerCase() === "partial") {
+    for (const [field, label] of [
+      ["backpay_paid_reg", "Regular pay already paid"],
+      ["backpay_paid_cc_tips", "CC tips already paid"],
+      ["backpay_paid_declared_tips", "Declared tips already paid"],
+    ]) {
+      if (body?.[field] === "" || body?.[field] == null) {
+        return { error: `"${label}" is required for partial back pay.`, status: 400 };
       }
     }
   }
@@ -972,6 +988,7 @@ async function buildPafRowFromBody(supa, user, body) {
     nh_area: sanitizeText(body?.nh_area, 200) || null,
     nh_stores: sanitizeText(body?.nh_stores, 2000) || null,
     nh_offer_letter_path: sanitizeText(body?.nh_offer_letter_path, 500) || null,
+    nh_locations: sanitizeText(body?.nh_locations, 1000) || null,
 
     // Bonus (sub-fields branch on bonus_type)
     bonus_type: sanitizeText(body?.bonus_type, 100) || null,
@@ -991,6 +1008,8 @@ async function buildPafRowFromBody(supa, user, body) {
     pa_new_salary: paNewSalary,
     pa_start_date: paStartDate,
 
+    pos_pay_difference: body?.pos_pay_difference === "" || body?.pos_pay_difference == null ? null : num(body?.pos_pay_difference),
+
     status: "Pending",
   };
 
@@ -1001,8 +1020,6 @@ async function buildPafRowFromBody(supa, user, body) {
   // Tips don't apply to a cross-store charge, so zero them. reg_hours/ot_hours
   // carry the submitted hours. Zeros, not nulls: these columns are NOT NULL.
   if (crossClockedOther === true) {
-    insertRow.cc_tips = 0;
-    insertRow.declared_tips = 0;
     const rate = num(insertRow.reg_pay_rate);
     const regHrs = num(insertRow.reg_hours);
     const otHrs = num(insertRow.ot_hours);
