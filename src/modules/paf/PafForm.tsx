@@ -58,8 +58,8 @@ function visibleSections(category: string, bonusType: string, crossClockedOther 
     out.add("term");
     return out;
   }
-  if (c === NEW_HIRE_LEADER) {
-    // Notes only from config; the custom salary-leader block renders the rest.
+  if (c === NEW_HIRE_LEADER || c === PROMOTION_LEADER) {
+    // Notes only from config; the custom block renders the rest.
     return out;
   }
   if (c === PAY_ADJ_SALARY) {
@@ -101,6 +101,8 @@ const DRIVEIN_OVERRIDE_ROLES = new Set(["sdo", "rvp", "vp", "coo", "payroll", "a
 // New, code-driven category (its fields are custom-rendered, not config).
 const NEW_HIRE_LEADER = "New Hire (Salary Leader)";
 const NH_ROLES = ["GM", "DO", "SDO"];
+// Promotion mirrors the New Hire (Salary Leader) setup — same fields, different category label.
+const PROMOTION_LEADER = "Promotion (Salary Leader)";
 // Pay Adjustment (Salary) — SDO/RVP+ submit; VP approves. Also code-driven.
 const PAY_ADJ_SALARY = "Pay Adjustment (Salary)";
 const PAY_ADJ_ROLES = ["GM", "DO", "SDO", "RVP"];
@@ -282,6 +284,8 @@ function pafRowToFormState(p: PafRow): FormState {
     nh_area: s(p.nh_area),
     nh_stores: s(p.nh_stores),
     nh_offer_letter_path: s(p.nh_offer_letter_path),
+    nh_locations: s(p.nh_locations),
+    pos_pay_difference: n(p.pos_pay_difference),
     pa_role: s(p.pa_role),
     pa_new_salary: n(p.pa_new_salary),
     pa_start_date: s(p.pa_start_date),
@@ -292,10 +296,10 @@ function pafRowToFormState(p: PafRow): FormState {
 //   - reg_pay_rate hides when pay_basis === Salary
 //   - new_location hides when location_change !== Yes
 function isFieldVisibleForState(fieldKey: string, state: FormState): boolean {
-  // New Hire (Salary Leader) has its own custom section that collects
-  // identity + pay-period details, so suppress every standard field
+  // New Hire / Promotion (Salary Leader) have their own custom section that
+  // collects identity + pay-period details, so suppress every standard field
   // except the category picker to avoid duplicate data entry.
-  if (state.category === NEW_HIRE_LEADER) {
+  if (state.category === NEW_HIRE_LEADER || state.category === PROMOTION_LEADER) {
     return fieldKey === "category";
   }
   // Pay Adjustment (Salary): same treatment — the custom block collects
@@ -533,7 +537,7 @@ export function PafForm({
   const primaryMismatch = !!(primaryStore && homeStoreNum && String(primaryStore.number) !== homeStoreNum);
   // Verify only when an actual home store was entered (the Salary-Leader new
   // hire uses its own multi-store picker, not the home-store field).
-  const needsHomeVerify = homeStoreNum !== "" && state.category !== NEW_HIRE_LEADER;
+  const needsHomeVerify = homeStoreNum !== "" && state.category !== NEW_HIRE_LEADER && state.category !== PROMOTION_LEADER;
   // Any change to the entered home store clears a prior verification.
   useEffect(() => { setHomeVerified(false); }, [homeStoreNum]);
 
@@ -634,14 +638,14 @@ export function PafForm({
       return;
     }
 
-    if (state.category === NEW_HIRE_LEADER) {
+    if (state.category === NEW_HIRE_LEADER || state.category === PROMOTION_LEADER) {
       // This category's fields are custom-rendered, so validate them
       // directly (bypassing the config-field loop, which would otherwise
       // enforce unrelated fields like the standard store picker).
       const req: Array<[string, string]> = [
         ["nh_role", "Role"],
         ["employee_name", "Employee name"],
-        ["nh_start_date", "Start date"],
+        ["nh_start_date", state.category === PROMOTION_LEADER ? "Effective date" : "Start date"],
         ["pay_period_end", "Pay period end"],
         ["nh_hours_last_period", "Hours worked last pay period"],
       ];
@@ -671,7 +675,8 @@ export function PafForm({
         setError('Select an area, or check "No market yet".');
         return;
       }
-      if (String(state.nh_offer_letter_path ?? "").trim() === "") {
+      // Offer letter is required for New Hire, optional for Promotion.
+      if (state.category === NEW_HIRE_LEADER && String(state.nh_offer_letter_path ?? "").trim() === "") {
         setError("Attach the offer letter before submitting.");
         return;
       }
@@ -725,6 +730,10 @@ export function PafForm({
         return;
       }
       if (state.cross_clocked_other === "yes") {
+        if (String(state.job_position ?? "").trim() === "") {
+          setError('"Position Title" is required.');
+          return;
+        }
         if (String(state.store_chrged_ot ?? "").trim() === "") {
           setError('"Store Charged OT" is required when the team member clocked in at the other store.');
           return;
@@ -748,6 +757,19 @@ export function PafForm({
       return;
     }
 
+    if (state.category === "Backpay" && state.backpay_type === "partial") {
+      for (const [k, lbl] of [
+        ["backpay_paid_reg", "Regular pay already paid"],
+        ["backpay_paid_cc_tips", "CC tips already paid"],
+        ["backpay_paid_declared_tips", "Declared tips already paid"],
+      ] as [string, string][]) {
+        if (String(state[k] ?? "").trim() === "") {
+          setError(`"${lbl}" is required for partial back pay.`);
+          return;
+        }
+      }
+    }
+
     // Map UI's "Hourly" / "Salary" radio to the lowercase value the
     // backend expects.
     const payload: FormState = { ...state };
@@ -756,7 +778,7 @@ export function PafForm({
     // Snapshot the New Hire market/area + its stores for the record. The
     // form tracks the selection by id; resolve to names + store numbers so
     // the PAF carries a permanent record independent of the viewer's scope.
-    if (state.category === NEW_HIRE_LEADER && state.nh_no_market !== "yes") {
+    if ((state.category === NEW_HIRE_LEADER || state.category === PROMOTION_LEADER) && state.nh_no_market !== "yes") {
       if (state.nh_role === "DO") {
         payload.nh_market = nhDistricts.find((d) => d.id === state.nh_district_id)?.name ?? "";
         payload.nh_stores = nhSelectedStores.map((s) => s.number).join(", ");
@@ -896,13 +918,6 @@ export function PafForm({
                   type="button"
                   onClick={() => {
                     patch("cross_clocked_other", val);
-                    if (val === "yes") {
-                      // Tips don't apply to a cross-store charge — clear them.
-                      // Regular hours, OT hours, and rate are entered in the
-                      // cross-store charge section below and drive the charge.
-                      patch("cc_tips", "");
-                      patch("declared_tips", "");
-                    }
                   }}
                   className={`rounded-md px-3 py-1.5 text-sm font-semibold ring-1 ring-inset transition ${
                     state.cross_clocked_other === val
@@ -937,56 +952,84 @@ export function PafForm({
       {state.category === "Cross Store Work" && state.cross_clocked_other === "yes" && (
         <FormSection
           title="Cross store hours & charge"
-          description="Enter the hours worked and pay rate. Put hours under Regular or Overtime (or both) — Regular charges at the rate, Overtime at 1.5×."
+          description="Enter the hours worked, pay rate, and any tips. Put hours under Regular or Overtime (or both) — Regular charges at the rate, Overtime at 1.5×."
         >
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="w-32">
-              <NhField label="Reg Hours">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <NhField label="Position Title *">
+              <input
+                value={state.job_position ?? ""}
+                onChange={(e) => patch("job_position", e.target.value)}
+                placeholder="e.g. Carhop"
+                className={NH_INPUT}
+              />
+            </NhField>
+            <NhField label="Reg Hours">
+              <input
+                inputMode="decimal"
+                value={state.reg_hours ?? ""}
+                onChange={(e) => patch("reg_hours", e.target.value.replace(/[^0-9.]/g, ""))}
+                placeholder="0"
+                className={NH_INPUT}
+              />
+            </NhField>
+            <NhField label="OT Hours">
+              <input
+                inputMode="decimal"
+                value={state.ot_hours ?? ""}
+                onChange={(e) => patch("ot_hours", e.target.value.replace(/[^0-9.]/g, ""))}
+                placeholder="0"
+                className={NH_INPUT}
+              />
+            </NhField>
+            <NhField label="Pay Rate">
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">$</span>
                 <input
                   inputMode="decimal"
-                  value={state.reg_hours ?? ""}
-                  onChange={(e) => patch("reg_hours", e.target.value.replace(/[^0-9.]/g, ""))}
-                  placeholder="0"
-                  className={NH_INPUT}
+                  value={state.reg_pay_rate ?? ""}
+                  onChange={(e) => patch("reg_pay_rate", e.target.value.replace(/[^0-9.]/g, ""))}
+                  placeholder="0.00"
+                  className={`${NH_INPUT} pl-6`}
                 />
-              </NhField>
-            </div>
-            <div className="w-32">
-              <NhField label="OT Hours">
+              </div>
+            </NhField>
+          </div>
+          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <NhField label="CC Tips">
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">$</span>
                 <input
                   inputMode="decimal"
-                  value={state.ot_hours ?? ""}
-                  onChange={(e) => patch("ot_hours", e.target.value.replace(/[^0-9.]/g, ""))}
-                  placeholder="0"
-                  className={NH_INPUT}
+                  value={state.cc_tips ?? ""}
+                  onChange={(e) => patch("cc_tips", e.target.value.replace(/[^0-9.]/g, ""))}
+                  placeholder="0.00"
+                  className={`${NH_INPUT} pl-6`}
                 />
-              </NhField>
-            </div>
-            <div className="w-40">
-              <NhField label="Pay Rate">
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">$</span>
-                  <input
-                    inputMode="decimal"
-                    value={state.reg_pay_rate ?? ""}
-                    onChange={(e) => patch("reg_pay_rate", e.target.value.replace(/[^0-9.]/g, ""))}
-                    placeholder="0.00"
-                    className={`${NH_INPUT} pl-6`}
-                  />
-                </div>
-              </NhField>
-            </div>
-            <div className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-200">
-              Amount to charge{String(state.store_chrged_ot ?? "").trim() ? <> store #{state.store_chrged_ot}</> : null}:{" "}
-              <strong>{formatUSD(
-                Number(state.reg_hours || 0) * Number(state.reg_pay_rate || 0) +
-                Number(state.ot_hours || 0) * Number(state.reg_pay_rate || 0) * 1.5,
-              )}</strong>
-              <span className="ml-1 text-emerald-700/70">
-                ({Number(state.reg_hours || 0)} reg × ${Number(state.reg_pay_rate || 0).toFixed(2)}
-                {" + "}{Number(state.ot_hours || 0)} OT × ${Number(state.reg_pay_rate || 0).toFixed(2)} × 1.5)
-              </span>
-            </div>
+              </div>
+            </NhField>
+            <NhField label="Declared (DT) Tips">
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">$</span>
+                <input
+                  inputMode="decimal"
+                  value={state.declared_tips ?? ""}
+                  onChange={(e) => patch("declared_tips", e.target.value.replace(/[^0-9.]/g, ""))}
+                  placeholder="0.00"
+                  className={`${NH_INPUT} pl-6`}
+                />
+              </div>
+            </NhField>
+          </div>
+          <div className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-200">
+            Amount to charge{String(state.store_chrged_ot ?? "").trim() ? <> store #{state.store_chrged_ot}</> : null}:{" "}
+            <strong>{formatUSD(
+              Number(state.reg_hours || 0) * Number(state.reg_pay_rate || 0) +
+              Number(state.ot_hours || 0) * Number(state.reg_pay_rate || 0) * 1.5,
+            )}</strong>
+            <span className="ml-1 text-emerald-700/70">
+              ({Number(state.reg_hours || 0)} reg × ${Number(state.reg_pay_rate || 0).toFixed(2)}
+              {" + "}{Number(state.ot_hours || 0)} OT × ${Number(state.reg_pay_rate || 0).toFixed(2)} × 1.5)
+            </span>
           </div>
         </FormSection>
       )}
@@ -1007,6 +1050,27 @@ export function PafForm({
             />
           </FormSection>
         ))}
+
+      {/* POS Adjustment — pay difference */}
+      {state.category === "POS Adjustment" && (
+        <FormSection title="POS Pay Difference">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <NhField label="Pay Difference">
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">$</span>
+                <input
+                  inputMode="decimal"
+                  value={state.pos_pay_difference ?? ""}
+                  onChange={(e) => patch("pos_pay_difference", e.target.value.replace(/[^0-9.]/g, ""))}
+                  placeholder="0.00"
+                  className={`${NH_INPUT} pl-6`}
+                />
+              </div>
+              <p className="mt-1 text-[11px] text-zinc-500">Difference between POS total and what was actually paid.</p>
+            </NhField>
+          </div>
+        </FormSection>
+      )}
 
       {/* Termination off-boarding attestation — must be checked to submit. */}
       {needsTermAck && (
@@ -1062,9 +1126,9 @@ export function PafForm({
                 </p>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   {([
-                    ["backpay_paid_reg", "Regular pay already paid"],
-                    ["backpay_paid_cc_tips", "CC tips already paid"],
-                    ["backpay_paid_declared_tips", "Declared tips already paid"],
+                    ["backpay_paid_reg", "Regular pay already paid *"],
+                    ["backpay_paid_cc_tips", "CC tips already paid *"],
+                    ["backpay_paid_declared_tips", "Declared tips already paid *"],
                   ] as [string, string][]).map(([k, label]) => (
                     <NhField key={k} label={label}>
                       <div className="relative">
@@ -1346,6 +1410,19 @@ export function PafForm({
           )}
           <div className="mt-4">
             <label className="mb-1 block text-sm font-medium text-zinc-700">
+              Locations <span className="font-normal text-zinc-400">(optional)</span>
+            </label>
+            <textarea
+              rows={2}
+              value={state.nh_locations ?? ""}
+              onChange={(e) => patch("nh_locations", e.target.value)}
+              placeholder="e.g. #1234, #5678 — stores this hire will be assigned to"
+              className={`${NH_INPUT} resize-y`}
+            />
+            <p className="mt-1 text-[11px] text-zinc-500">Store numbers for ADP entry — reference for payroll.</p>
+          </div>
+          <div className="mt-4">
+            <label className="mb-1 block text-sm font-medium text-zinc-700">
               Offer letter <span className="text-red-600">*</span>
             </label>
             <div className="flex flex-wrap items-center gap-3">
@@ -1368,6 +1445,202 @@ export function PafForm({
               )}
             </div>
             <p className="mt-1 text-[11px] text-zinc-500">PDF, JPG, or PNG — up to 10 MB.</p>
+          </div>
+        </FormSection>
+      )}
+
+      {state.category === PROMOTION_LEADER && (
+        <FormSection
+          title="Promotion — Salary Leader"
+          description="Role, identity, and pay-period details for a promoted salary leader."
+        >
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <NhField label={`${cfgLabel("nh_role", "Promote to")} *`}>
+              <select
+                value={state.nh_role ?? ""}
+                onChange={(e) => patch("nh_role", e.target.value)}
+                className={NH_INPUT}
+              >
+                <option value="">Select role…</option>
+                {NH_ROLES.map((r) => (
+                  <option key={r}>{r}</option>
+                ))}
+              </select>
+            </NhField>
+
+            <NhField label="Employee name *">
+              <input
+                value={state.employee_name ?? ""}
+                onChange={(e) => patch("employee_name", e.target.value)}
+                className={NH_INPUT}
+                placeholder="Full name"
+              />
+            </NhField>
+
+            <NhField label="Last 4 SSN *">
+              <input
+                value={state.last4_ssn ?? ""}
+                onChange={(e) => patch("last4_ssn", e.target.value.replace(/\D/g, "").slice(0, 4))}
+                inputMode="numeric"
+                maxLength={4}
+                className={NH_INPUT}
+                placeholder="1234"
+              />
+            </NhField>
+
+            <NhField label={`${cfgLabel("nh_start_date", "Effective date")} *`}>
+              <input
+                type="date"
+                value={state.nh_start_date ?? ""}
+                onChange={(e) => patch("nh_start_date", e.target.value)}
+                className={NH_INPUT}
+              />
+            </NhField>
+
+            <NhField label={`${cfgLabel("nh_hours_last_period", "Hours worked last pay period")} *`}>
+              <input
+                type="number"
+                min="0"
+                step="0.25"
+                value={state.nh_hours_last_period ?? ""}
+                onChange={(e) => patch("nh_hours_last_period", e.target.value)}
+                className={NH_INPUT}
+                placeholder="e.g. 80"
+              />
+            </NhField>
+
+            <NhField label="Pay period end *">
+              <input
+                type="date"
+                value={state.pay_period_end ?? ""}
+                onChange={(e) => patch("pay_period_end", e.target.value)}
+                className={NH_INPUT}
+              />
+            </NhField>
+
+            {state.nh_role === "GM" && (
+              <NhField label={`${cfgLabel("nh_home_store", "Home store")} *`}>
+                <select
+                  value={state.nh_home_store ?? ""}
+                  onChange={(e) => patch("nh_home_store", e.target.value)}
+                  className={NH_INPUT}
+                >
+                  <option value="">Select store…</option>
+                  {myStores.map((s) => (
+                    <option key={s.id} value={String(s.number)}>
+                      {s.number}{s.name ? ` — ${s.name}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </NhField>
+            )}
+          </div>
+
+          {(state.nh_role === "DO" || state.nh_role === "SDO") && (
+            <div className="mt-4 space-y-3">
+              <label className="flex items-center gap-2 text-sm text-zinc-700">
+                <input
+                  type="checkbox"
+                  checked={state.nh_no_market === "yes"}
+                  onChange={(e) => patch("nh_no_market", e.target.checked ? "yes" : "")}
+                  className="h-4 w-4 rounded border-zinc-300 text-accent focus:ring-accent"
+                />
+                No market yet (plus-one / in training)
+              </label>
+
+              {state.nh_no_market !== "yes" && (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {state.nh_role === "DO" ? (
+                    <NhField label="Market (district) *">
+                      <select
+                        value={state.nh_district_id ?? ""}
+                        onChange={(e) => patch("nh_district_id", e.target.value)}
+                        className={NH_INPUT}
+                      >
+                        <option value="">Select market…</option>
+                        {nhDistricts.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.name}
+                          </option>
+                        ))}
+                      </select>
+                    </NhField>
+                  ) : (
+                    <NhField label="Area *">
+                      <select
+                        value={state.nh_area_id ?? ""}
+                        onChange={(e) => patch("nh_area_id", e.target.value)}
+                        className={NH_INPUT}
+                      >
+                        <option value="">Select area…</option>
+                        {nhAreas.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
+                          </option>
+                        ))}
+                      </select>
+                    </NhField>
+                  )}
+                </div>
+              )}
+
+              {state.nh_no_market !== "yes" && nhSelectedStores.length > 0 && (
+                <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                  <p className="mb-1 text-xs font-medium text-zinc-600">
+                    Stores in this {state.nh_role === "DO" ? "market" : "area"} (
+                    {nhSelectedStores.length})
+                  </p>
+                  <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-zinc-700">
+                    {nhSelectedStores.map((s) => (
+                      <li key={s.id}>
+                        #{s.number}
+                        {s.name ? ` — ${s.name}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="mt-4">
+            <label className="mb-1 block text-sm font-medium text-zinc-700">
+              Locations <span className="font-normal text-zinc-400">(optional)</span>
+            </label>
+            <textarea
+              rows={2}
+              value={state.nh_locations ?? ""}
+              onChange={(e) => patch("nh_locations", e.target.value)}
+              placeholder="e.g. #1234, #5678 — stores this employee will be assigned to"
+              className={`${NH_INPUT} resize-y`}
+            />
+            <p className="mt-1 text-[11px] text-zinc-500">Store numbers for ADP entry — reference for payroll.</p>
+          </div>
+
+          <div className="mt-4">
+            <label className="mb-1 block text-sm font-medium text-zinc-700">
+              Supporting file <span className="font-normal text-zinc-400">(optional)</span>
+            </label>
+            <div className="flex flex-wrap items-center gap-3">
+              <label
+                className={`inline-flex cursor-pointer items-center rounded-md px-3 py-2 text-sm ring-1 ring-inset ring-zinc-200 ${
+                  offerUploading ? "bg-zinc-100 text-zinc-400" : "bg-white text-zinc-700 hover:bg-zinc-50"
+                }`}
+              >
+                <input
+                  type="file"
+                  accept=".pdf,image/jpeg,image/png,application/pdf"
+                  onChange={handleOfferPick}
+                  disabled={offerUploading}
+                  className="hidden"
+                />
+                {offerUploading ? "Uploading…" : state.nh_offer_letter_path ? "Replace file" : "Attach file"}
+              </label>
+              {state.nh_offer_letter_path && offerName && (
+                <span className="text-sm text-zinc-600">{offerName}</span>
+              )}
+            </div>
+            <p className="mt-1 text-[11px] text-zinc-500">Promotion approval, justification, etc. — PDF, JPG, or PNG, up to 10 MB.</p>
           </div>
         </FormSection>
       )}
@@ -1657,6 +1930,7 @@ function FieldRender({
         options={[
           ...lists.categories.filter((c) => !omitCategories.includes(c)),
           ...(lists.categories.includes(NEW_HIRE_LEADER) ? [] : [NEW_HIRE_LEADER]),
+          ...(lists.categories.includes(PROMOTION_LEADER) ? [] : [PROMOTION_LEADER]),
           ...extraCategories.filter((c) => !lists.categories.includes(c)),
         ]}
         placeholder={cfg.placeholder || "Select..."}
