@@ -376,6 +376,7 @@ export function PafForm({
   // before submitting. Resets whenever the store changes.
   const [homeVerified, setHomeVerified] = useState(false);
   const [termAck, setTermAck] = useState(false);
+  const [ptoNotSickAck, setPtoNotSickAck] = useState(false);
   const [offerUploading, setOfferUploading] = useState(false);
 
   async function handleOfferPick(e: React.ChangeEvent<HTMLInputElement>) {
@@ -544,7 +545,8 @@ export function PafForm({
   // Termination requires the submitter to confirm they removed the employee
   // from every system before the PAF can go through.
   const needsTermAck = state.category === "Termination";
-  useEffect(() => { setTermAck(false); }, [state.category]);
+  const needsPtoAck = state.category === "PTO";
+  useEffect(() => { setTermAck(false); setPtoNotSickAck(false); }, [state.category]);
 
   const submit = useMutation({
     mutationFn: (input: PafSubmitInput) =>
@@ -632,6 +634,12 @@ export function PafForm({
       return;
     }
 
+    // PTO: the submitter must confirm this is not for sick pay.
+    if (needsPtoAck && !ptoNotSickAck) {
+      setError("Please confirm this PTO is not for sick pay before submitting.");
+      return;
+    }
+
     // Termination: the submitter must confirm the off-boarding steps.
     if (needsTermAck && !termAck) {
       setError("Please confirm the termination off-boarding steps before submitting.");
@@ -673,6 +681,10 @@ export function PafForm({
         String(state.nh_area_id ?? "").trim() === ""
       ) {
         setError('Select an area, or check "No market yet".');
+        return;
+      }
+      if ((state.nh_role === "DO" || state.nh_role === "SDO") && String(state.nh_locations ?? "").trim() === "") {
+        setError('"Locations" is required for a DO or SDO — enter the store numbers.');
         return;
       }
       // Offer letter is required for New Hire, optional for Promotion.
@@ -1410,7 +1422,7 @@ export function PafForm({
           )}
           <div className="mt-4">
             <label className="mb-1 block text-sm font-medium text-zinc-700">
-              Locations <span className="font-normal text-zinc-400">(optional)</span>
+              Locations{(state.nh_role === "DO" || state.nh_role === "SDO") ? <> <span className="text-red-600">*</span></> : <> <span className="font-normal text-zinc-400">(optional)</span></>}
             </label>
             <textarea
               rows={2}
@@ -1605,7 +1617,7 @@ export function PafForm({
 
           <div className="mt-4">
             <label className="mb-1 block text-sm font-medium text-zinc-700">
-              Locations <span className="font-normal text-zinc-400">(optional)</span>
+              Locations{(state.nh_role === "DO" || state.nh_role === "SDO") ? <> <span className="text-red-600">*</span></> : <> <span className="font-normal text-zinc-400">(optional)</span></>}
             </label>
             <textarea
               rows={2}
@@ -1642,6 +1654,31 @@ export function PafForm({
             </div>
             <p className="mt-1 text-[11px] text-zinc-500">Promotion approval, justification, etc. — PDF, JPG, or PNG, up to 10 MB.</p>
           </div>
+        </FormSection>
+      )}
+
+      {/* PTO — not for sick pay confirmation */}
+      {needsPtoAck && (
+        <FormSection title="PTO confirmation">
+          <div className="mb-2 rounded-md bg-amber-50 px-3 py-2.5 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
+            <strong>This section is for PTO (Paid Time Off) only.</strong> If this time is due to illness, use the{" "}
+            <strong>Illness</strong> category instead — do not submit sick pay as PTO.
+          </div>
+          <label
+            className={`flex cursor-pointer items-start gap-3 rounded-lg p-3 text-sm ring-1 ring-inset transition ${
+              ptoNotSickAck ? "bg-emerald-50 text-emerald-900 ring-emerald-200" : "bg-amber-50 text-amber-900 ring-amber-200"
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={ptoNotSickAck}
+              onChange={(e) => setPtoNotSickAck(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0"
+            />
+            <span>
+              I confirm this PAF is for <b>PTO</b>, not sick pay. <span className="text-red-600">*</span>
+            </span>
+          </label>
         </FormSection>
       )}
 
@@ -1693,7 +1730,7 @@ export function PafForm({
                     {error}
                   </Badge>
                 )}
-                <Button type="submit" disabled={submit.isPending || (needsHomeVerify && !homeVerified) || (needsTermAck && !termAck)}>
+                <Button type="submit" disabled={submit.isPending || (needsHomeVerify && !homeVerified) || (needsTermAck && !termAck) || (needsPtoAck && !ptoNotSickAck)}>
                   {submit.isPending
                     ? isEdit
                       ? "Resubmitting…"
@@ -1725,7 +1762,7 @@ export function PafForm({
           </div>
           <Button
             type="submit"
-            disabled={submit.isPending || (needsHomeVerify && !homeVerified) || (needsTermAck && !termAck)}
+            disabled={submit.isPending || (needsHomeVerify && !homeVerified) || (needsTermAck && !termAck) || (needsPtoAck && !ptoNotSickAck)}
             className="h-11 px-5 text-sm"
           >
             {submit.isPending
