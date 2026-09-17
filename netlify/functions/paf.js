@@ -875,6 +875,13 @@ async function buildPafRowFromBody(supa, user, body) {
     }
   }
 
+  if (category === "New Hire (Salary Leader)" || category === "Promotion (Salary Leader)") {
+    const nhRole = sanitizeText(body?.nh_role, 20);
+    if ((nhRole === "DO" || nhRole === "SDO") && !sanitizeText(body?.nh_locations, 1000)) {
+      return { error: '"Locations" is required for a DO or SDO hire.', status: 400 };
+    }
+  }
+
   if (category === "Backpay" && String(body?.backpay_type ?? "").toLowerCase() === "partial") {
     for (const [field, label] of [
       ["backpay_paid_reg", "Regular pay already paid"],
