@@ -65,7 +65,7 @@ async function overview(supa) {
     supa.from("count_daily").select("*", { count: "exact", head: true }),
     supa.from("kpi_snapshots").select("central_date").order("central_date", { ascending: true }).limit(1),
     supa.from("kpi_snapshots").select("central_date").order("central_date", { ascending: false }).limit(1),
-    supa.from("kpi_snapshots").select("*", { count: "exact", head: true }),
+    supa.from("kpi_snapshots").select("*", { count: "estimated", head: true }),
     supa.from("stores").select("number", { count: "exact" }).eq("is_active", true).or("brand.eq.sonic,brand.is.null"),
     supa.from("kpi_pull_log").select("id,created_at,source,ok,business_date,store_rows,wtd_rows,kpi_snapshot,duration_ms,error").order("created_at", { ascending: false }).limit(50),
     supa.from("labor_v2_daily").select("business_date,store_number").gte("business_date", thirtyAgoStr),
