@@ -82,6 +82,7 @@ const GROUPS: Group[] = [
   {
     title: "Data & Imports",
     tools: [
+      { title: "Data Health", desc: "KPI pipeline coverage — stream dates, missing stores per day, pull log.", icon: Activity, roles: ["payroll", "accounting", "rvp", "vp", "coo", "admin"], to: "/admin/data-health" },
       { title: "Labor Rollup", desc: "Labor v2 rollup and weekly snapshots.", icon: Gauge, roles: ["admin"], to: "/admin/labor-v2" },
       { title: "Pull Log", desc: "KPI / labor feed pull history.", icon: ScrollText, roles: ["admin"], to: "/admin/labor-v2/log" },
       { title: "Bulk Attributes", desc: "Bulk-edit store attributes.", icon: Layers, roles: ["admin"], to: "/admin/bulk-attributes" },
