@@ -133,6 +133,7 @@ import { ManualSearchPage } from "@/modules/manuals/ManualSearchPage";
 import { ManualAdminPage } from "@/modules/manuals/ManualAdminPage";
 import { WeatherPage } from "@/modules/weather/WeatherPage";
 import { WeatherSyncPage } from "@/modules/weather/WeatherSyncPage";
+import { DataHealthPage } from "@/modules/data-health/DataHealthPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -253,6 +254,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <WeatherSyncPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/data-health",
+        element: (
+          <ProtectedRoute requireRoles={["admin", "payroll", "accounting", "rvp", "vp", "coo"]}>
+            <DataHealthPage />
           </ProtectedRoute>
         ),
       },
