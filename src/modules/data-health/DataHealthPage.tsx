@@ -4,7 +4,10 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, CheckCircle2, RefreshCw, XCircle, AlertTriangle, Database, ExternalLink } from "lucide-react";
+import {
+  Activity, CheckCircle2, RefreshCw, XCircle, AlertTriangle,
+  Database, ExternalLink, X, ChevronDown, ChevronRight,
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
@@ -16,7 +19,146 @@ import {
   fetchCoverageDetail,
   type OverviewResponse,
   type CoverageDetailResponse,
+  type DataStream,
 } from "./api";
+
+// ── Static field catalog for the Raw Snapshots panel ──────────────────────
+// Transcribed from docs/kpi-feed-fields.md — every field the Skunkworks
+// feed exposes. "persisted" = written to a permanent table today.
+interface FieldGroup {
+  title: string;
+  fields: { name: string; persisted?: boolean; note?: string }[];
+}
+
+const FIELD_GROUPS: FieldGroup[] = [
+  {
+    title: "Sales & Traffic",
+    fields: [
+      { name: "netSales", persisted: true },
+      { name: "grossSales" },
+      { name: "subTotal" },
+      { name: "tax" },
+      { name: "previousYearNetSales", persisted: true },
+      { name: "yoYNetSales" },
+      { name: "yoYNetSalesPercentage" },
+      { name: "tickets", persisted: true },
+      { name: "previousYearTickets" },
+      { name: "yoYTickets" },
+      { name: "yoYTrafficPercentage" },
+      { name: "averageTicketAmount" },
+      { name: "averageUnitVolume" },
+    ],
+  },
+  {
+    title: "Labor",
+    fields: [
+      { name: "laborPercentage", persisted: true },
+      { name: "laborCost", persisted: true },
+      { name: "laborHours", persisted: true },
+      { name: "regularLaborCost", persisted: true },
+      { name: "overTimeLaborCost", persisted: true },
+      { name: "regularHours", persisted: true },
+      { name: "overTimeHours", persisted: true },
+      { name: "splh", persisted: true },
+      { name: "targetLaborPercentage", persisted: true },
+      { name: "varianceTargetValue", persisted: true },
+      { name: "scheduledLaborHours", persisted: true },
+      { name: "actualVsScheduledHours", persisted: true },
+      { name: "carhopHours" },
+      { name: "firstClockIn" },
+      { name: "lastClockOut" },
+    ],
+  },
+  {
+    title: "Service Speed / On-Time",
+    fields: [
+      { name: "onTimePercentage", persisted: true },
+      { name: "onTimePercentageNumerator", persisted: true },
+      { name: "onTimePercentageDenominator", persisted: true },
+      { name: "onTimeQuantity", persisted: true },
+      { name: "averageTicketTime" },
+      { name: "totalTicketTime" },
+    ],
+  },
+  {
+    title: "Count / Food Cost",
+    fields: [
+      { name: "dailyScore", persisted: true, note: "→ count_daily" },
+      { name: "completionScore", persisted: true, note: "→ count_daily" },
+      { name: "accuracyScore", persisted: true, note: "→ count_daily" },
+      { name: "dailyCountDollarVariance", persisted: true, note: "→ count_daily" },
+      { name: "totalIntelliCost" },
+      { name: "totalIntellliCostPercentage", note: "feed typo" },
+      { name: "itemEfficiency" },
+      { name: "doh" },
+      { name: "excessDollars" },
+    ],
+  },
+  {
+    title: "Voids / Refunds / Cash",
+    fields: [
+      { name: "voidTotal", persisted: true },
+      { name: "voidQuantity", persisted: true },
+      { name: "voidPercentage" },
+      { name: "refunds" },
+      { name: "refundsTotal" },
+      { name: "errorCorrect" },
+      { name: "cashOverShort" },
+      { name: "paidOutDollars" },
+      { name: "deposit1" },
+      { name: "deposit2" },
+    ],
+  },
+  {
+    title: "Dayparts",
+    fields: [
+      { name: "netSalesDayparts", note: "Breakfast / Lunch / Afternoon / Dinner / Evening" },
+      { name: "ticketsDayparts" },
+      { name: "averageTicketAmountDayparts" },
+      { name: "yoyNetSalesDaypartsPercentage" },
+      { name: "yoyTicketsDaypartsPercentage" },
+    ],
+  },
+  {
+    title: "Channels & Discounts",
+    fields: [
+      { name: "orderAheadNetSales" },
+      { name: "orderAheadPercentage" },
+      { name: "deliveryNetSales" },
+      { name: "deliveryPercentage" },
+      { name: "discountTotal" },
+      { name: "discountPercentage" },
+      { name: "discountQuantity" },
+    ],
+  },
+  {
+    title: "Guest Feedback",
+    fields: [
+      { name: "complaints", note: "null in most samples" },
+      { name: "complaintsPer10k", note: "null in most samples" },
+      { name: "likelyToReturnAvg", note: "null in most samples" },
+      { name: "likelyToReturnPercentage", note: "null in most samples" },
+    ],
+  },
+  {
+    title: "Identity / Hierarchy",
+    fields: [
+      { name: "storeName" },
+      { name: "districtName" },
+      { name: "regionName" },
+      { name: "companyName" },
+      { name: "storeTenantBaseId" },
+      { name: "storesCount" },
+      { name: "startDate" },
+      { name: "endDate" },
+    ],
+  },
+];
+
+const persistedCount = FIELD_GROUPS.flatMap((g) => g.fields).filter((f) => f.persisted).length;
+const totalCount = FIELD_GROUPS.flatMap((g) => g.fields).length;
+
+// ──────────────────────────────────────────────────────────────────────────
 
 const fmt = (d: string | null) =>
   d
@@ -42,6 +184,7 @@ function coverageTextColor(pct: number): string {
 
 export function DataHealthPage() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [snapshotOpen, setSnapshotOpen] = useState(false);
 
   const overviewQ = useQuery({
     queryKey: ["data-health-overview"],
@@ -99,26 +242,11 @@ export function DataHealthPage() {
             </h2>
             <div className="grid gap-4 sm:grid-cols-3">
               {ov.streams.map((s) => (
-                <Card key={s.name}>
-                  <CardBody className="p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">{s.label}</div>
-                    <div className="mt-1 text-sm font-medium text-midnight dark:text-night-ink">{s.description}</div>
-                    <div className="mt-3 space-y-1 text-xs text-zinc-500">
-                      <div className="flex justify-between">
-                        <span>Capturing since</span>
-                        <span className="font-medium text-midnight dark:text-night-ink">{fmt(s.first_date)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Latest data</span>
-                        <span className="font-medium text-midnight dark:text-night-ink">{fmt(s.last_date)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Total rows</span>
-                        <span className="font-medium text-midnight dark:text-night-ink">{s.total_rows.toLocaleString()}</span>
-                      </div>
-                    </div>
-                  </CardBody>
-                </Card>
+                <StreamCard
+                  key={s.name}
+                  stream={s}
+                  onViewFields={s.name === "kpi_snapshots" ? () => setSnapshotOpen(true) : undefined}
+                />
               ))}
             </div>
           </section>
@@ -247,9 +375,159 @@ export function DataHealthPage() {
           </section>
         </div>
       ) : null}
+
+      {/* ── Snapshot field catalog slide-over ── */}
+      {snapshotOpen && <SnapshotFieldsPanel onClose={() => setSnapshotOpen(false)} />}
     </>
   );
 }
+
+// ── StreamCard ──────────────────────────────────────────────────────────────
+
+function StreamCard({ stream, onViewFields }: { stream: DataStream; onViewFields?: () => void }) {
+  return (
+    <Card className={cn(onViewFields && "cursor-pointer hover:shadow-md transition-shadow")} onClick={onViewFields}>
+      <CardBody className="p-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">{stream.label}</div>
+        <div className="mt-1 text-sm font-medium text-midnight dark:text-night-ink">{stream.description}</div>
+        {onViewFields && (
+          <div className="mt-2 flex items-center gap-1 text-[11px] font-medium text-accent-600">
+            <ChevronRight className="h-3 w-3" />
+            View captured fields
+          </div>
+        )}
+        <div className="mt-3 space-y-1 text-xs text-zinc-500">
+          <div className="flex justify-between">
+            <span>Capturing since</span>
+            <span className="font-medium text-midnight dark:text-night-ink">{fmt(stream.first_date)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Latest data</span>
+            <span className="font-medium text-midnight dark:text-night-ink">{fmt(stream.last_date)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Total rows</span>
+            <span className="font-medium text-midnight dark:text-night-ink">{stream.total_rows.toLocaleString()}</span>
+          </div>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+// ── SnapshotFieldsPanel ─────────────────────────────────────────────────────
+
+function SnapshotFieldsPanel({ onClose }: { onClose: () => void }) {
+  const [openGroups, setOpenGroups] = useState<Set<string>>(
+    new Set(FIELD_GROUPS.map((g) => g.title)),
+  );
+
+  const toggle = (title: string) =>
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title);
+      else next.add(title);
+      return next;
+    });
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
+      <div
+        className="relative flex h-full w-full max-w-xl flex-col overflow-hidden bg-white shadow-2xl dark:bg-zinc-900"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-700">
+          <div>
+            <h2 className="text-base font-semibold text-midnight dark:text-night-ink">Raw Snapshots — Captured Fields</h2>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              Every Expressway field saved each capture hour (7 AM–2 PM CT).
+              <span className="ml-1 text-emerald-600 font-medium">{persistedCount} persisted</span>
+              {" "}to permanent tables · {totalCount - persistedCount} captured-only (recoverable via backfill).
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="ml-4 mt-0.5 shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Legend */}
+        <div className="flex items-center gap-4 border-b border-zinc-100 px-5 py-2.5 text-[11px] dark:border-zinc-800">
+          <div className="flex items-center gap-1.5">
+            <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+            <span className="text-zinc-500">Persisted to table (labor_v2_daily / count_daily)</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="inline-block h-2 w-2 rounded-full bg-zinc-300" />
+            <span className="text-zinc-500">Captured in snapshot only</span>
+          </div>
+        </div>
+
+        {/* Field groups */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
+          {FIELD_GROUPS.map((group) => {
+            const isOpen = openGroups.has(group.title);
+            const persistedInGroup = group.fields.filter((f) => f.persisted).length;
+            return (
+              <div key={group.title} className="rounded-lg border border-zinc-200 dark:border-zinc-700">
+                <button
+                  className="flex w-full items-center justify-between px-4 py-2.5 text-left"
+                  onClick={() => toggle(group.title)}
+                >
+                  <div className="flex items-center gap-2">
+                    {isOpen
+                      ? <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
+                      : <ChevronRight className="h-3.5 w-3.5 text-zinc-400" />}
+                    <span className="text-sm font-medium text-midnight dark:text-night-ink">{group.title}</span>
+                  </div>
+                  <span className="text-[11px] text-zinc-400">
+                    {group.fields.length} fields
+                    {persistedInGroup > 0 && (
+                      <span className="ml-1 text-emerald-600">· {persistedInGroup} persisted</span>
+                    )}
+                  </span>
+                </button>
+                {isOpen && (
+                  <div className="border-t border-zinc-100 px-4 pb-3 pt-2 dark:border-zinc-800">
+                    <div className="flex flex-wrap gap-x-3 gap-y-1.5">
+                      {group.fields.map((f) => (
+                        <div key={f.name} className="flex items-center gap-1">
+                          <span className={cn(
+                            "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
+                            f.persisted ? "bg-emerald-500" : "bg-zinc-300",
+                          )} />
+                          <span className={cn(
+                            "font-mono text-[11px]",
+                            f.persisted ? "text-midnight dark:text-night-ink font-medium" : "text-zinc-500",
+                          )}>
+                            {f.name}
+                          </span>
+                          {f.note && (
+                            <span className="text-[10px] text-zinc-400">({f.note})</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer note */}
+        <div className="border-t border-zinc-200 px-5 py-3 text-[11px] text-zinc-400 dark:border-zinc-700">
+          Captured-only fields are never deleted and can be backfilled into permanent tables on demand.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── DetailPanel ─────────────────────────────────────────────────────────────
 
 function DetailPanel({ detail }: { detail: CoverageDetailResponse }) {
   const coveragePct = detail.total_stores > 0 ? detail.present_count / detail.total_stores : 0;
@@ -284,12 +562,12 @@ function DetailPanel({ detail }: { detail: CoverageDetailResponse }) {
                 {detail.missing.map((s) => (
                   <div key={s.number} className="flex items-center justify-between text-xs">
                     <span className="font-medium text-midnight dark:text-night-ink">#{s.number}</span>
-                    <span className="text-zinc-500 truncate ml-2">{s.name ?? "—"}</span>
+                    <span className="ml-2 truncate text-zinc-500">{s.name ?? "—"}</span>
                   </div>
                 ))}
               </div>
             )}
-            <p className="mt-3 text-[10px] text-zinc-400 italic">
+            <p className="mt-3 text-[10px] italic text-zinc-400">
               Phase 2: manual data correction for missing stores will be added here.
             </p>
           </CardBody>
