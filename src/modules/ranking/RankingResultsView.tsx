@@ -350,6 +350,19 @@ export function RankingResultsView({ viewScope = "own" }: { viewScope?: ViewScop
   });
   const run = q.data?.run ?? null;
 
+  // Always fetch the company roll-up so we can show a totals row at the
+  // bottom of every tier. Only enabled for org-wide roles and skipped when
+  // the user is already on the Company tab (the row would duplicate).
+  const companyQ = useQuery({
+    queryKey: ["ranking-week", scope, "company", selectedWeek?.key ?? "latest", viewScope],
+    queryFn: () =>
+      !selectedWeek ? fetchRankingLatest(scope, "company", null, viewScope)
+        : fetchRankingLatest(scope, "company", selectedWeek.run_id, viewScope),
+    enabled: isOrgWide && effectiveTier !== "company" && !isLegacy,
+    staleTime: 60_000,
+  });
+  const companyRow = companyQ.data?.rows?.[0] ?? null;
+
   const canOlder = weeks.length > 0 && weekIdx < weeks.length - 1;
   const canNewer = weekIdx > 0;
 
@@ -419,12 +432,26 @@ export function RankingResultsView({ viewScope = "own" }: { viewScope?: ViewScop
       }
       return row;
     });
+    // Append a company totals row if we have one and aren't on the company tab.
+    if (companyRow && effectiveTier !== "company") {
+      const sepRow: Record<string, unknown> = {};
+      headers.forEach((h) => { sepRow[h] = ""; });
+      csvRows.push(sepRow);
+      const totRow: Record<string, unknown> = {};
+      for (const s of spec) {
+        if (s.header === "Store #") totRow[s.header] = "COMPANY";
+        else if (s.col === null) totRow[s.header] = "SOAR QSR";
+        else if (s.col.key === "gm") totRow[s.header] = String(companyRow.metrics.name ?? "SOAR QSR");
+        else totRow[s.header] = csvValue(companyRow, s.col);
+      }
+      csvRows.push(totRow);
+    }
     const tierLabel = (TIER_TABS.find((t) => t.id === effectiveTier)?.label ?? effectiveTier).toLowerCase().replace(/\s+/g, "-");
     downloadCSV(
       `soar-ranking-P${run.period}W${run.week}-${scope}-${tierLabel}.csv`,
       toCSV(headers, csvRows),
     );
-    toast.push(`Downloaded P${run.period}W${run.week} · ${scope.toUpperCase()} · ${tierLabel} (${allRows.length} rows).`, "success");
+    toast.push(`Downloaded P${run.period}W${run.week} · ${scope.toUpperCase()} · ${tierLabel} (${allRows.length} rows + company totals).`, "success");
   }
 
   // Full formatted .xlsx workbook — every tier, both scopes, styled like the
@@ -796,6 +823,37 @@ export function RankingResultsView({ viewScope = "own" }: { viewScope?: ViewScop
                   </Fragment>
                 );
               })}
+              {/* Company totals row — pinned at the bottom for org-wide roles */}
+              {companyRow && effectiveTier !== "company" && (
+                <tr className="border-t-2 border-zinc-400 bg-midnight text-white">
+                  {cols.map((c, i) => {
+                    const left = stickyLeft[i];
+                    const isSticky = left != null;
+                    const stickyCls = isSticky
+                      ? cn("sticky z-10 bg-midnight", i === lastIdIdx && "border-r border-zinc-600")
+                      : "";
+                    const style = isSticky ? { left, minWidth: idw(c.key) } : undefined;
+                    if (c.key === "__store") {
+                      return (
+                        <td key={i} style={style} className={cn("whitespace-nowrap px-2.5 py-2.5 text-left", stickyCls)}>
+                          <span className="text-sm font-bold">TOTAL</span>
+                          <div className="text-[10px] text-zinc-400">SOAR QSR</div>
+                        </td>
+                      );
+                    }
+                    if (c.key === "gm") {
+                      return <td key={i} style={style} className={cn("whitespace-nowrap px-2.5 py-2.5 text-left text-xs font-semibold text-zinc-300", stickyCls)}>{String(companyRow.metrics.name ?? "SOAR QSR")}</td>;
+                    }
+                    if (c.key === "name") {
+                      return <td key={i} style={style} className={cn("whitespace-nowrap px-2.5 py-2.5 text-left text-sm font-bold", stickyCls)}>SOAR QSR</td>;
+                    }
+                    if (c.kind === "text") {
+                      return <td key={i} style={style} className={cn("whitespace-nowrap px-2.5 py-2.5 text-left text-xs text-zinc-400", stickyCls)}>{String(companyRow.metrics[c.key] ?? "—")}</td>;
+                    }
+                    return <td key={i} style={style} className={cn("whitespace-nowrap px-2.5 py-2.5 text-right", stickyCls)}><Cell v={cellValue(companyRow, c)} kind={c.kind} /></td>;
+                  })}
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
