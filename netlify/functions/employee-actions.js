@@ -1002,7 +1002,7 @@ function buildPtoFields(body) {
 //   GM       → Submitted        (DO approves, then SDO/RVP)
 //   DO       → DO Approved      (skips DO tier; SDO/RVP approves)
 //   SDO/RVP+ → SDO/RVP Approved (skips both tiers; a DO files the PAF next)
-function ptoWorkflowFields(user) {
+function ptoWorkflowFields(user, { shortNotice = false } = {}) {
   const now = new Date().toISOString();
   const isApprover = user.role === "sdo" || user.role === "rvp" || user.role === "admin";
   if (isApprover) {
@@ -1023,6 +1023,17 @@ function ptoWorkflowFields(user) {
       do_approved_at: now,
       do_approved_by_id: user.id,
       do_note: "Auto — submitter is DO or above",
+    };
+  }
+  // Short-notice GM request: skip the DO step and send directly to the
+  // SDO/RVP queue — the warning on the form already says "Needs SDO or RVP
+  // approval", so route it there without requiring the DO to act first.
+  if (shortNotice) {
+    return {
+      status: "DO Approved",
+      do_approved_at: now,
+      do_approved_by_id: null,
+      do_note: "Auto-advanced — short notice (< 30 days); needs SDO/RVP approval.",
     };
   }
   return { status: "Submitted", do_approved_at: null, do_approved_by_id: null, do_note: null };
@@ -1130,7 +1141,7 @@ async function submitPto(supa, user, body) {
     ...built.fields,
     over_quota: quota.over,
     short_notice: shortNotice.short,
-    ...ptoWorkflowFields(user),
+    ...ptoWorkflowFields(user, { shortNotice: shortNotice.short }),
   };
 
   let { data: created, error } = await insertPtoRow(supa, insertRow);
@@ -1199,7 +1210,7 @@ async function updatePto(supa, user, body) {
     ...built.fields,
     over_quota: quota.over,
     short_notice: shortNotice.short,
-    ...ptoWorkflowFields(user),
+    ...ptoWorkflowFields(user, { shortNotice: shortNotice.short }),
     approved_at: null,
     approved_by_id: null,
     approved_by_email: null,
@@ -1258,7 +1269,7 @@ const AUDIT_TYPE = {
 // The action a given role can take on a request at its current status, or
 // null. Covers approvals ("decide") and the post-approval confirmations.
 //   training: Submitted→decide (DO within bank / RVP over bank) → Completed
-//   pto:      Submitted→decide(DO) "DO Approved"→decide(SDO/RVP) "SDO/RVP Approved"→paf-submitted(DO) "PAF Submitted"→close(DO)
+//   pto:      Submitted→decide(DO or SDO/RVP) "DO Approved"→decide(SDO/RVP) "SDO/RVP Approved"→paf-submitted(DO) "PAF Submitted"→close(DO)
 function actionableStep(type, status, role, isOwner = false, overBank = false) {
   const isApprover = role === "sdo" || role === "rvp" || role === "admin";
   const isDo = role === "do" || role === "admin";
@@ -1274,9 +1285,10 @@ function actionableStep(type, status, role, isOwner = false, overBank = false) {
     }
     return null;
   }
-  // pto. The DO step is a DO's job for others, but a senior owner clears it on
-  // their own request too (so an SDO/RVP can self-serve from the first step).
-  if (status === "Submitted") return isDo || (isOwner && isApprover) ? "decide" : null;
+  // pto. SDO/RVP can act on "Submitted" PTO directly — this lets them cover
+  // when the DO is out, and handles short-notice requests that need SDO/RVP
+  // approval regardless of the DO tier.
+  if (status === "Submitted") return isDo || isApprover ? "decide" : null;
   if (status === "DO Approved") return isApprover ? "decide" : null;
   if (status === "SDO/RVP Approved") return canOps ? "paf-submitted" : null;
   if (status === "PAF Submitted") return canOps ? "close" : null;
@@ -1456,7 +1468,47 @@ async function decide(supa, user, body) {
   }
 
   // pto
+  const isApproverRole = user.role === "sdo" || user.role === "rvp" || user.role === "admin";
   if (existing.status === "Submitted") {
+    if (isApproverRole) {
+      // SDO/RVP acting directly on a Submitted request (DO covering / short-notice) →
+      // skip the DO tier entirely and land at SDO/RVP Approved in one step.
+      if (existing.over_quota && user.role !== "rvp" && user.role !== "admin") {
+        return {
+          error: "This request is over the one-week-per-quarter allowance — final approval must come from the RVP.",
+          status: 403,
+        };
+      }
+      const err = await transition(
+        {
+          status: "SDO/RVP Approved",
+          do_approved_at: nowIso,
+          do_approved_by_id: user.id,
+          do_note: `Auto — approved directly by ${user.role.toUpperCase()} (${note || "no note"})`,
+          approved_at: nowIso,
+          approved_by_id: user.id,
+          approved_by_email: user.email,
+          decision_note: note || null,
+        },
+        existing.status
+      );
+      if (err) return err;
+      await logAudit(supa, {
+        request_type: AUDIT_TYPE.pto,
+        request_id: id,
+        actor_id: user.id,
+        actor_email: user.email,
+        action: "approve",
+        detail: { note: note || null, skipped_do: true },
+      });
+      await sendEmailViaResend({
+        to: existing.submitter_email,
+        subject: `PTO approved — ${employeeName} (Store ${existing.store_number})`,
+        text: `${displayName(user)} approved the PTO request.\n\nView it here: ${link}`,
+      });
+      return { ok: true, status: "SDO/RVP Approved" };
+    }
+
     // DO step → moves to the SDO/RVP queue.
     const err = await transition(
       {
