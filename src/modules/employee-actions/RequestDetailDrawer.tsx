@@ -41,7 +41,11 @@ function availableAction(
     if (status === "Submitted") return rankOf(role) >= (overBank ? ROLE_RANK.rvp : ROLE_RANK.do) ? "decide" : null;
     return null;
   }
-  if (status === "Submitted") return isDo || (isOwner && isApprover) ? "decide" : null;
+  // PTO "Submitted": the DO approves first normally, but an SDO/RVP can act on
+  // it directly to cover when the DO is out or for short-notice requests — this
+  // MUST mirror the server's actionableStep (isDo || isApprover), or the queue
+  // offers Approve while this drawer hides it.
+  if (status === "Submitted") return isDo || isApprover ? "decide" : null;
   if (status === "DO Approved") return isApprover ? "decide" : null;
   if (status === "SDO/RVP Approved") return canOps ? "paf-submitted" : null;
   if (status === "PAF Submitted") return canOps ? "close" : null;
