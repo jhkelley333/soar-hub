@@ -107,7 +107,11 @@ export function NewTicketModal({ open, onClose, pagePath }: { open: boolean; onC
           ) : (
             <label className={cn("inline-flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 hover:border-accent hover:text-accent", uploading && "opacity-50")}>
               <ImagePlus className="h-4 w-4" /> Add a photo
-              <input type="file" accept="image/*" capture="environment" className="hidden"
+              {/* No `capture` attr: forcing capture="environment" opened the camera
+                  directly on mobile and hid the photo library — reporters couldn't
+                  attach an existing screenshot. Omitting it lets the OS offer
+                  Photo Library / Files / Camera. */}
+              <input type="file" accept="image/*" className="hidden"
                 onChange={(e) => onPhoto(e.target.files?.[0] ?? null)} disabled={uploading} />
             </label>
           )}
