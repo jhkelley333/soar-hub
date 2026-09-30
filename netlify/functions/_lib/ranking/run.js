@@ -476,6 +476,16 @@ export async function runRankingNow(supa, user, opts = {}) {
   if (ixMissing) {
     issues.push({ level: "warn", msg: `${ixMissing} store(s) not in the IX file — they default to 96.0% efficiency (the sheet's missing-IX rule).` });
   }
+  // $ Over Goal (IX excess $) is summed up the org. The sum skips blank stores
+  // (engine sumSkip) so one gap no longer blanks the whole leader's total — it
+  // makes it PARTIAL instead. Name the stores that are in the IX file (have an
+  // Ending $) but carry no excess-$, so a partial total isn't read as complete.
+  const overGoalGap = (b) => isNum(b?.endingDollars) && !isNum(b?.dollarsOverGoal);
+  const overGoalGaps = stores.filter((s) => overGoalGap(s.ptd) || overGoalGap(s.wtd));
+  if (overGoalGaps.length) {
+    const list = overGoalGaps.slice(0, 10).map((s) => `#${s.store}`).join(", ");
+    issues.push({ level: "warn", msg: `${overGoalGaps.length} store(s) have an Ending $ but no $ Over Goal (excess $) in the IX file: ${list}${overGoalGaps.length > 10 ? " …" : ""} — their DO / region $ Over Goal totals are summed over the remaining stores and understate the true figure. Add the excess-$ for these stores and re-upload IX to complete it.` });
+  }
   const entityMissing = stores.filter((s) => s.entity === "Unassigned").length;
   if (entityMissing) {
     issues.push({ level: "warn", msg: `${entityMissing} store(s) have no legal entity on My Stores (soar_company_name) — grouped as "Unassigned" on the Entities tab.` });
