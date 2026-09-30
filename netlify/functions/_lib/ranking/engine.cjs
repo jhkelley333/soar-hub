@@ -111,6 +111,19 @@ function sumPropagate(rows, sel) {
   return s;
 }
 
+// SUMIF that SKIPS blanks (sums the numeric members, null only when none has a
+// value). Used for $ Over Goal so one store missing its excess-$ yields a
+// PARTIAL total instead of blanking the whole leader's figure — run.js pushes a
+// warning naming the gap so the partial isn't mistaken for complete.
+function sumSkip(rows, sel) {
+  var s = 0, n = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var v = sel(rows[i]);
+    if (isNum(v)) { s += v; n++; }
+  }
+  return n ? s : null;
+}
+
 // AVERAGEIF-style average of numeric member values; returns null when none numeric (#DIV/0!).
 function avgBy(rows, sel) {
   var s = 0, n = 0;
@@ -520,7 +533,7 @@ function aggregatePtd(name, members, opts, cfg, inputs) {
   r.doh = isNum(roll.doh) ? roll.doh : avgBy(members, function (m) { return m.doh; });          // BP
   r.dohGoal = isNum(roll.dohGoal) ? roll.dohGoal : avgBy(members, function (m) { return m.dohGoal; }); // BQ
   r.endingDollars = avgBy(members, function (m) { return m.endingDollars; }); // BR AVERAGEIF
-  r.dollarsOverGoal = sumPropagate(members, function (m) { return m.dollarsOverGoal; }); // BS SUMIF (errors propagate)
+  r.dollarsOverGoal = sumSkip(members, function (m) { return m.dollarsOverGoal; }); // BS SUMIF (skips blanks; run warns on gaps)
 
   return r;
 }
@@ -612,7 +625,7 @@ function companyPtd(sdoRows, storeRows, cfg, inputs) {
   r.doh = isNum(roll.doh) ? roll.doh : avgBy(storeRows, function (m) { return m.doh; });
   r.dohGoal = isNum(roll.dohGoal) ? roll.dohGoal : avgBy(storeRows, function (m) { return m.dohGoal; });
   r.endingDollars = avgBy(storeRows, function (m) { return m.endingDollars; }); // BR352 over stores
-  r.dollarsOverGoal = sumPropagate(sdoRows, function (m) { return m.dollarsOverGoal; }); // BS352 (errors propagate)
+  r.dollarsOverGoal = sumSkip(sdoRows, function (m) { return m.dollarsOverGoal; }); // BS352 (skips blanks; run warns on gaps)
 
   return r;
 }
@@ -699,7 +712,7 @@ function aggregateWtd(name, members, opts, cfg, inputs) {
   r.doh = isNum(roll.doh) ? roll.doh : avgBy(members, function (m) { return m.doh; });          // BB
   r.dohGoal = isNum(roll.dohGoal) ? roll.dohGoal : avgBy(members, function (m) { return m.dohGoal; }); // BC
   r.endingDollars = avgBy(members, function (m) { return m.endingDollars; }); // BD
-  r.dollarsOverGoal = sumPropagate(members, function (m) { return m.dollarsOverGoal; }); // BE (errors propagate)
+  r.dollarsOverGoal = sumSkip(members, function (m) { return m.dollarsOverGoal; }); // BE (skips blanks; run warns on gaps)
 
   return r;
 }
@@ -771,7 +784,7 @@ function companyWtd(sdoRows, storeRows, cfg, inputs) {
   r.doh = isNum(roll.doh) ? roll.doh : avgBy(storeRows, function (m) { return m.doh; });
   r.dohGoal = isNum(roll.dohGoal) ? roll.dohGoal : avgBy(storeRows, function (m) { return m.dohGoal; });
   r.endingDollars = avgBy(storeRows, function (m) { return m.endingDollars; }); // BD354 = AVERAGE(stores)
-  r.dollarsOverGoal = sumPropagate(sdoRows, function (m) { return m.dollarsOverGoal; }); // BE354
+  r.dollarsOverGoal = sumSkip(sdoRows, function (m) { return m.dollarsOverGoal; }); // BE354
 
   return r;
 }
