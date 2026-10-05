@@ -9,6 +9,7 @@ import type {
   MyStore,
   PtoInput,
   TrainingCreditInput,
+  TrainingCreditRow,
 } from "./types";
 
 const FN = "/.netlify/functions/employee-actions";
@@ -186,7 +187,7 @@ export function fetchCreditBalance(storeNumber: string, year?: number): Promise<
 }
 export interface CreditLedgerResponse {
   year: number;
-  requests: { id: string; employee_name: string; training_type: string; requested_amount: number; status: string; start_date: string | null; created_at: string }[];
+  requests: TrainingCreditRow[];
   adjustments: { id: string; amount: number; note: string | null; created_at: string }[];
 }
 export function fetchCreditLedger(storeNumber: string, year: number): Promise<CreditLedgerResponse> {
