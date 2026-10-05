@@ -89,9 +89,12 @@ export function RequestDetailDrawer({
   // DO & above can correct/withdraw any in-flight (non-terminal) request.
   const isDoPlus = role === "do" || role === "sdo" || role === "rvp" || role === "admin";
   const terminal = !!row && (row.status === "Completed" || row.status === "Closed" || row.status === "Withdrawn");
-  // Correct = direct edit by DO+ (training only; resets approval on save).
-  // Suppressed when the owner-resubmit "Edit & Resubmit" already shows.
-  const showCorrect = kind === "training" && isDoPlus && !!row && !terminal && !!onEdit && !canEdit;
+  // Correct = direct edit by DO+ (training only). Also allowed on a completed /
+  // closed training credit so a finalized amount can be fixed in place (the
+  // backend re-finalizes it; withdrawn stays locked). Suppressed when the
+  // owner-resubmit "Edit & Resubmit" already shows.
+  const correctableTerminal = kind === "training" && !!row && (row.status === "Completed" || row.status === "Closed");
+  const showCorrect = kind === "training" && isDoPlus && !!row && !!onEdit && !canEdit && (!terminal || correctableTerminal);
   const canWithdraw = isDoPlus && !!row && !terminal;
 
   function invalidate() {
