@@ -199,7 +199,7 @@ export function EmployeeActionsPage() {
         <HistoryList focus={focus} onConsumeFocus={() => setFocus(null)} onEditTraining={editTrainingRow} onEditPto={editPtoRow} />
       )}
 
-      {tab === "bank" && (canSubmit ? <CreditBankPanel /> : <NoAccess />)}
+      {tab === "bank" && (canSubmit ? <CreditBankPanel onEditTraining={editTrainingRow} /> : <NoAccess />)}
 
       {tab === "pto-report" && (canSubmit ? <PtoReportPanel /> : <NoAccess />)}
     </>

@@ -5,7 +5,7 @@
 // Click a store to open its ledger.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Landmark, Pencil, Plus, X } from "lucide-react";
+import { ChevronRight, Landmark, Pencil, Plus, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -14,13 +14,15 @@ import {
   adjustCredit, fetchCreditLedger, fetchCreditRegister, fetchGmPtoRate, setCreditBudget, setGmPtoRate,
   type CreditRegisterRow,
 } from "./api";
+import { RequestDetailDrawer } from "./RequestDetailDrawer";
+import type { TrainingCreditRow } from "./types";
 
 const money = (n: number) => (Number(n) || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
 const FIELD = "rounded-lg border border-border bg-surface px-3 py-2 text-sm text-heading placeholder:text-ink-subtle focus:border-accent focus:outline-none";
 
 type SortKey = "store" | "budget" | "used" | "remaining";
 
-export function CreditBankPanel() {
+export function CreditBankPanel({ onEditTraining }: { onEditTraining?: (row: TrainingCreditRow) => void }) {
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState(thisYear);
   const [open, setOpen] = useState<CreditRegisterRow | null>(null);
@@ -133,7 +135,7 @@ export function CreditBankPanel() {
 
         {open && (
           <LedgerModal row={open} year={year} canAdjust={q.data?.can_adjust ?? false}
-            canBudget={q.data?.can_budget ?? false} onClose={() => setOpen(null)} />
+            canBudget={q.data?.can_budget ?? false} onEditTraining={onEditTraining} onClose={() => setOpen(null)} />
         )}
 
         {q.data?.can_budget && <GmPtoRateEditor />}
@@ -193,8 +195,9 @@ function SortTh({ label, k, sort, onSort, right }: {
   );
 }
 
-function LedgerModal({ row, year, canAdjust, canBudget, onClose }: {
-  row: CreditRegisterRow; year: number; canAdjust: boolean; canBudget: boolean; onClose: () => void;
+function LedgerModal({ row, year, canAdjust, canBudget, onEditTraining, onClose }: {
+  row: CreditRegisterRow; year: number; canAdjust: boolean; canBudget: boolean;
+  onEditTraining?: (row: TrainingCreditRow) => void; onClose: () => void;
 }) {
   const toast = useToast();
   const qc = useQueryClient();
@@ -202,6 +205,7 @@ function LedgerModal({ row, year, canAdjust, canBudget, onClose }: {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [budgetEdit, setBudgetEdit] = useState<string | null>(null);
+  const [detail, setDetail] = useState<TrainingCreditRow | null>(null);
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["ea-credit-ledger", row.store_number, year] });
@@ -256,12 +260,16 @@ function LedgerModal({ row, year, canAdjust, canBudget, onClose }: {
             ) : (
               <ul className="mb-3 divide-y divide-border rounded-xl border border-border">
                 {q.data!.requests.map((r) => (
-                  <li key={r.id} className="flex items-center gap-3 px-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-semibold text-heading">{r.employee_name}</div>
-                      <div className="text-xs text-ink-subtle">{r.training_type} · {r.status}{r.start_date ? ` · ${r.start_date}` : ""}</div>
-                    </div>
-                    <span className="shrink-0 font-semibold tabular-nums text-heading">−{money(r.requested_amount)}</span>
+                  <li key={r.id}>
+                    <button type="button" onClick={() => setDetail(r)}
+                      className="flex w-full items-center gap-3 px-3 py-2 text-left transition hover:bg-surface-muted">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-semibold text-heading">{r.employee_name}</div>
+                        <div className="text-xs text-ink-subtle">{r.training_type} · {r.status}{r.start_date ? ` · ${r.start_date}` : ""}</div>
+                      </div>
+                      <span className="shrink-0 font-semibold tabular-nums text-heading">−{money(r.requested_amount)}</span>
+                      <ChevronRight className="h-4 w-4 shrink-0 text-ink-subtle" />
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -302,6 +310,17 @@ function LedgerModal({ row, year, canAdjust, canBudget, onClose }: {
             </div>
           </div>
         )}
+
+        {/* Click a request above to view its full detail and act on it
+            (approve / send back / correct / delete, per role & status). On a
+            change the drawer closes and we refresh the ledger + register. */}
+        <RequestDetailDrawer
+          kind="training"
+          row={detail}
+          open={!!detail}
+          onClose={() => { setDetail(null); refresh(); }}
+          onEdit={onEditTraining && detail ? () => { onEditTraining(detail); onClose(); } : undefined}
+        />
       </div>
     </div>
   );

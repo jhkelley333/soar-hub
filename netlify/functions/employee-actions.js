@@ -617,7 +617,7 @@ async function creditLedger(supa, user, params) {
   const year = parseInt(params?.year, 10) || new Date().getFullYear();
   const { data: reqs } = await supa
     .from("training_credit_requests")
-    .select("id, employee_name, training_type, requested_amount, status, start_date, created_at")
+    .select("*")
     .eq("store_number", storeNumber)
     .order("created_at", { ascending: false }).limit(500);
   const requests = (reqs ?? [])
