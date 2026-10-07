@@ -53,6 +53,7 @@ import { KpiDashboardPage } from "@/modules/kpi/KpiDashboardPage";
 import { MetricsBoardPage } from "@/modules/kpi/MetricsBoardPage";
 import { LaborV2Page } from "@/modules/labor-v2/LaborV2Page";
 import { RankingAdminPage } from "@/modules/ranking/RankingAdminPage";
+import { CommsBoardPage } from "@/modules/ranking/CommsBoardPage";
 import { BottomPerformersPage } from "@/modules/ranking/BottomPerformersPage";
 import { PullLogPage } from "@/modules/labor-v2/PullLogPage";
 import { UserActivityPage } from "@/modules/admin/UserActivityPage";
@@ -286,6 +287,17 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
             <RankingAdminPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Comms Board — the store's weekly communication board, open to EVERY
+        // role (scoped to their store by the backend). Leadership also see it as
+        // a tab inside the Ranker; this is the universal entry for all staff.
+        path: "comms-board",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
+            <CommsBoardPage />
           </ProtectedRoute>
         ),
       },
