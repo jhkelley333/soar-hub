@@ -108,11 +108,15 @@ export function TrainingCreditForm({
   const submit = useMutation({
     mutationFn: (input: TrainingCreditInput) =>
       isEditing ? updateTrainingCredit(editRow!.id, input) : submitTrainingCredit(input),
-    onSuccess: () => {
+    onSuccess: (r) => {
+      const resStatus = (r as { status?: string } | undefined)?.status;
+      const stillPending = resStatus != null && !["Completed", "Closed"].includes(resStatus);
       toast.push(
-        isEditing
-          ? "Training credit resubmitted for approval."
-          : "Training credit request submitted — DO + RVP notified.",
+        !isEditing
+          ? "Training credit request submitted — DO + RVP notified."
+          : stillPending
+            ? "Training credit resubmitted for approval."
+            : "Training credit updated.",
         "success"
       );
       qc.invalidateQueries({ queryKey: ["ea-list"] });

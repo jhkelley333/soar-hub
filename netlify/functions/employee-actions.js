@@ -776,8 +776,16 @@ async function updateTraining(supa, user, body) {
   if (!isOwner && !isApprover) {
     return { error: "Only the submitter, or a DO and above, can edit this request.", status: 403 };
   }
-  if (TERMINAL_STATUSES.has(existing.status)) {
-    return { error: `A ${existing.status} request can't be edited.`, status: 409 };
+  // Withdrawn is cancelled — never editable. Completed/Closed CAN be corrected
+  // by a DO and above: it fixes a finalized credit's amount/details in place and
+  // (a DO+ outranks the within-bank approval tier) re-finalizes without a
+  // separate approval step — an over-bank edit still routes to the RVP. Owners /
+  // GMs still can't touch terminal rows.
+  if (existing.status === "Withdrawn") {
+    return { error: "A withdrawn request can't be edited.", status: 409 };
+  }
+  if (TERMINAL_STATUSES.has(existing.status) && !isApprover) {
+    return { error: `A ${existing.status} credit can only be corrected by a DO and above.`, status: 403 };
   }
   if (!isApprover && existing.status !== "Changes Requested") {
     return { error: "Only a request sent back for changes can be resubmitted.", status: 409 };
@@ -804,6 +812,7 @@ async function updateTraining(supa, user, body) {
   // Over bank re-routes to RVP approval (no longer blocked); recompute the flag.
   const overBank = built.meta.requestedAmount > bal.remaining + giveBack + 0.005;
 
+  const wf = trainingWorkflowFields(user, overBank);
   const { error } = await supa
     .from("training_credit_requests")
     .update({
@@ -815,7 +824,7 @@ async function updateTraining(supa, user, body) {
       approved_by_id: null,
       approved_by_email: null,
       decision_note: null,
-      ...trainingWorkflowFields(user, overBank),
+      ...wf,
     })
     .eq("id", id);
   if (error) return { error: error.message, status: 500 };
@@ -843,7 +852,7 @@ async function updateTraining(supa, user, body) {
     text: trainingEmailText(user, storeNumber, built.fields, built.meta, link, "resubmitted after changes"),
   });
 
-  return { ok: true, id, status: "Submitted" };
+  return { ok: true, id, status: wf.status || "Submitted" };
 }
 
 // ----------------------------------------------------------------------------
