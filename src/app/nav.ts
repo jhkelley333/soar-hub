@@ -68,6 +68,9 @@ export const NAV: NavItem[] = [
   // over the Operations slot; the legacy sheet-fed Ranker (/ranker) is archived
   // off the sidebar, its route kept alive only for old deep links.
   { to: "/admin/ranking", label: "Ranker", icon: Trophy, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
+  // Comms Board — the store's weekly communication board, for EVERY role (crew →
+  // leadership), scoped to their store. Leadership also reach it inside the Ranker.
+  { to: "/comms-board", label: "Comms Board", icon: MessageCircle, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
   // Bottom Performers lives in System Settings (Beta), out of the sidebar.
   // Culture Index — the trait framework + all 21 pattern definitions. The
   // reference behind every trait chip on the roster and in accounts; the base
@@ -272,6 +275,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/operations": "OPERATIONS",
   "/business-disruptions": "OPERATIONS",
   "/admin/ranking": "OPERATIONS",
+  "/comms-board": "OPERATIONS",
   "/admin/ranking/bottom-performers": "OPERATIONS",
   "/coo-map": "OPERATIONS",
   "/territory-map": "OPERATIONS",
