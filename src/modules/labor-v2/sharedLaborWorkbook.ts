@@ -54,10 +54,11 @@ function writeCell(cell: any, r: Row, c: Col) {
   else if (c.band && c.key) v = r[c.band][c.key];
   if (!isNum(v)) { cell.value = ""; return; }
   cell.alignment = { horizontal: "right" };
-  // Percentages: store the FRACTION with a real "%" format (value/100 + "0.0%").
+  // Percentages: store the FRACTION with a real "%" format (value/100 + "0.00%").
   // A literal-% custom format renders fine on desktop but mobile viewers (the
   // phone) multiply it anyway, so 17.3 showed as 1730%. This is viewer-proof.
-  if (c.fmt === "pct" || c.fmt === "var") { cell.value = v / 100; cell.numFmt = "0.0%"; }
+  // Two decimals so the download matches the on-screen values exactly (18.24%).
+  if (c.fmt === "pct" || c.fmt === "var") { cell.value = v / 100; cell.numFmt = "0.00%"; }
   else {
     cell.value = v;
     cell.numFmt = c.fmt === "over" ? '"$"#,##0' : c.fmt === "hrs" ? "0.0" : c.fmt === "avs" ? "0" : '"$"#,##0';
