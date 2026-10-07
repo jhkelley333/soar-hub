@@ -380,7 +380,7 @@ export function RankingAdminPage() {
   const canSettings = isAdmin || delegated;
 
   const [gmRunId, setGmRunId] = useState<string | null>(null);
-  const [gmViewScope, setGmViewScope] = useState<"store" | "district" | "company">("store");
+  const [gmViewScope, setGmViewScope] = useState<"store" | "district" | "company" | "comms">("store");
   const runsQ = useQuery({ queryKey: ["ranking-runs"], queryFn: fetchRankingRuns, staleTime: 5 * 60_000, enabled: isGm });
   const runs = runsQ.data?.runs ?? [];
 
@@ -395,6 +395,7 @@ export function RankingAdminPage() {
       { value: "store" as const, label: "My Store" },
       { value: "district" as const, label: "District" },
       { value: "company" as const, label: "Company" },
+      { value: "comms" as const, label: "Comms Board" },
     ];
     return (
       <>
@@ -439,6 +440,7 @@ export function RankingAdminPage() {
         {gmViewScope === "store" && <MyStoreView runId={gmRunId} />}
         {gmViewScope === "district" && <RankingResultsView viewScope="district" />}
         {gmViewScope === "company" && <RankingResultsView viewScope="company" />}
+        {gmViewScope === "comms" && <RankingCommsBoardView />}
       </>
     );
   }
