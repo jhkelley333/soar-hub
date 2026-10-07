@@ -4,7 +4,7 @@
 // status workflow. Data: labor_v2_daily + labor_reviews via the labor-v2 fn.
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ArrowDown, ArrowUp, CalendarDays, ChevronRight, Clock, Copy, Download, Link2, RefreshCw, Share2, SlidersHorizontal } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -16,7 +16,7 @@ import { cn } from "@/lib/cn";
 import { recentWeekOptions } from "./weeks";
 import { useAuth } from "@/auth/AuthProvider";
 import { MissTrackerExport } from "@/modules/labor/MissTrackerExport";
-import { fetchLaborV2Team, fetchLaborFile, fetchLaborFileWeek, fetchMissTracker, type ShareBand, type ShareNode } from "./api";
+import { fetchLaborV2Team, fetchLaborFile, fetchLaborFileWeek, fetchMissTracker, refreshLaborAll, type ShareBand, type ShareNode } from "./api";
 import { LaborShareLinksModal } from "./LaborShareLinksModal";
 import { LaborTableModal, WeekTrendModal, type Chain } from "./laborExplorerModals";
 import { downloadSharedLaborFile } from "./sharedLaborWorkbook";
@@ -142,6 +142,19 @@ export function LaborV2TeamPage() {
   const weekOptions = useMemo(() => recentWeekOptions(), []);
 
   const q = useQuery({ queryKey: ["labor-v2-team", weekEnd], queryFn: () => fetchLaborV2Team(weekEnd || undefined), staleTime: 5 * 60_000, refetchOnWindowFocus: !weekEnd, refetchInterval: weekEnd ? false : 10 * 60_000 });
+
+  // Full refresh: pull the Expressway KPI feed (KPI + labor rollup) and kick the
+  // Google labor sheet server-side, then reload the board.
+  const fullRefresh = useMutation({
+    mutationFn: refreshLaborAll,
+    onSuccess: async (r) => {
+      await q.refetch();
+      if (r.kpi?.ok) toast.push(`Refreshed — labor ${r.kpi.business_date ?? ""} (${r.kpi.stores ?? 0} stores)`.trim(), "success");
+      else toast.push(`Refreshed, but the KPI feed didn't land${r.kpi?.note ? ` (${r.kpi.note})` : ""} — try again shortly.`, r.kpi ? "info" : "error");
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't refresh.", "error"),
+  });
+  const refreshing = fullRefresh.isPending || q.isFetching;
   const data = q.data;
   const t = data?.totals ?? null;
   const missing = data?.missing ?? [];
@@ -302,8 +315,9 @@ export function LaborV2TeamPage() {
                 <Link2 className="mr-1 h-3.5 w-3.5" /> Share links
               </Button>
             )}
-            <Button variant="secondary" size="sm" onClick={() => q.refetch()} disabled={q.isFetching}>
-              <RefreshCw className={cn("mr-1 h-3.5 w-3.5", q.isFetching && "animate-spin")} /> Refresh
+            <Button variant="secondary" size="sm" onClick={() => fullRefresh.mutate()} disabled={refreshing}
+              title="Pull the latest KPI feed + labor rollup, then the labor sheet">
+              <RefreshCw className={cn("mr-1 h-3.5 w-3.5", refreshing && "animate-spin")} /> {fullRefresh.isPending ? "Refreshing…" : "Refresh"}
             </Button>
           </div>
         }

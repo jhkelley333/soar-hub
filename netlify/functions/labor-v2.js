@@ -12,6 +12,7 @@ import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { fiscalForDate } from "./_lib/fiscal.js";
 import { loadLaborCredits, applyCreditsToRows, loadTrainingCreditDates, loadGmPtoCreditDates, loadNoGmCreditDates, loadGmSupportCreditDates, loadCorporateTrainingCreditDates, corpTrainingDailyRate, CORP_TRAINING_DEFAULT_DAILY } from "./_lib/trainingCredit.js";
 import { logPull } from "./_lib/pullLog.js";
+import { runKpiCapture } from "./_lib/runKpiCapture.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -395,6 +396,48 @@ async function refreshNow(supa, ctx = {}) {
     await logPull(supa, { source, ok: false, error: e.message, triggered_by: ctx.triggeredBy, duration_ms: Date.now() - started });
     throw e;
   }
+}
+
+// Full manual refresh behind the Team Labor "Refresh" button — runs the chain
+// the admins used to do by hand: pull the Expressway KPI feed (→ kpi_snapshots
+// for the KPI dashboard AND labor_v2_daily for the labor rollup this page
+// shows), then kick the Google labor-sheet snapshot. The sheet is a different
+// source the Team page doesn't read, so it's best-effort and never blocks the
+// response. Returns a small summary for the toast.
+async function refreshAll(supa, user) {
+  if (!TEAM_ROLES.has(roleOf(user))) return { error: "not authorized", status: 403 };
+  const result = { kpi: null, labor_sheet: null };
+
+  // 1. Expressway feed → KPI snapshot + labor rollup (+ count). Fail-fast fetch
+  //    so the whole request finishes inside the function's time budget.
+  try {
+    const r = await runKpiCapture(supa, {
+      source: "refresh-all",
+      fetch: { attempts: 1, timeoutMs: 7000, backoffMs: 0 },
+      runRanker: false,
+    });
+    result.kpi = r.ok
+      ? { ok: true, business_date: r.businessDate, stores: r.laborStored }
+      : { ok: false, note: r.feedNotReady ? "feed not ready yet" : (r.body || "feed error") };
+  } catch (e) {
+    result.kpi = { ok: false, note: e.message };
+  }
+
+  // 2. Google labor sheet — fire it, but a slow sheet read must not block the
+  //    response. Short timeout; an AbortError just means it's still running.
+  try {
+    const base = (process.env.SITE_URL || process.env.URL || "https://mysoarhub.com").replace(/\/$/, "");
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2000);
+    try {
+      const res = await fetch(`${base}/.netlify/functions/labor-snapshot`, { method: "GET", signal: ctrl.signal });
+      result.labor_sheet = { ok: res.ok, status: res.status };
+    } finally { clearTimeout(timer); }
+  } catch (e) {
+    result.labor_sheet = { ok: true, note: e?.name === "AbortError" ? "running" : e.message };
+  }
+
+  return { ok: true, ...result };
 }
 
 // Recent pull-log rows for the admin log page.
@@ -2504,6 +2547,7 @@ export const handler = async (event) => {
     if (event.httpMethod === "POST") {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "review") return unwrap(await saveReview(supa, user, body));
+      if (action === "refresh-all") return unwrap(await refreshAll(supa, user));
       if (action === "set-labor-settings") {
         if (!isAdmin) return respond(403, { error: "Admins only." });
         await setLaborHrsWeekly(supa, body.hrs_weekly_rate, user.id);

@@ -91,6 +91,18 @@ export function fetchLaborV2Team(date?: string): Promise<TeamLaborResponse> {
   return req(`${FN}?${p.toString()}`);
 }
 
+// Full manual refresh: pull the Expressway KPI feed (KPI snapshot + labor
+// rollup) then kick the Google labor sheet, server-side, then the caller
+// refetches the view. Powers the Team Labor "Refresh" button.
+export interface LaborRefreshResult {
+  ok: true;
+  kpi: { ok: boolean; business_date?: string; stores?: number; note?: string } | null;
+  labor_sheet: { ok: boolean; status?: number; note?: string } | null;
+}
+export function refreshLaborAll(): Promise<LaborRefreshResult> {
+  return req(`${FN}?action=refresh-all`, { method: "POST" });
+}
+
 // ── Per-RVP Hours Over Chart scorecard (last N fiscal weeks) ─────────────────
 export interface RvpScorecardWeek {
   weekEnd: string;
