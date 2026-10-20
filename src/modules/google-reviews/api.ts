@@ -41,3 +41,25 @@ export function fetchReviewSummary(): Promise<ReviewSummary> {
 export function refreshReviews(limit = 20): Promise<RefreshResult> {
   return req(`${FN}?action=refresh&limit=${limit}`);
 }
+
+// Drain the whole queue: each call pulls a time-boxed batch (the server caps a
+// single request to a few seconds), so loop until nothing is left stale. This
+// is what makes the manual button pull EVERY site instead of ~20 at a time.
+export async function refreshAllReviews(
+  onProgress?: (done: number, remaining: number) => void,
+): Promise<{ refreshed: number; reviews_seen: number; errors: number; note?: string }> {
+  let refreshed = 0, reviews_seen = 0, errors = 0;
+  let note: string | undefined;
+  for (let i = 0; i < 60; i++) {
+    const r = await refreshReviews(40);
+    if (r.note && !r.refreshed) { note = r.note; break; }
+    refreshed += r.refreshed ?? 0;
+    reviews_seen += r.reviews_seen ?? 0;
+    errors += r.errors ?? 0;
+    const remaining = r.remaining ?? 0;
+    onProgress?.(refreshed, remaining);
+    if (!remaining) break;
+    if (!(r.refreshed ?? 0)) break; // nothing progressed — avoid spinning
+  }
+  return { refreshed, reviews_seen, errors, note };
+}
