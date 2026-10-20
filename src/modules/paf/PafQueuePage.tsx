@@ -5,7 +5,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { CalendarClock, ChevronLeft, Download } from "lucide-react";
+import { Archive, CalendarClock, ChevronLeft, Download } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -134,6 +134,12 @@ export function PafQueuePage() {
               <Button variant="ghost" size="sm">
                 <ChevronLeft className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
                 All PAFs
+              </Button>
+            </Link>
+            <Link to="/paf/archive">
+              <Button variant="ghost" size="sm">
+                <Archive className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+                Archive
               </Button>
             </Link>
             <Button

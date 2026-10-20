@@ -1,6 +1,7 @@
 import {
   LayoutDashboard,
   FileSpreadsheet,
+  Archive,
   BookOpen,
   BookUser,
   Building2,
@@ -138,6 +139,9 @@ export const NAV: NavItem[] = [
   // a stale paf_pilot flag is no longer wired here because flagKey bypasses
   // the role gate, which leaked the module to roles like fbc.
   { to: "/paf",         label: "PAF",         icon: FileSpreadsheet, roles: ["do", "payroll", "admin"] },
+  // PAF Archive — the full searchable/printable record + CSV database export.
+  // Payroll/admin only (it is org-wide and includes archived submissions).
+  { to: "/paf/archive", label: "PAF Archive", icon: Archive,         roles: ["payroll", "admin"] },
   // Employee Actions — Training Credit + PTO request forms. GM and up;
   // submitting notifies the store's DO + RVP. Approvals/tracking land later.
   { to: "/employee-actions", label: "Employee Actions", icon: ClipboardCheck, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
@@ -290,6 +294,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/my-walks": "OPERATIONS",
   "/walkthroughs": "OPERATIONS",
   "/paf": "PEOPLE",
+  "/paf/archive": "PEOPLE",
   "/employee-actions": "PEOPLE",
   "/coaching": "PEOPLE",
   "/training": "PEOPLE",
