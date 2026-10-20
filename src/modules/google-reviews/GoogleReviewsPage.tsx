@@ -2,7 +2,7 @@
 // sample distribution, worst locations, keyword tags, and a recent-review feed,
 // scoped to the caller's org. Admin/VP/COO can Refresh (pull from Google).
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Star, RefreshCw, AlertTriangle, ThumbsUp } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -12,7 +12,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
-import { fetchReviewSummary, refreshReviews, type ReviewRow, type WorstLocation } from "./api";
+import { fetchReviewSummary, refreshAllReviews, type ReviewRow, type WorstLocation } from "./api";
 import { ReviewTrends } from "./ReviewTrends";
 
 const ratingTone = (r: number | null): string =>
@@ -33,8 +33,10 @@ function Stars({ n, className }: { n: number | null; className?: string }) {
     </span>
   );
 }
-const relTime = (iso: string | null, rel: string | null) =>
-  rel || (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "");
+// Show the actual review date (Google only gives a timestamp on each review);
+// the relative phrase ("in the last week") is kept as a hover tooltip.
+const reviewDate = (iso: string | null, rel: string | null) =>
+  iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : (rel || "");
 
 export function GoogleReviewsPage() {
   const toast = useToast();
@@ -45,17 +47,26 @@ export function GoogleReviewsPage() {
   const q = useQuery({ queryKey: ["google-reviews"], queryFn: fetchReviewSummary, staleTime: 60_000 });
   const data = q.data;
 
+  const [progress, setProgress] = useState<string | null>(null);
   const refresh = useMutation({
-    mutationFn: () => refreshReviews(20),
+    // Pull EVERY site — drains the queue in time-boxed batches rather than ~20
+    // at a time. Progress updates the button as each batch lands.
+    mutationFn: () =>
+      refreshAllReviews((done, remaining) => setProgress(`${done} done · ${remaining} to go`)),
     onSuccess: (r) => {
+      setProgress(null);
       toast.push(
-        r.note ? r.note
-          : `Refreshed ${r.refreshed} store${r.refreshed === 1 ? "" : "s"} from Google${r.remaining ? ` · ${r.remaining} still stale — click again to continue` : ""}.`,
-        r.remaining ? "info" : "success",
+        r.note
+          ? r.note
+          : `Refreshed ${r.refreshed} store${r.refreshed === 1 ? "" : "s"} from Google · ${r.reviews_seen} review${r.reviews_seen === 1 ? "" : "s"} seen${r.errors ? ` · ${r.errors} error${r.errors === 1 ? "" : "s"}` : ""}.`,
+        "success",
       );
       qc.invalidateQueries({ queryKey: ["google-reviews"] });
     },
-    onError: (e) => toast.push(e instanceof Error ? e.message : "Refresh failed.", "error"),
+    onError: (e) => {
+      setProgress(null);
+      toast.push(e instanceof Error ? e.message : "Refresh failed.", "error");
+    },
   });
 
   const distMax = useMemo(() => {
@@ -71,7 +82,7 @@ export function GoogleReviewsPage() {
         description="Ratings, worst locations, and recent reviews across your stores — from Google."
         actions={canRefresh ? (
           <Button size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
-            {refresh.isPending ? <><RefreshCw className="mr-1 h-3.5 w-3.5 animate-spin" /> Pulling…</> : <><RefreshCw className="mr-1 h-3.5 w-3.5" /> Refresh from Google</>}
+            {refresh.isPending ? <><RefreshCw className="mr-1 h-3.5 w-3.5 animate-spin" /> {progress ? `Pulling… ${progress}` : "Pulling all sites…"}</> : <><RefreshCw className="mr-1 h-3.5 w-3.5" /> Refresh all sites</>}
           </Button>
         ) : undefined}
       />
@@ -195,7 +206,7 @@ function ReviewCard({ r }: { r: ReviewRow }) {
         <Stars n={r.rating} />
         <span className="font-semibold text-midnight">{r.author}</span>
         <span className="text-zinc-400">· {r.store}</span>
-        <span className="ml-auto text-zinc-400">{relTime(r.review_time, r.relative_time)}</span>
+        <span className="ml-auto text-zinc-400" title={r.relative_time ?? undefined}>{reviewDate(r.review_time, r.relative_time)}</span>
       </div>
       {r.body && <p className="whitespace-pre-wrap text-sm text-zinc-600">{r.body}</p>}
     </div>

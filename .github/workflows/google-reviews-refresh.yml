@@ -9,15 +9,16 @@
 #   - GitHub Actions secret  REVIEWS_CRON_TOKEN
 # Optional: SITE_URL secret to override the target (defaults to mysoarhub.com).
 #
-# Each call drains ~20 of the stalest stores (time-boxed under the function
-# limit); the loop repeats until the function reports remaining=0. ~271 stores
-# => ~14 iterations. Runs Mondays ~08:00 America/Chicago (13:00 UTC).
+# Each call drains the stalest stores (time-boxed under the function limit); the
+# loop repeats until the function reports remaining=0, so EVERY store with a
+# Google listing is refreshed. ~271 stores => ~7 iterations at 40/call. Runs
+# Sundays ~08:00 America/Chicago (13:00 UTC).
 
 name: Google Reviews weekly refresh
 
 on:
   schedule:
-    - cron: "0 13 * * 1" # Mondays 13:00 UTC ≈ 08:00 America/Chicago (CDT)
+    - cron: "0 13 * * 0" # Sundays 13:00 UTC ≈ 08:00 America/Chicago (CDT)
   workflow_dispatch: {} # manual "Run workflow" from the Actions tab
 
 concurrency:
@@ -43,7 +44,7 @@ jobs:
           fi
           url="${base}/.netlify/functions/google-reviews"
           for i in $(seq 1 30); do
-            resp=$(curl -fsS --max-time 60 "${url}?action=refresh&limit=20&token=${TOKEN}" || echo '{"error":"request failed"}')
+            resp=$(curl -fsS --max-time 60 "${url}?action=refresh&limit=40&token=${TOKEN}" || echo '{"error":"request failed"}')
             echo "iter ${i}: ${resp}"
             if echo "${resp}" | jq -e '.error' >/dev/null 2>&1; then
               echo "::error::refresh returned an error"; exit 1
