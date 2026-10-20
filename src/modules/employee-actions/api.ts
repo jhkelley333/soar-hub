@@ -8,6 +8,7 @@ import type {
   EmployeeActionQueueResponse,
   MyStore,
   PtoInput,
+  PtoRow,
   TrainingCreditInput,
   TrainingCreditRow,
 } from "./types";
@@ -80,6 +81,22 @@ export function bulkConfirmEmployeeActions(
   return request(`${FN}?action=confirm-bulk`, {
     method: "POST",
     body: JSON.stringify({ items, step }),
+  });
+}
+
+// Admin bulk close-out — list PTO requests awaiting a close-out / PAF confirm
+// ("SDO/RVP Approved" or legacy "PAF Submitted"), then finalize a selected set
+// to "Closed" in one call. Admin only (the server re-checks).
+export function listCloseoutPending(): Promise<{ ptoRequests: PtoRow[] }> {
+  return request<{ ptoRequests: PtoRow[] }>(`${FN}?action=closeout-pending`);
+}
+
+export function closeoutBulkPto(
+  ids: string[]
+): Promise<{ ok: true; done: number; failed: number; results: { id: string; ok: boolean; error?: string }[] }> {
+  return request(`${FN}?action=closeout-bulk`, {
+    method: "POST",
+    body: JSON.stringify({ ids }),
   });
 }
 

@@ -1808,6 +1808,82 @@ async function confirmBulk(supa, user, body) {
   return { ok: true, done, failed, results };
 }
 
+// ----------------------------------------------------------------------------
+// Admin bulk close-out — finalize PTO requests sitting in a post-approval
+// state ("SDO/RVP Approved" awaiting PAF confirm, or "PAF Submitted" awaiting
+// close) straight to "Closed" in one call. Admin-only: it bypasses the per-
+// tier confirm chain so an admin can clear the whole backlog at once. No per-
+// row emails (a backlog sweep shouldn't flood submitters); every row is still
+// audit-logged.
+// ----------------------------------------------------------------------------
+const PTO_CLOSEOUT_STATUSES = ["SDO/RVP Approved", "PAF Submitted"];
+
+async function closeoutPending(supa, user) {
+  if (user.role !== "admin") return { error: "Admin only.", status: 403 };
+  const { data, error } = await supa
+    .from(REQUEST_TABLE.pto)
+    .select("*")
+    .in("status", PTO_CLOSEOUT_STATUSES)
+    .order("created_at", { ascending: true })
+    .limit(1000);
+  if (error) return { error: error.message, status: 500 };
+  const rows = data ?? [];
+  const nums = Array.from(new Set(rows.map((r) => r.store_number).filter(Boolean)));
+  const nameMap = new Map();
+  if (nums.length) {
+    const { data: stores } = await supa.from("stores").select("number, name").in("number", nums);
+    for (const s of stores ?? []) nameMap.set(String(s.number), s.name);
+  }
+  return {
+    ptoRequests: rows.map((r) => ({ ...r, store_name: nameMap.get(String(r.store_number)) ?? null })),
+  };
+}
+
+async function closeoutBulk(supa, user, body) {
+  if (user.role !== "admin") return { error: "Admin only.", status: 403 };
+  const ids = Array.isArray(body?.ids)
+    ? body.ids.map((x) => sanitizeText(x, 64)).filter(Boolean).slice(0, 1000)
+    : [];
+  if (!ids.length) return { error: "No requests selected.", status: 400 };
+
+  const nowIso = new Date().toISOString();
+  let done = 0, failed = 0;
+  const results = [];
+  for (const id of ids) {
+    const { data: existing, error: fErr } = await supa
+      .from(REQUEST_TABLE.pto)
+      .select("id, status")
+      .eq("id", id)
+      .maybeSingle();
+    if (fErr || !existing) { results.push({ id, ok: false, error: fErr?.message || "Not found." }); failed++; continue; }
+    if (!PTO_CLOSEOUT_STATUSES.includes(existing.status)) {
+      results.push({ id, ok: false, error: `Not awaiting close-out (${existing.status}).` });
+      failed++;
+      continue;
+    }
+    // Status-guarded update so a concurrent change can't double-close.
+    const { data, error } = await supa
+      .from(REQUEST_TABLE.pto)
+      .update({ status: "Closed", closed_at: nowIso, closed_by_id: user.id })
+      .eq("id", id)
+      .in("status", PTO_CLOSEOUT_STATUSES)
+      .select("id")
+      .maybeSingle();
+    if (error || !data) { results.push({ id, ok: false, error: error?.message || "Already updated." }); failed++; continue; }
+    await logAudit(supa, {
+      request_type: AUDIT_TYPE.pto,
+      request_id: id,
+      actor_id: user.id,
+      actor_email: user.email,
+      action: "closed",
+      detail: { bulk: true, from: existing.status },
+    });
+    done++;
+    results.push({ id, ok: true });
+  }
+  return { ok: true, done, failed, results };
+}
+
 // HTTP handler
 // ----------------------------------------------------------------------------
 function unwrap(result) {
@@ -1841,6 +1917,7 @@ export const handler = async (event) => {
       if (action === "credit-register") return unwrap(await creditRegister(supa, user, params));
       if (action === "credit-balance") return unwrap(await creditBalance(supa, user, params));
       if (action === "credit-ledger") return unwrap(await creditLedger(supa, user, params));
+      if (action === "closeout-pending") return unwrap(await closeoutPending(supa, user));
       if (action === "gm-pto-rate") return unwrap(await gmPtoRateGet(supa, user));
       if (action === "pto-report") return unwrap(await ptoReport(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });
@@ -1858,6 +1935,7 @@ export const handler = async (event) => {
       if (action === "decide-bulk") return unwrap(await decideBulk(supa, user, body));
       if (action === "confirm") return unwrap(await confirm(supa, user, body));
       if (action === "confirm-bulk") return unwrap(await confirmBulk(supa, user, body));
+      if (action === "closeout-bulk") return unwrap(await closeoutBulk(supa, user, body));
       if (action === "withdraw") return unwrap(await withdrawRequest(supa, user, body));
       if (action === "delete") return unwrap(await deleteRequest(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
