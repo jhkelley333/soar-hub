@@ -47,6 +47,12 @@ export function listPafs(): Promise<PafListResponse> {
   return request<PafListResponse>(`${FN}?action=list`);
 }
 
+// Full archive — every PAF org-wide, archived ones included, uncapped.
+// Payroll/Admin only (the server re-checks). Powers the /paf/archive page.
+export function listPafArchive(): Promise<PafListResponse & { total: number }> {
+  return request<PafListResponse & { total: number }>(`${FN}?action=archive-list`);
+}
+
 export function fetchPafConfig(): Promise<PafConfigResponse> {
   return request<PafConfigResponse>(`${FN}?action=config`);
 }

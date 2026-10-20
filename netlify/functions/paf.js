@@ -735,6 +735,67 @@ async function listPafs(supa, user) {
 }
 
 // ----------------------------------------------------------------------------
+// archive-list — the FULL PAF record for Payroll/Admin. Unlike `list` this
+// returns EVERY submission org-wide, archived ones included, and is not capped
+// at 500: it pages past PostgREST's implicit 1000-row limit so the archive
+// page / CSV export is a complete database dump. Payroll/Admin only — it is
+// deliberately not scope-filtered.
+// ----------------------------------------------------------------------------
+const ARCHIVE_PAGE = 1000; // PostgREST per-request ceiling
+const ARCHIVE_MAX = 50000; // safety cap on total rows pulled into memory
+
+async function archivePafs(supa, user) {
+  if (!PROCESS_ROLES.has(user.role)) {
+    return { error: "Payroll/Admin only.", status: 403 };
+  }
+
+  const all = [];
+  for (let from = 0; from < ARCHIVE_MAX; from += ARCHIVE_PAGE) {
+    const { data, error } = await supa
+      .from("paf_submissions")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .range(from, from + ARCHIVE_PAGE - 1);
+    if (error) return { error: error.message, status: 500 };
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < ARCHIVE_PAGE) break; // last page
+  }
+
+  // Join store names in one indexed lookup (same shape as `list`).
+  const distinctDriveIns = Array.from(
+    new Set(all.map((r) => r.drive_in).filter(Boolean))
+  );
+  const storeNameMap = new Map();
+  if (distinctDriveIns.length) {
+    const { data: storeRows } = await supa
+      .from("stores")
+      .select("number, name")
+      .in("number", distinctDriveIns);
+    for (const s of storeRows ?? []) {
+      storeNameMap.set(String(s.number), s.name);
+    }
+  }
+
+  const rows = all.map((r) => ({
+    ...r,
+    store_name: storeNameMap.get(String(r.drive_in)) ?? null,
+  }));
+
+  return {
+    user: {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      can_submit: SUBMIT_ROLES.has(user.role),
+      can_process: PROCESS_ROLES.has(user.role),
+    },
+    total: rows.length,
+    pafs: rows,
+  };
+}
+
+// ----------------------------------------------------------------------------
 // config — latest paf_form config (cached). Used by the submit form
 // ----------------------------------------------------------------------------
 async function getActiveConfig(supa) {
@@ -2373,6 +2434,7 @@ export const handler = async (event) => {
 
     if (event.httpMethod === "GET") {
       if (action === "list") return unwrap(await listPafs(supa, user));
+      if (action === "archive-list") return unwrap(await archivePafs(supa, user));
       if (action === "list-sdo-queue") return unwrap(await listSdoQueue(supa, user));
       if (action === "config") return unwrap(await getActiveConfig(supa));
       if (action === "audit-log") return unwrap(await listAuditLog(supa, user, params));
