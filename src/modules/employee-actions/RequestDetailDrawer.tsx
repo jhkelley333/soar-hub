@@ -47,7 +47,8 @@ function availableAction(
   // offers Approve while this drawer hides it.
   if (status === "Submitted") return isDo || isApprover ? "decide" : null;
   if (status === "DO Approved") return isApprover ? "decide" : null;
-  if (status === "SDO/RVP Approved") return canOps ? "paf-submitted" : null;
+  // "SDO/RVP Approved" is the finish line now — the DO no longer confirms a PAF
+  // was submitted. Legacy "PAF Submitted" rows stay closeable.
   if (status === "PAF Submitted") return canOps ? "close" : null;
   return null;
 }
