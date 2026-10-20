@@ -18,6 +18,7 @@ import { listEmployeeActions } from "./api";
 import { TrainingCreditForm } from "./TrainingCreditForm";
 import { PtoRequestForm } from "./PtoRequestForm";
 import { ApprovalQueue } from "./ApprovalQueue";
+import { AdminCloseoutPanel } from "./AdminCloseoutPanel";
 import { CreditBankPanel } from "./CreditBankPanel";
 import { PtoReportPanel } from "./PtoReportPanel";
 import { RequestDetailDrawer } from "./RequestDetailDrawer";
@@ -90,7 +91,7 @@ function overlaps(rowStartIso: string | null, rowEndIso: string | null, fallback
   return true;
 }
 
-type Tab = "training" | "pto" | "history" | "approvals" | "bank" | "pto-report";
+type Tab = "training" | "pto" | "history" | "approvals" | "bank" | "pto-report" | "closeout";
 
 const SUBMIT_ROLES = ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"];
 const APPROVER_ROLES = ["do", "sdo", "rvp", "admin"];
@@ -125,11 +126,13 @@ export function EmployeeActionsPage() {
 
   const canSubmit = SUBMIT_ROLES.includes(profile?.role ?? "");
   const canApprove = APPROVER_ROLES.includes(profile?.role ?? "");
+  const isAdmin = profile?.role === "admin";
 
   const options = [
     { value: "training" as const, label: "Training Credit" },
     { value: "pto" as const, label: "PTO Request" },
     ...(canApprove ? [{ value: "approvals" as const, label: "Approvals" }] : []),
+    ...(isAdmin ? [{ value: "closeout" as const, label: "Close-out" }] : []),
     { value: "history" as const, label: "History" },
     ...(canSubmit ? [{ value: "bank" as const, label: "Credit Bank" }] : []),
     ...(canSubmit ? [{ value: "pto-report" as const, label: "PTO Report" }] : []),
@@ -194,6 +197,8 @@ export function EmployeeActionsPage() {
         ))}
 
       {tab === "approvals" && (canApprove ? <ApprovalQueue /> : <NoAccess />)}
+
+      {tab === "closeout" && (isAdmin ? <AdminCloseoutPanel /> : <NoAccess />)}
 
       {tab === "history" && (
         <HistoryList focus={focus} onConsumeFocus={() => setFocus(null)} onEditTraining={editTrainingRow} onEditPto={editPtoRow} />
