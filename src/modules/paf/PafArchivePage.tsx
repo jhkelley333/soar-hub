@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
@@ -15,6 +16,7 @@ import {
   Eye,
   Paperclip,
   Printer,
+  ShieldCheck,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
@@ -33,6 +35,7 @@ import { applyFilters, QueueFilters, statusCounts, type QueueFilterState } from 
 import { downloadPafArchiveCsv } from "./csv";
 import { printPafArchive } from "./pafPrint";
 import { formatUSD } from "./cost";
+import { missingAttachment, RETENTION_YEARS, retainUntil, retentionMet } from "./retention";
 import type { PafRow, PafStatus } from "./types";
 
 const STATUS_TONE: Record<PafStatus, "neutral" | "warning" | "info" | "success" | "danger"> = {
@@ -72,6 +75,7 @@ export function PafArchivePage() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [attachOnly, setAttachOnly] = useState(false);
+  const [missingOnly, setMissingOnly] = useState(false);
   const [includeArchived, setIncludeArchived] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>("created_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -86,10 +90,11 @@ export function PafArchivePage() {
     let rows = applyFilters(allRows, filters);
     if (!includeArchived) rows = rows.filter((r) => !r.archived);
     if (attachOnly) rows = rows.filter((r) => !!r.nh_offer_letter_path);
+    if (missingOnly) rows = rows.filter((r) => missingAttachment(r));
     if (from) rows = rows.filter((r) => (r[dateField] ?? "").slice(0, 10) >= from);
     if (to) rows = rows.filter((r) => (r[dateField] ?? "").slice(0, 10) <= to);
     return rows;
-  }, [allRows, filters, includeArchived, attachOnly, from, to, dateField]);
+  }, [allRows, filters, includeArchived, attachOnly, missingOnly, from, to, dateField]);
 
   const counts = useMemo(() => statusCounts(allRows), [allRows]);
 
@@ -106,6 +111,7 @@ export function PafArchivePage() {
 
   const attachCount = useMemo(() => allRows.filter((r) => r.nh_offer_letter_path).length, [allRows]);
   const archivedCount = useMemo(() => allRows.filter((r) => r.archived).length, [allRows]);
+  const missingCount = useMemo(() => allRows.filter((r) => missingAttachment(r)).length, [allRows]);
 
   function clickSort(key: SortKey) {
     if (key === sortKey) setSortDir(sortDir === "asc" ? "desc" : "asc");
@@ -129,10 +135,11 @@ export function PafArchivePage() {
     if (filters.status !== "ALL") bits.push(filters.status);
     if (filters.query) bits.push(`"${filters.query}"`);
     if (attachOnly) bits.push("with attachment");
+    if (missingOnly) bits.push("missing required doc");
     if (from || to) bits.push(`${dateField === "created_at" ? "submitted" : "pay period"} ${from || "…"}–${to || "…"}`);
     if (!includeArchived) bits.push("active only");
     return bits.join(", ");
-  }, [filters, attachOnly, from, to, dateField, includeArchived]);
+  }, [filters, attachOnly, missingOnly, from, to, dateField, includeArchived]);
 
   if (query.isLoading) {
     return (
@@ -159,7 +166,7 @@ export function PafArchivePage() {
     <>
       <PageHeader
         title="PAF Archive"
-        description={`${allRows.length} total · ${attachCount} with attachment · ${archivedCount} archived`}
+        description={`${allRows.length} total · ${attachCount} with attachment · ${missingCount} missing required doc · ${archivedCount} archived`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="ghost" size="sm" onClick={() => navigate("/paf/queue")}>
@@ -187,6 +194,25 @@ export function PafArchivePage() {
           </div>
         }
       />
+
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg bg-accent/5 px-3 py-2 text-xs text-zinc-600 ring-1 ring-accent/10">
+        <ShieldCheck className="h-4 w-4 shrink-0 text-accent" strokeWidth={1.75} />
+        <span>
+          <span className="font-semibold text-midnight">Legal retention — {RETENTION_YEARS} years.</span>{" "}
+          PAFs and their attachments are kept {RETENTION_YEARS} years from submission ("Retain until"). "Delete" in
+          the queue archives a PAF — it stays in this record and is never destroyed.
+        </span>
+        {missingCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setMissingOnly(true)}
+            className="ml-auto inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-800 ring-1 ring-inset ring-amber-200 hover:bg-amber-100"
+          >
+            <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2} />
+            {missingCount} missing a required document
+          </button>
+        )}
+      </div>
 
       <Card>
         <div className="space-y-3 p-3">
@@ -227,6 +253,10 @@ export function PafArchivePage() {
               Has attachment
             </label>
             <label className="flex items-center gap-1.5">
+              <input type="checkbox" checked={missingOnly} onChange={(e) => setMissingOnly(e.target.checked)} className="h-3.5 w-3.5 accent-accent" />
+              Missing required doc
+            </label>
+            <label className="flex items-center gap-1.5">
               <input type="checkbox" checked={includeArchived} onChange={(e) => setIncludeArchived(e.target.checked)} className="h-3.5 w-3.5 accent-accent" />
               Include archived
             </label>
@@ -256,6 +286,7 @@ export function PafArchivePage() {
                   <SortableTh label="Status" k="status" active={sortKey} dir={sortDir} onClick={clickSort} />
                   <th className="px-3 py-2 font-medium">Attach</th>
                   <th className="px-3 py-2 font-medium">Submitter</th>
+                  <th className="px-3 py-2 font-medium">Retain until</th>
                   <th className="px-3 py-2 font-medium" />
                 </tr>
               </thead>
@@ -292,11 +323,25 @@ export function PafArchivePage() {
                           <Paperclip className="h-3.5 w-3.5" strokeWidth={1.75} />
                           View
                         </button>
+                      ) : missingAttachment(p) ? (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200"
+                          title="This category requires a signed offer letter, but none is on file"
+                        >
+                          <AlertTriangle className="h-3 w-3" strokeWidth={2} />
+                          missing
+                        </span>
                       ) : (
                         <span className="text-zinc-300">—</span>
                       )}
                     </td>
                     <td className="px-3 py-2 text-zinc-500">{p.submitter_email}</td>
+                    <td
+                      className="whitespace-nowrap px-3 py-2 tabular-nums text-zinc-500"
+                      title={retentionMet(p.created_at) ? "Retention window met" : `Under ${RETENTION_YEARS}-year legal retention`}
+                    >
+                      {retainUntil(p.created_at)}
+                    </td>
                     <td className="px-3 py-2 text-right">
                       <Button type="button" variant="ghost" size="sm" onClick={() => setDetail(p)}>
                         <Eye className="mr-1 h-3 w-3" strokeWidth={1.75} />

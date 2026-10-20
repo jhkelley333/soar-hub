@@ -3,6 +3,7 @@
 // Sheets / ADP imports.
 
 import type { PafRow } from "./types";
+import { missingAttachment, retainUntil } from "./retention";
 
 interface Column {
   header: string;
@@ -113,6 +114,7 @@ const ARCHIVE_COLUMNS: Column[] = [
   { header: "Explanation", get: (r) => r.explanation ?? "" },
   { header: "Notes", get: (r) => r.notes ?? "" },
   { header: "Has Attachment", get: (r) => (r.nh_offer_letter_path ? "Yes" : "") },
+  { header: "Missing Required Attachment", get: (r) => (missingAttachment(r) ? "Yes" : "") },
   { header: "Attachment (Offer Letter)", get: (r) => r.nh_offer_letter_path ?? "" },
   { header: "Submitter", get: (r) => r.submitter_email },
   { header: "Submitter Name", get: (r) => r.submitter_name ?? "" },
@@ -124,6 +126,7 @@ const ARCHIVE_COLUMNS: Column[] = [
   { header: "Rejection Reason", get: (r) => r.rejection_reason ?? "" },
   { header: "Archived", get: (r) => (r.archived ? "Yes" : "") },
   { header: "Archived At", get: (r) => (r.archived_at ? r.archived_at.slice(0, 10) : "") },
+  { header: "Retain Until (7 yr)", get: (r) => retainUntil(r.created_at) },
 ];
 
 export function buildPafArchiveCsv(rows: PafRow[]): string {
