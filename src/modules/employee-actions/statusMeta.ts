@@ -5,8 +5,10 @@
 import type { StatusPillKind } from "@/shared/ui/StatusPill";
 
 export function statusKind(status: string): StatusPillKind {
-  // Green only for the truly finished states.
-  if (status === "Completed" || status === "Closed") return "approved";
+  // Green for the finished states. PTO finishes at SDO/RVP approval now (the DO
+  // PAF-confirm / closeout steps were retired); "Closed" remains for legacy
+  // rows that were closed under the old flow.
+  if (status === "Completed" || status === "Closed" || status === "SDO/RVP Approved") return "approved";
   // Withdrawn — no longer needed; muted/grey, out of the active flow.
   if (status === "Withdrawn") return "pending";
   // Sent back to the submitter — its own lane.
@@ -30,7 +32,7 @@ export function waitingOn(kind: "training" | "pto", status: string, overBank = f
   // pto
   if (status === "Submitted") return "DO";
   if (status === "DO Approved") return "SDO/RVP";
-  if (status === "SDO/RVP Approved") return "DO";
-  if (status === "PAF Submitted") return "DO";
-  return null; // Closed
+  // "SDO/RVP Approved" is the finish line now — nobody is waiting on it.
+  if (status === "PAF Submitted") return "DO"; // legacy rows awaiting closeout
+  return null; // SDO/RVP Approved / Closed — done
 }

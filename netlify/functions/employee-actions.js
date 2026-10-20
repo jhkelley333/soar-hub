@@ -1010,7 +1010,7 @@ function buildPtoFields(body) {
 // tier would dead-end):
 //   GM       → Submitted        (DO approves, then SDO/RVP)
 //   DO       → DO Approved      (skips DO tier; SDO/RVP approves)
-//   SDO/RVP+ → SDO/RVP Approved (skips both tiers; a DO files the PAF next)
+//   SDO/RVP+ → SDO/RVP Approved (skips both tiers; this is the finish line)
 function ptoWorkflowFields(user, { shortNotice = false } = {}) {
   const now = new Date().toISOString();
   const isApprover = user.role === "sdo" || user.role === "rvp" || user.role === "admin";
@@ -1278,14 +1278,16 @@ const AUDIT_TYPE = {
 // The action a given role can take on a request at its current status, or
 // null. Covers approvals ("decide") and the post-approval confirmations.
 //   training: Submitted→decide (DO within bank / RVP over bank) → Completed
-//   pto:      Submitted→decide(DO or SDO/RVP) "DO Approved"→decide(SDO/RVP) "SDO/RVP Approved"→paf-submitted(DO) "PAF Submitted"→close(DO)
+//   pto:      Submitted→decide(DO or SDO/RVP) "DO Approved"→decide(SDO/RVP) "SDO/RVP Approved" [done]
+// The DO "Confirm PAF submitted" + closeout steps were retired: SDO/RVP approval
+// is now the finish line. Legacy rows already in "PAF Submitted" stay closeable
+// so nothing in flight is stranded.
 function actionableStep(type, status, role, isOwner = false, overBank = false) {
   const isApprover = role === "sdo" || role === "rvp" || role === "admin";
   const isDo = role === "do" || role === "admin";
-  // The post-approval operational steps (PAF filing / closeout) are normally a
-  // DO's job. But a senior submitter (SDO/RVP/admin) must also be able to run
-  // them on their OWN request — they outrank every approver, so there's no one
-  // below to hand the request down to.
+  // Closing out a legacy "PAF Submitted" row is normally a DO's job. But a
+  // senior submitter (SDO/RVP/admin) must also be able to run it on their OWN
+  // request — they outrank every approver, so there's no one below to hand it to.
   const canOps = isDo || (isOwner && isApprover);
   if (type === "training") {
     // Approval is the only step now — DO within bank, RVP over bank.
@@ -1299,8 +1301,8 @@ function actionableStep(type, status, role, isOwner = false, overBank = false) {
   // approval regardless of the DO tier.
   if (status === "Submitted") return isDo || isApprover ? "decide" : null;
   if (status === "DO Approved") return isApprover ? "decide" : null;
-  if (status === "SDO/RVP Approved") return canOps ? "paf-submitted" : null;
-  if (status === "PAF Submitted") return canOps ? "close" : null;
+  // "SDO/RVP Approved" is terminal now — no further action.
+  if (status === "PAF Submitted") return canOps ? "close" : null; // legacy rows only
   return null;
 }
 
@@ -1337,7 +1339,9 @@ async function listQueue(supa, user) {
   try {
     const [training, pto] = await Promise.all([
       fetchActionable("training", ["Submitted"]),
-      fetchActionable("pto", ["Submitted", "DO Approved", "SDO/RVP Approved", "PAF Submitted"]),
+      // "SDO/RVP Approved" is a finished state now, so it's not fetched as
+      // actionable; "PAF Submitted" stays for legacy rows still to be closed.
+      fetchActionable("pto", ["Submitted", "DO Approved", "PAF Submitted"]),
     ]);
     const distinct = Array.from(
       new Set([...training, ...pto].map((r) => r.store_number).filter(Boolean))
