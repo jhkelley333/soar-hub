@@ -648,12 +648,13 @@ async function offerLetterUrl(supa, user, pafId) {
 
   const { data: paf } = await supa
     .from("paf_submissions")
-    .select("nh_offer_letter_path, drive_in, submitter_id")
+    .select("nh_offer_letter_path, drive_in, submitter_id, resubmitted_by_id")
     .eq("id", pafId)
     .maybeSingle();
   if (!paf?.nh_offer_letter_path) return { error: "no offer letter on file", status: 404 };
 
-  if (!ORG_WIDE_READ.has(user.role) && paf.submitter_id !== user.id) {
+  const isMine = paf.submitter_id === user.id || paf.resubmitted_by_id === user.id;
+  if (!ORG_WIDE_READ.has(user.role) && !isMine) {
     const numbers = await resolveVisibleStoreNumbers(supa, user.id);
     if (!paf.drive_in || !numbers.includes(String(paf.drive_in))) {
       return { error: "not authorized", status: 403 };
@@ -680,15 +681,21 @@ async function listPafs(supa, user) {
     .order("created_at", { ascending: false });
 
   if (!ORG_WIDE_READ.has(user.role)) {
-    // Submitter / scope filter:
-    //   gm: their own primary_store + their submissions
-    //   do/sdo/rvp: any PAF whose drive_in is in their visible-store set
+    // Scope filter for do/sdo/rvp: any PAF whose drive_in is in their
+    // visible-store set, PLUS anything they submitted or resubmitted on behalf
+    // — even when its drive_in is null or outside their store set. Pay
+    // Adjustment (Salary) and New Hire (Salary Leader) PAFs (pay increases +
+    // offer letters) often carry NO store drive_in, so without the submitter
+    // clause an RVP couldn't see their own submissions.
     const numbers = await resolveVisibleStoreNumbers(supa, user.id);
+    const mine = `submitter_id.eq.${user.id},resubmitted_by_id.eq.${user.id}`;
     if (!numbers.length) {
-      // No reach -> show only their own submissions
-      q = q.eq("submitter_id", user.id);
+      q = q.or(mine);
     } else {
-      q = q.in("drive_in", numbers);
+      // Quote each store number for the PostgREST or() in-list and strip any
+      // delimiter chars so one odd value can't break the filter expression.
+      const inList = numbers.map((x) => `"${String(x).replace(/["(),]/g, "")}"`).join(",");
+      q = q.or(`drive_in.in.(${inList}),${mine}`);
     }
   }
 
@@ -1849,14 +1856,16 @@ async function listAuditLog(supa, user, query) {
 
   const { data: paf, error: pafErr } = await supa
     .from("paf_submissions")
-    .select("id, submitter_id, drive_in")
+    .select("id, submitter_id, resubmitted_by_id, drive_in")
     .eq("id", id)
     .maybeSingle();
   if (pafErr) return { error: pafErr.message, status: 500 };
   if (!paf) return { error: "PAF not found.", status: 404 };
 
-  // Scope check (mirrors listPafs).
-  if (!ORG_WIDE_READ.has(user.role) && paf.submitter_id !== user.id) {
+  // Scope check (mirrors listPafs): org-wide readers, the submitter, the
+  // on-behalf resubmitter, or an in-scope store all see the trail.
+  const isMine = paf.submitter_id === user.id || paf.resubmitted_by_id === user.id;
+  if (!ORG_WIDE_READ.has(user.role) && !isMine) {
     const numbers = await resolveVisibleStoreNumbers(supa, user.id);
     if (!numbers.includes(paf.drive_in)) {
       return { error: "out of scope", status: 403 };
