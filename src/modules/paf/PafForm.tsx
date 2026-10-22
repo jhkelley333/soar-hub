@@ -13,7 +13,7 @@ import { Badge } from "@/shared/ui/Badge";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { supabase } from "@/lib/supabase";
-import { fetchCutoffInfo, fetchMyStores, fetchPafConfig, resubmitPaf, submitPaf, type PafSubmitInput } from "./api";
+import { fetchCutoffInfo, fetchMyStores, fetchPafConfig, fetchRegionStores, resubmitPaf, submitPaf, type PafSubmitInput } from "./api";
 import { calcPafCost, formatUSD } from "./cost";
 import type { MyStore, PafConfigDoc, PafFieldDisplay, PafRow, ReferralTier } from "./types";
 
@@ -359,6 +359,7 @@ export function PafForm({
   const myStores = storesQuery.data?.stores ?? [];
 
   const { profile } = useAuth();
+
   // Weekly payroll cutoff (Wednesday 10:00 AM Central unless overridden) —
   // shown up front so nobody is surprised their PAF lands in next week.
   const cutoffQ = useQuery({ queryKey: ["paf-cutoff-info"], queryFn: fetchCutoffInfo, staleTime: 60_000 });
@@ -370,6 +371,23 @@ export function PafForm({
   // True when a leader is editing a rejected PAF someone else submitted.
   const onBehalf = isEdit && !!profile && editPaf!.submitter_id !== profile.id;
   const [state, setState] = useState<FormState>({});
+
+  // Cross Store Work lets the "Employee Home Store" picker span the caller's
+  // whole region (another market's store may be the employee's home); any pick
+  // outside the caller's own market is flagged. Fetched only for that category.
+  const isCrossStore = state.category === "Cross Store Work";
+  const regionStoresQuery = useQuery({
+    queryKey: ["paf-region-stores"],
+    queryFn: fetchRegionStores,
+    staleTime: 5 * 60_000,
+    enabled: isCrossStore,
+  });
+  const regionStores = regionStoresQuery.data?.stores ?? [];
+  const marketNumbers = useMemo(
+    () => new Set(myStores.map((s) => String(s.number))),
+    [myStores],
+  );
+
   const [error, setError] = useState<string | null>(null);
   const [offerName, setOfferName] = useState<string | null>(null);
   // Home-store verification: the submitter must confirm the entered home store
@@ -532,8 +550,13 @@ export function PafForm({
     [myStores, profile?.primary_store_id],
   );
   const enteredStore = useMemo(
-    () => myStores.find((s) => String(s.number) === homeStoreNum) ?? null,
-    [myStores, homeStoreNum],
+    () =>
+      myStores.find((s) => String(s.number) === homeStoreNum) ??
+      // Cross Store Work may pick a store elsewhere in the region (not in the
+      // market list), so fall back to the region list to resolve its name.
+      regionStores.find((s) => String(s.number) === homeStoreNum) ??
+      null,
+    [myStores, regionStores, homeStoreNum],
   );
   const primaryMismatch = !!(primaryStore && homeStoreNum && String(primaryStore.number) !== homeStoreNum);
   // Verify only when an actual home store was entered (the Salary-Leader new
@@ -884,8 +907,9 @@ export function PafForm({
           state={state}
           onChange={patch}
           cfg={cfg}
-          myStores={myStores}
+          myStores={isCrossStore && regionStores.length ? regionStores : myStores}
           allowAnyStore={state.category === "Transfer" && !!profile && TRANSFER_CROSS_SCOPE_ROLES.has(profile.role)}
+          outOfMarket={isCrossStore ? marketNumbers : undefined}
           extraCategories={
             profile && PAY_ADJ_SUBMITTER_ROLES.has(profile.role) ? [PAY_ADJ_SALARY] : []
           }
@@ -1816,6 +1840,7 @@ function FieldGrid({
   cfg,
   myStores,
   allowAnyStore = false,
+  outOfMarket,
   extraCategories = [],
   omitCategories = [],
 }: {
@@ -1825,6 +1850,7 @@ function FieldGrid({
   cfg: PafConfigDoc;
   myStores: MyStore[];
   allowAnyStore?: boolean;
+  outOfMarket?: Set<string>;
   extraCategories?: string[];
   omitCategories?: string[];
 }) {
@@ -1844,6 +1870,7 @@ function FieldGrid({
           lists={cfg.lists}
           myStores={myStores}
           allowAnyStore={allowAnyStore}
+          outOfMarket={outOfMarket}
           extraCategories={extraCategories}
           omitCategories={omitCategories}
         />
@@ -1885,6 +1912,7 @@ function FieldRender({
   readOnly,
   myStores,
   allowAnyStore = false,
+  outOfMarket,
   extraCategories = [],
   omitCategories = [],
 }: {
@@ -1896,6 +1924,7 @@ function FieldRender({
   readOnly?: boolean;
   myStores: MyStore[];
   allowAnyStore?: boolean;
+  outOfMarket?: Set<string>;
   extraCategories?: string[];
   omitCategories?: string[];
 }) {
@@ -1951,7 +1980,13 @@ function FieldRender({
             </option>
           ))}
         </select>
-        {cfg.helpText && <p className="mt-0.5 text-[11px] text-zinc-500">{cfg.helpText}</p>}
+        {outOfMarket && value && !outOfMarket.has(String(value)) ? (
+          <p className="mt-1 flex items-center gap-1 rounded-md bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-800 ring-1 ring-inset ring-amber-200">
+            <span aria-hidden>⚠</span> This store is not in your market.
+          </p>
+        ) : (
+          cfg.helpText && <p className="mt-0.5 text-[11px] text-zinc-500">{cfg.helpText}</p>
+        )}
       </div>
     );
   }

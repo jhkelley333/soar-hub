@@ -620,6 +620,51 @@ async function listMyStores(supa, user) {
 }
 
 // ----------------------------------------------------------------------------
+// region-stores — every active store in the caller's REGION(s). Used only by
+// the Cross Store Work "Employee Home Store" picker, where a DO may credit an
+// employee whose home store is elsewhere in their region (another market). The
+// form flags any pick outside the caller's own market. Org hierarchy:
+// stores -> districts(area_id) -> areas(region_id) -> regions.
+// ----------------------------------------------------------------------------
+async function listRegionStores(supa, user) {
+  if (!SUBMIT_ROLES.has(user.role)) return { stores: [] };
+
+  // Admin + org-wide roles (vp/coo/payroll) have no single region — give them
+  // every active store, same as the submit fallback.
+  if (user.role === "admin" || ORG_WIDE_READ.has(user.role)) {
+    const { data } = await excludeApricus(
+      supa.from("stores").select(STORE_SELECT).eq("is_active", true),
+    ).order("number");
+    return { stores: (data ?? []).map(flattenStore) };
+  }
+
+  // DO/SDO/RVP: walk the caller's visible stores up to their region(s), then
+  // back down to every store in those regions.
+  const visible = await resolveVisibleStoreRows(supa, user.id);
+  const areaIds = Array.from(new Set(visible.map((s) => s.area_id).filter(Boolean)));
+  if (!areaIds.length) return { stores: visible }; // no area link -> own scope
+
+  const { data: areas } = await supa.from("areas").select("region_id").in("id", areaIds);
+  const regionIds = Array.from(new Set((areas ?? []).map((a) => a.region_id).filter(Boolean)));
+  if (!regionIds.length) return { stores: visible };
+
+  const { data: regionAreas } = await supa.from("areas").select("id").in("region_id", regionIds);
+  const regionAreaIds = (regionAreas ?? []).map((a) => a.id);
+  if (!regionAreaIds.length) return { stores: visible };
+
+  const { data: regionDistricts } = await supa.from("districts").select("id").in("area_id", regionAreaIds);
+  const districtIds = (regionDistricts ?? []).map((d) => d.id);
+  if (!districtIds.length) return { stores: visible };
+
+  const { data } = await excludeApricus(
+    supa.from("stores").select(STORE_SELECT).in("district_id", districtIds).eq("is_active", true),
+  ).order("number");
+  // Honor the restricted-store gate (e.g. 8100 stays hidden from a DO).
+  const stores = (data ?? []).map(flattenStore).filter((s) => canSeeRestrictedStore(user.role, s.number));
+  return { stores };
+}
+
+// ----------------------------------------------------------------------------
 // Resolve caller's visible store-numbers (the store table's `number` column).
 // Reuses the existing user_visible_stores RPC + a stores lookup, exactly
 // like work-orders.js does.
@@ -2452,6 +2497,7 @@ export const handler = async (event) => {
       if (action === "config") return unwrap(await getActiveConfig(supa));
       if (action === "audit-log") return unwrap(await listAuditLog(supa, user, params));
       if (action === "my-stores") return unwrap(await listMyStores(supa, user));
+      if (action === "region-stores") return unwrap(await listRegionStores(supa, user));
       if (action === "cutoff-info") return unwrap(await cutoffInfo(supa));
       if (action === "list-cutoffs") return unwrap(await listCutoffs(supa, user));
       if (action === "offer-letter-url")
