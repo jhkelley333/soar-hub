@@ -98,10 +98,12 @@ const BONUS_BYPASS_ROLES = new Set(["rvp", "vp", "coo", "admin"]);
 // Roles that may edit + resubmit a REJECTED PAF on behalf of someone else
 // (still scope-checked). The original submitter can always resubmit their own.
 const ON_BEHALF_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
-// A Transfer inherently moves an employee across stores, so DO and above may
-// file one that touches a store outside their district/market/region — the
-// normal drive_in scope rejection is waived for them on Transfers.
+// A Transfer or Cross Store Work PAF inherently touches a store outside the
+// submitter's own district/market/region, so DO and above may file one whose
+// drive_in sits outside their scope — the normal rejection is waived for these
+// categories.
 const TRANSFER_CROSS_SCOPE_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+const CROSS_SCOPE_CATEGORIES = new Set(["Transfer", "Cross Store Work"]);
 
 // Pay Adjustment (Salary) — SDO/RVP submit a salary change for a GM/DO/SDO;
 // the VP approves it (reusing the SDO-approval machinery: same approver +
@@ -871,10 +873,12 @@ async function buildPafRowFromBody(supa, user, body) {
   // OR when the store is on the PAF_RESTRICTED_STORES allowlist for this
   // role — those are intentionally global for allowed roles even when they
   // sit outside the org tree (e.g. Store 8100 corporate/hold).
-  // A Transfer by DO+ may involve a store outside their scope (moving an
-  // employee across districts/markets/regions), so waive the rejection there.
-  const transferCrossScope = submitCategory === "Transfer" && TRANSFER_CROSS_SCOPE_ROLES.has(user.role);
-  if (driveIn && user.role !== "admin" && !PAF_RESTRICTED_STORES[String(driveIn)] && !transferCrossScope) {
+  // A Transfer or Cross Store Work PAF by DO+ may involve a store outside their
+  // scope (an employee moving across — or helping at — another
+  // district/market/region), so waive the rejection for those categories.
+  const crossScopeWaived =
+    CROSS_SCOPE_CATEGORIES.has(submitCategory) && TRANSFER_CROSS_SCOPE_ROLES.has(user.role);
+  if (driveIn && user.role !== "admin" && !PAF_RESTRICTED_STORES[String(driveIn)] && !crossScopeWaived) {
     const numbers = await resolveVisibleStoreNumbers(supa, user.id);
     if (!numbers.includes(driveIn)) {
       return { error: `Store ${driveIn} is outside your scope.`, status: 403 };
