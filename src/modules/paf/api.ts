@@ -67,6 +67,13 @@ export function fetchMyStores(): Promise<{ stores: MyStore[] }> {
   return request<{ stores: MyStore[] }>(`${FN}?action=my-stores`);
 }
 
+// Every active store in the caller's region(s). Used only by the Cross Store
+// Work "Employee Home Store" picker so a DO can credit a store elsewhere in
+// their region; the form flags any pick outside their own market.
+export function fetchRegionStores(): Promise<{ stores: MyStore[] }> {
+  return request<{ stores: MyStore[] }>(`${FN}?action=region-stores`);
+}
+
 export function fetchOfferLetterUrl(id: string): Promise<{ url: string }> {
   return request<{ url: string }>(
     `${FN}?action=offer-letter-url&id=${encodeURIComponent(id)}`
