@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, type FormEvent, type ChangeEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Flame, Trophy, Target, Calendar, ChevronDown, ChevronUp, Loader2, Crown, Medal, Award } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
@@ -58,7 +58,7 @@ function RankIcon({ rank }: { rank: number }) {
   return <span className="w-5 h-5 inline-flex items-center justify-center text-xs font-bold text-zinc-400">{rank}</span>;
 }
 
-function ProgressBar({ pct, direction }: { pct: number; direction: "higher" | "lower" }) {
+function ProgressBar({ pct }: { pct: number; direction?: "higher" | "lower" }) {
   const color = pct >= 80 ? "bg-emerald-500" : pct >= 50 ? "bg-amber-400" : "bg-rose-500";
   return (
     <div className="relative h-4 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
@@ -108,7 +108,7 @@ function AdminConfigPanel({ onSaved }: { onSaved: () => void }) {
     onError: (e: Error) => setErr(e.message),
   });
 
-  function submit(e: React.FormEvent) {
+  function submit(e: FormEvent) {
     e.preventDefault();
     setErr("");
     const tv = parseFloat(target);
@@ -122,7 +122,7 @@ function AdminConfigPanel({ onSaved }: { onSaved: () => void }) {
   return (
     <div className="rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 overflow-hidden">
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen((v: boolean) => !v)}
         className="w-full flex items-center justify-between px-5 py-3.5 text-sm font-semibold text-amber-800 dark:text-amber-300"
       >
         <span className="flex items-center gap-2"><Target className="h-4 w-4" /> Set Obsession Target</span>
@@ -136,7 +136,7 @@ function AdminConfigPanel({ onSaved }: { onSaved: () => void }) {
               <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Metric</span>
               <select
                 value={metricKey}
-                onChange={(e) => setMetricKey(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setMetricKey(e.target.value)}
                 className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm"
               >
                 {METRIC_CATALOG.map((m) => (
@@ -156,7 +156,7 @@ function AdminConfigPanel({ onSaved }: { onSaved: () => void }) {
                 type="number"
                 step="0.01"
                 value={target}
-                onChange={(e) => setTarget(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setTarget(e.target.value)}
                 placeholder={selectedMeta.format === "pct" ? "e.g. 92" : "e.g. 4500"}
                 className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm"
               />
@@ -167,7 +167,7 @@ function AdminConfigPanel({ onSaved }: { onSaved: () => void }) {
               <input
                 type="date"
                 value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setStartDate(e.target.value)}
                 className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm"
               />
             </label>
@@ -177,7 +177,7 @@ function AdminConfigPanel({ onSaved }: { onSaved: () => void }) {
               <input
                 type="date"
                 value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setEndDate(e.target.value)}
                 className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm"
               />
             </label>
@@ -188,9 +188,9 @@ function AdminConfigPanel({ onSaved }: { onSaved: () => void }) {
             <input
               type="text"
               value={headline}
-              onChange={(e) => setHeadline(e.target.value)}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setHeadline(e.target.value)}
               maxLength={80}
-              placeholder='e.g. "Let\'s own the drive-thru this period."'
+              placeholder={"e.g. \"Let's own the drive-thru this period.\""}
               className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm"
             />
             <span className="text-[11px] text-zinc-400">
@@ -268,7 +268,7 @@ export default function ObsessionPage() {
   // Find the viewer's store rank (for GMs)
   const myStoreNum = profile?.primary_store_id ?? null;
   const myRank = myStoreNum
-    ? rows.findIndex((r) => r.storeNumber === String(myStoreNum)) + 1
+    ? rows.findIndex((r: LeaderboardRow) => r.storeNumber === String(myStoreNum)) + 1
     : 0;
 
   if (configQ.isLoading) {
@@ -416,7 +416,7 @@ export default function ObsessionPage() {
                   <span className="hidden sm:block text-right">{cfg.metric_label}</span>
                   <span className="hidden sm:block text-right">vs Target</span>
                 </div>
-                {rows.map((row, i) => {
+                {rows.map((row: LeaderboardRow, i: number) => {
                   const rank = i + 1;
                   const isMe = myStoreNum && String(row.storeNumber) === String(myStoreNum);
                   const hitTarget =
