@@ -4,7 +4,7 @@
 // handled by router.tsx (gm/do/sdo/rvp/vp/coo/admin), so we don't
 // repeat it.
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Download } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -128,7 +128,7 @@ export function RankerPage() {
   function handleDrillH2H(s: string) {
     setStoreA(s);
     if (!storeB || storeB === s) {
-      const other = init.data!.allStores.find((x) => x !== s);
+      const other = init.data!.allStores.find((x: string) => x !== s);
       if (other) setStoreB(other);
     }
     setTab("h2h");
@@ -165,10 +165,10 @@ export function RankerPage() {
         <Field label="Week">
           <select
             value={week}
-            onChange={(e) => setWeek(e.target.value)}
+            onChange={(e: ChangeEvent<HTMLSelectElement>) => setWeek(e.target.value)}
             className="h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           >
-            {init.data.availableWeeks.map((w) => {
+            {init.data.availableWeeks.map((w: number) => {
               const range = fiscalWeekLabel(Number(w));
               return (
                 <option key={w} value={String(w)}>
@@ -184,13 +184,13 @@ export function RankerPage() {
             <Field label="Store">
               <select
                 value={store}
-                onChange={(e) => {
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => {
                   setStore(e.target.value);
                   setPeerStore("");
                 }}
                 className="h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               >
-                {init.data.allStores.map((s) => (
+                {init.data.allStores.map((s: string) => (
                   <option key={s} value={s}>
                     Store {s}
                   </option>
@@ -200,11 +200,11 @@ export function RankerPage() {
             <Field label="Peer">
               <select
                 value={peerStore}
-                onChange={(e) => setPeerStore(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setPeerStore(e.target.value)}
                 className="h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 <option value="">Auto-pick peer</option>
-                {peerCandidates.map((p) => (
+                {peerCandidates.map((p: PeerCandidate) => (
                   <option key={p.store} value={p.store}>
                     {p.store} · {money(p.weeklySales)}
                   </option>
@@ -219,10 +219,10 @@ export function RankerPage() {
             <Field label="Store A">
               <select
                 value={storeA}
-                onChange={(e) => setStoreA(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setStoreA(e.target.value)}
                 className="h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               >
-                {init.data.allStores.map((s) => (
+                {init.data.allStores.map((s: string) => (
                   <option key={s} value={s}>
                     Store {s}
                   </option>
@@ -232,10 +232,10 @@ export function RankerPage() {
             <Field label="Store B">
               <select
                 value={storeB}
-                onChange={(e) => setStoreB(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setStoreB(e.target.value)}
                 className="h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               >
-                {init.data.allStores.map((s) => (
+                {init.data.allStores.map((s: string) => (
                   <option key={s} value={s}>
                     Store {s}
                   </option>
@@ -311,7 +311,7 @@ function Field({
   children,
 }: {
   label: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-1">

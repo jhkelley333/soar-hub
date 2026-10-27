@@ -91,7 +91,7 @@ export function PortfolioView({ week, scopeFilter, onDrillStore, onDrillH2H }: P
   const avgMiss = useMemo(() => {
     const vals = (query.data?.portfolioRows ?? [])
       .map((r: PortfolioRow) => r.annualizedFcMiss)
-      .filter((v): v is number => v != null);
+      .filter((v: number | null): v is number => v != null);
     if (!vals.length) return null;
     return vals.reduce((s: number, v: number) => s + v, 0) / vals.length;
   }, [query.data?.portfolioRows]);
@@ -174,7 +174,7 @@ export function PortfolioView({ week, scopeFilter, onDrillStore, onDrillH2H }: P
             <StoreCard
               key={row.store}
               row={row}
-              tier={tiers.get(row.store) ?? null}
+              tier={(tiers.get(row.store) as Tier | undefined) ?? null}
               onDrillStore={onDrillStore}
               onDrillH2H={onDrillH2H}
             />
