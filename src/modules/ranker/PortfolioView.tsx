@@ -19,7 +19,7 @@ import type { PortfolioRow } from "./types";
 
 interface Props {
   week: string;
-  scopeFilter: "all" | "mine";
+  scopeFilter?: "all" | "mine";
   onDrillStore: (store: string) => void;
   onDrillH2H: (store: string) => void;
 }
@@ -58,7 +58,7 @@ export function PortfolioView({ week, scopeFilter, onDrillStore, onDrillH2H }: P
 
   const query = useQuery({
     queryKey: ["ranker", "war-room", week, scopeFilter],
-    queryFn: () => fetchWarRoom(week, scopeFilter),
+    queryFn: () => fetchWarRoom(week),
     staleTime: 60_000,
   });
 
@@ -69,9 +69,9 @@ export function PortfolioView({ week, scopeFilter, onDrillStore, onDrillH2H }: P
 
   const sorted = useMemo(() => {
     const rows = query.data?.portfolioRows ?? [];
-    return [...rows].sort((a, b) => {
-      const ta = tiers.get(a.store);
-      const tb = tiers.get(b.store);
+    return [...rows].sort((a: PortfolioRow, b: PortfolioRow) => {
+      const ta = tiers.get(a.store) as Tier | undefined;
+      const tb = tiers.get(b.store) as Tier | undefined;
       const ra = ta ? TIER_RANK[ta] : 3;
       const rb = tb ? TIER_RANK[tb] : 3;
       if (ra !== rb) return ra - rb; // worst tier first
@@ -81,7 +81,7 @@ export function PortfolioView({ week, scopeFilter, onDrillStore, onDrillH2H }: P
 
   const counts = useMemo(() => {
     const c = { all: 0, red: 0, yellow: 0, green: 0 };
-    for (const t of tiers.values()) {
+    for (const t of tiers.values() as IterableIterator<Tier>) {
       c[t]++;
       c.all++;
     }
@@ -90,10 +90,10 @@ export function PortfolioView({ week, scopeFilter, onDrillStore, onDrillH2H }: P
 
   const avgMiss = useMemo(() => {
     const vals = (query.data?.portfolioRows ?? [])
-      .map((r) => r.annualizedFcMiss)
-      .filter((v): v is number => v != null);
+      .map((r: PortfolioRow) => r.annualizedFcMiss)
+      .filter((v: number | null): v is number => v != null);
     if (!vals.length) return null;
-    return vals.reduce((s, v) => s + v, 0) / vals.length;
+    return vals.reduce((s: number, v: number) => s + v, 0) / vals.length;
   }, [query.data?.portfolioRows]);
 
   if (query.isLoading) {
@@ -126,7 +126,7 @@ export function PortfolioView({ week, scopeFilter, onDrillStore, onDrillH2H }: P
   const filtered =
     tier === "all"
       ? sorted
-      : sorted.filter((r) => tiers.get(r.store) === tier);
+      : sorted.filter((r: PortfolioRow) => tiers.get(r.store) === tier);
 
   return (
     <div className="space-y-3">
@@ -170,11 +170,11 @@ export function PortfolioView({ week, scopeFilter, onDrillStore, onDrillH2H }: P
             No stores in this tier.
           </p>
         ) : (
-          filtered.map((row) => (
+          filtered.map((row: PortfolioRow) => (
             <StoreCard
               key={row.store}
               row={row}
-              tier={tiers.get(row.store) ?? null}
+              tier={(tiers.get(row.store) as Tier | undefined) ?? null}
               onDrillStore={onDrillStore}
               onDrillH2H={onDrillH2H}
             />

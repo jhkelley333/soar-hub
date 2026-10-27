@@ -1,7 +1,7 @@
 // Cash Management — Night Closeout. Drawer count → live variance vs. cash-due
 // → $5 tolerance gate that forces a reason and escalates to DO & SDO.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Bell, Check, CalendarClock, Lock, Unlock } from "lucide-react";
@@ -11,7 +11,8 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
-import { fetchConfig, fetchMissedDays, fetchOverview, submitCloseout } from "./api";
+import { fetchConfig, fetchMissedDays, fetchOverview, submitCloseout, type SubmitCloseoutResult } from "./api";
+import type { Denom } from "./types";
 import { centsToInput, toCents, usd } from "./money";
 import { MoneyInput, Pill, Stepper } from "./ui";
 
@@ -28,7 +29,7 @@ export function CloseoutTab({
   const qc = useQueryClient();
   const toast = useToast();
   const { profile } = useAuth();
-  const LEADER_ROLES = ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"];
+  const ACT_ROLES = ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"];
 
   const configQuery = useQuery({ queryKey: ["cash-config"], queryFn: fetchConfig, staleTime: 5 * 60_000 });
   const overviewQuery = useQuery({ queryKey: ["cash-overview", storeId], queryFn: () => fetchOverview(storeId) });
@@ -80,7 +81,7 @@ export function CloseoutTab({
   }, [targetDate]);
 
   const countedCents = useMemo(
-    () => denoms.reduce((s, d) => s + d.cents * (count[d.id] || 0), 0),
+    () => denoms.reduce((s: number, d: Denom) => s + d.cents * (count[d.id] || 0), 0),
     [denoms, count]
   );
   useEffect(() => {
@@ -152,7 +153,7 @@ export function CloseoutTab({
         ...dateField,
       });
     },
-    onSuccess: (res) => {
+    onSuccess: (res: SubmitCloseoutResult) => {
       // Wrong-day fail-safe tripped — ask which day before recording.
       if (res.confirm_business_date && res.today && res.suggested_date) {
         setConfirming(false);
@@ -302,11 +303,11 @@ export function CloseoutTab({
             </div>
             <select
               value={targetDate ?? ""}
-              onChange={(e) => setTargetDate(e.target.value || null)}
+              onChange={(e: ChangeEvent<HTMLSelectElement>) => setTargetDate(e.target.value || null)}
               className="rounded-md border-0 bg-white px-3 py-2 text-sm font-medium text-midnight ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
             >
               <option value="">Today{today ? ` · ${new Date(`${today}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}</option>
-              {missedDays.map((d) => (
+              {missedDays.map((d: string) => (
                 <option key={d} value={d}>
                   {new Date(`${d}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} — missed
                 </option>
@@ -322,7 +323,7 @@ export function CloseoutTab({
               <input
                 type="text"
                 value={lateNote}
-                onChange={(e) => setLateNote(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setLateNote(e.target.value)}
                 maxLength={500}
                 placeholder="e.g. Closer clocked out before counting the drawer"
                 className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm ring-1 ring-inset ring-red-200 focus:outline-none focus:ring-2 focus:ring-accent"
@@ -371,7 +372,7 @@ export function CloseoutTab({
           </p>
           <textarea
             value={correctionReason}
-            onChange={(e) => setCorrectionReason(e.target.value)}
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setCorrectionReason(e.target.value)}
             maxLength={500}
             rows={2}
             placeholder="Reason for correction (e.g. miscounted the $20 strap; recounted to $1,240)"
@@ -398,7 +399,7 @@ export function CloseoutTab({
             </Button>
           </div>
           <div>
-            {denoms.map((d, i) => {
+            {denoms.map((d: Denom, i: number) => {
               const sub = d.cents * (count[d.id] || 0);
               return (
                 <div
@@ -412,7 +413,7 @@ export function CloseoutTab({
                     {d.label}
                   </div>
                   <div className="text-xs capitalize text-zinc-400">{d.type}</div>
-                  <Stepper value={count[d.id] || 0} onChange={(v) => setCount((c) => ({ ...c, [d.id]: v }))} />
+                  <Stepper value={count[d.id] || 0} onChange={(v: number) => setCount((c: Record<string, number>) => ({ ...c, [d.id]: v }))} />
                   <div className={cn("text-right text-sm font-semibold tabular-nums", sub ? "text-midnight" : "text-zinc-300")}>
                     {usd(sub)}
                   </div>
@@ -493,7 +494,7 @@ export function CloseoutTab({
                 </div>
                 <textarea
                   value={reason}
-                  onChange={(e) => setReason(e.target.value)}
+                  onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setReason(e.target.value)}
                   rows={3}
                   placeholder="Required — explain the over/short (min 8 chars)…"
                   className="block w-full resize-y rounded-md border-0 px-3 py-2 text-sm ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
@@ -510,7 +511,7 @@ export function CloseoutTab({
               <input
                 type="checkbox"
                 checked={ackDate}
-                onChange={(e) => setAckDate(e.target.checked)}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setAckDate(e.target.checked)}
                 className="mt-0.5 h-4 w-4 rounded border-zinc-300 text-accent focus:ring-accent"
               />
               <span>
