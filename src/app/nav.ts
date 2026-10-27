@@ -28,6 +28,7 @@ import {
   Fingerprint,
   LifeBuoy,
   Activity,
+  Flame,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -52,6 +53,8 @@ export interface NavItem {
 // confusion with org-tree or work-order modules they don't operate.
 export const NAV: NavItem[] = [
   { to: "/",            label: "Dashboard",   icon: LayoutDashboard, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Obsession Metric — company-wide single metric chase, all roles.
+  { to: "/obsession",   label: "Obsession Metric", icon: Flame, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
   // Work Orders V2 — now the primary facilities ticketing flow.
   // Sits at the top right under Dashboard so it's the first
   // operational tool field roles see.
@@ -279,6 +282,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/operations": "OPERATIONS",
   "/business-disruptions": "OPERATIONS",
   "/admin/ranking": "OPERATIONS",
+  "/obsession": "MAIN",
   "/comms-board": "OPERATIONS",
   "/admin/ranking/bottom-performers": "OPERATIONS",
   "/coo-map": "OPERATIONS",
