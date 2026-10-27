@@ -28,7 +28,7 @@ export function CloseoutTab({
   const qc = useQueryClient();
   const toast = useToast();
   const { profile } = useAuth();
-  const ACT_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
+  const LEADER_ROLES = ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"];
 
   const configQuery = useQuery({ queryKey: ["cash-config"], queryFn: fetchConfig, staleTime: 5 * 60_000 });
   const overviewQuery = useQuery({ queryKey: ["cash-overview", storeId], queryFn: () => fetchOverview(storeId) });
@@ -347,8 +347,8 @@ export function CloseoutTab({
                 {canUnlock
                   ? " Unlock to correct an error — you'll add a reason and it's logged."
                   : verified
-                    ? " Verified days can only be corrected by a DO or higher."
-                    : " Only the original closer, GM, or DO can correct this."}
+                    ? " Verified days can only be corrected by a GM or higher."
+                    : " Only the closer or a GM/DO can correct this."}
               </div>
             </div>
             {canUnlock && (

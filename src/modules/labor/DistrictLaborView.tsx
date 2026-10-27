@@ -38,7 +38,7 @@ type SortKey = "store" | "day" | "wtd" | "mtd" | "var" | "over" | "hrs" | "statu
 type SortDir = "asc" | "desc";
 interface SortState { key: SortKey; dir: SortDir }
 
-const HORIZON_LABEL: Record<Horizon, string> = { day: "Day %", wtd: "WTD %", mtd: "MTD %" };
+const HORIZON_LABEL: Record<Horizon, string> = { day: "Day %", wtd: "WTD %", mtd: "PTD %" };
 
 // Same fixed root-cause list the GM picks from when explaining a miss.
 const ROOT_CAUSE_LABEL: Record<string, string> = {
@@ -195,7 +195,7 @@ export function DistrictLaborView() {
               options={[
                 { value: "day", label: "Day" },
                 { value: "wtd", label: "WTD" },
-                { value: "mtd", label: "MTD" },
+                { value: "mtd", label: "PTD" },
               ]}
             />
             {multiDistrict && (
@@ -256,7 +256,7 @@ export function DistrictLaborView() {
               tone={rollup.wtd_dollars_over_chart > 0 ? "over" : "on"}
             />
             <Tile
-              label="MTD Labor %"
+              label="PTD Labor %"
               value={fmtPct(rollup.ptd_labor_pct)}
               subOverride={
                 rollup.ptd_dollars_over_chart
