@@ -6,7 +6,7 @@
 // Route gating on /ranker already restricts visibility to do+, so any
 // caller who can see this tab is implicitly DO and above.
 
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/shared/ui/Card";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -17,7 +17,7 @@ import type { PortfolioRow } from "./types";
 
 interface Props {
   week: string;
-  scopeFilter: "all" | "mine";
+  scopeFilter?: "all" | "mine";
   onDrillStore: (store: string) => void;
   onDrillH2H: (store: string) => void;
 }
@@ -25,7 +25,7 @@ interface Props {
 export function FcMissView({ week, scopeFilter, onDrillStore, onDrillH2H }: Props) {
   const query = useQuery({
     queryKey: ["ranker", "war-room", week, scopeFilter],
-    queryFn: () => fetchWarRoom(week, scopeFilter),
+    queryFn: () => fetchWarRoom(week),
     staleTime: 60_000,
   });
 
@@ -34,10 +34,10 @@ export function FcMissView({ week, scopeFilter, onDrillStore, onDrillH2H }: Prop
   const missRows: PortfolioRow[] = useMemo(() => {
     if (!query.data) return [];
     return query.data.portfolioRows
-      .filter((r) => r.annualizedFcMiss !== null && r.annualizedFcMiss > 0)
+      .filter((r: PortfolioRow) => r.annualizedFcMiss !== null && r.annualizedFcMiss > 0)
       .slice()
       .sort(
-        (a, b) =>
+        (a: PortfolioRow, b: PortfolioRow) =>
           (b.annualizedFcMiss ?? 0) - (a.annualizedFcMiss ?? 0),
       );
   }, [query.data]);
@@ -158,7 +158,7 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SectionLabel({ children }: { children: ReactNode }) {
   return (
     <div className="border-b border-zinc-100 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
       {children}
