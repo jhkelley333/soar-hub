@@ -1292,7 +1292,7 @@ function VogUploadPanel() {
           <select value={scope} onChange={(e) => setScope(e.target.value as "ptd" | "wtd" | "auto")} className={cn(inputCls)}>
             <option value="auto">Detect from filename</option>
             <option value="wtd">Week to date</option>
-            <option value="ptd">Period (MTD)</option>
+            <option value="ptd">Period to date (PTD)</option>
           </select>
           <label className={cn(
             "cursor-pointer rounded-lg bg-midnight px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-800",

@@ -274,7 +274,7 @@ export function MetricsThatMatter() {
                   period === pk ? "bg-accent text-white" : "bg-white text-ink-muted hover:bg-zinc-50 dark:bg-night-raised dark:text-night-muted dark:hover:bg-white/5",
                 )}
               >
-                {pk === "daily" ? "Daily" : pk === "wtd" ? "WTD" : "MTD"}
+                {pk === "daily" ? "Daily" : pk === "wtd" ? "WTD" : "PTD"}
               </button>
             ))}
           </div>
@@ -324,7 +324,7 @@ export function MetricsThatMatter() {
             ))}
           </div>
           <p className="mt-3 text-[11.5px] text-ink-subtle dark:text-night-muted">
-            Comparison depends on the period: WTD vs. the same period last week, MTD vs. last month, Daily vs. yesterday.
+            Comparison depends on the period: WTD vs. the same period last week, PTD vs. the same period last period, Daily vs. yesterday.
           </p>
         </Modal>
       )}

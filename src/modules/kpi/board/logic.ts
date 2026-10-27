@@ -138,5 +138,5 @@ export function metricView(def: MetricDef, vals: MetricValues | undefined, per: 
 export const PERIOD_LABELS: Record<Period, { label: string; compare: string }> = {
   daily: { label: "Today", compare: "Yesterday" },
   wtd: { label: "Week to date", compare: "Same period last week" },
-  mtd: { label: "Month to date", compare: "Same period last month" },
+  mtd: { label: "Period to date", compare: "Same period last period" },
 };

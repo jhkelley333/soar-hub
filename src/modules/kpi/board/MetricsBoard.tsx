@@ -397,7 +397,7 @@ export function MetricsBoard() {
                   onClick={() => setPeriod(pk)}
                   className={cn("px-3 py-1.5 text-sm font-semibold transition", period === pk ? "bg-accent text-white" : "bg-white text-zinc-600 hover:bg-zinc-50")}
                 >
-                  {pk === "daily" ? "Daily" : pk === "wtd" ? "WTD" : "MTD"}
+                  {pk === "daily" ? "Daily" : pk === "wtd" ? "WTD" : "PTD"}
                 </button>
               ))}
             </div>
