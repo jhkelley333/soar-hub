@@ -602,6 +602,7 @@ export function OrgPage() {
         open={!!addTarget}
         target={addTarget}
         parentLabel={addParentLabel}
+        tree={data}
         onClose={() => {
           setAddTarget(null);
           setAddParentLabel(undefined);
