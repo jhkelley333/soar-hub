@@ -794,15 +794,55 @@ export function EditOrgNodeModal({
 // AddOrgNodeModal — create a new region/area/district/store under a parent
 // ----------------------------------------------------------------------------
 
+// Compute the next sequential code for a new area or district.
+// Scans existing codes in the tree, finds the highest numeric suffix, adds 1.
+function nextCode(kind: "region" | "area" | "district", tree: OrgTreeResponse | null): string {
+  if (!tree) return "";
+  const nums: number[] = [];
+  if (kind === "region") {
+    for (const r of tree.regions) {
+      const m = r.code?.match(/^R(\d+)$/i);
+      if (m) nums.push(parseInt(m[1], 10));
+    }
+    const next = nums.length ? Math.max(...nums) + 1 : 1;
+    return `R${next}`;
+  }
+  if (kind === "area") {
+    for (const r of tree.regions) {
+      for (const a of r.areas) {
+        const m = a.code?.match(/^Area\s*(\d+)$/i);
+        if (m) nums.push(parseInt(m[1], 10));
+      }
+    }
+    const next = nums.length ? Math.max(...nums) + 1 : 1;
+    return `Area ${next}`;
+  }
+  if (kind === "district") {
+    for (const r of tree.regions) {
+      for (const a of r.areas) {
+        for (const d of a.districts) {
+          const m = d.code?.match(/^D(\d+)$/i);
+          if (m) nums.push(parseInt(m[1], 10));
+        }
+      }
+    }
+    const next = nums.length ? Math.max(...nums) + 1 : 1;
+    return `D${next}`;
+  }
+  return "";
+}
+
 export function AddOrgNodeModal({
   open,
   target,
   parentLabel,
+  tree,
   onClose,
 }: {
   open: boolean;
   target: AddTarget | null;
   parentLabel?: string;
+  tree?: OrgTreeResponse | null;
   onClose: () => void;
 }) {
   const qc = useQueryClient();
@@ -823,7 +863,8 @@ export function AddOrgNodeModal({
 
   useEffect(() => {
     if (!open) return;
-    setCode("");
+    // Auto-assign the next sequential code for area/district/region.
+    setCode(target && target.kind !== "store" ? nextCode(target.kind, tree ?? null) : "");
     setName("");
     setNumber("");
     setPhone("");
