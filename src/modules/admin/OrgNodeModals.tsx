@@ -863,8 +863,7 @@ export function AddOrgNodeModal({
 
   useEffect(() => {
     if (!open) return;
-    // Auto-assign the next sequential code for area/district/region.
-    setCode(target && target.kind !== "store" ? nextCode(target.kind, tree ?? null) : "");
+    // Reset all fields when the modal opens for a new target.
     setName("");
     setNumber("");
     setPhone("");
@@ -874,7 +873,16 @@ export function AddOrgNodeModal({
     setZip("");
     setActive(true);
     setError(null);
-  }, [open, target]);
+    setCode(target && target.kind !== "store" ? nextCode(target.kind, tree ?? null) : "");
+  }, [open, target]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Once tree loads (it may arrive after the modal opens), fill in the code
+  // if it is still the empty placeholder — don't overwrite something the
+  // user already typed.
+  useEffect(() => {
+    if (!open || !target || target.kind === "store") return;
+    setCode((prev) => (prev === "" ? nextCode(target.kind, tree ?? null) : prev));
+  }, [tree, open, target]);
 
   const create = useMutation({ mutationFn: createOrgNode });
 
