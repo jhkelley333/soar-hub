@@ -154,7 +154,7 @@ export function RankingP110ExportView() {
         <PeriodSelect label="To" value={toP} onChange={(v) => { setToP(v); if (v < fromP) setFromP(v); }} min={fromP} />
         <Button
           size="sm"
-          variant="outline"
+          variant="secondary"
           disabled={isLoading || rows.length === 0}
           onClick={() => downloadCsv(rows, fromP, toP)}
           className="ml-auto"
