@@ -3,7 +3,6 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import * as XLSX from "xlsx";
 import { fetchFullMetricsExport, type FullMetricsExportRow } from "./api";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { Button } from "@/shared/ui/Button";
@@ -24,6 +23,11 @@ function pct(v: number | null | undefined): string {
 function dollar(v: number | null | undefined): string {
   if (v == null) return "—";
   return `$${Math.round(v).toLocaleString()}`;
+}
+
+// Sheet name: "P7 W1" — matches the Ranker week-picker format.
+function weekLabel(row: FullMetricsExportRow): string {
+  return `P${row.period} W${row.week ?? "?"}`;
 }
 
 // ── Excel column definitions ──────────────────────────────────────────────────
@@ -79,59 +83,57 @@ const XL_COLS: { header: string; key: keyof FullMetricsExportRow }[] = [
 
 // ── Excel download ────────────────────────────────────────────────────────────
 
-// Format a week_ending date string ("2025-07-05") → "Sun, Jul 5"
-function fmtWeekEnding(dateStr: string | null): string {
-  if (!dateStr) return "";
-  // Use noon UTC to avoid date shifting due to local timezone offsets.
-  const d = new Date(dateStr + "T12:00:00Z");
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
-}
+async function downloadExcel(
+  rows: FullMetricsExportRow[],
+  fromP: number,
+  toP: number,
+  onError: (msg: string) => void,
+) {
+  try {
+    // Dynamic import so bundlers don't tree-shake critical xlsx internals.
+    const XLSX = await import("xlsx");
 
-// Build the sheet-name key for a row: "P7W1 · Sun, Jul 5"
-// Excel sheet names max 31 chars; this format is ~18 chars.
-function sheetKey(row: FullMetricsExportRow): string {
-  const label = fmtWeekEnding(row.week_ending);
-  return label ? `P${row.period}W${row.week ?? "?"} · ${label}` : `P${row.period}W${row.week ?? "?"}`;
-}
-
-function downloadExcel(rows: FullMetricsExportRow[], fromP: number, toP: number) {
-  // Group rows by week, preserving one representative row for sort metadata.
-  type WeekMeta = { period: number; week: number | null; rows: FullMetricsExportRow[] };
-  const weekMap = new Map<string, WeekMeta>();
-  for (const row of rows) {
-    const key = sheetKey(row);
-    if (!weekMap.has(key)) weekMap.set(key, { period: row.period, week: row.week, rows: [] });
-    weekMap.get(key)!.rows.push(row);
-  }
-
-  // Sort sheets by period then week number.
-  const sorted = [...weekMap.entries()].sort(([, a], [, b]) => {
-    if (a.period !== b.period) return a.period - b.period;
-    return (a.week ?? 0) - (b.week ?? 0);
-  });
-
-  const wb = XLSX.utils.book_new();
-  for (const [name, meta] of sorted) {
-    const aoa: unknown[][] = [XL_COLS.map((c) => c.header)];
-    for (const row of meta.rows) {
-      aoa.push(XL_COLS.map((c) => row[c.key] ?? null));
+    // Group rows by week label ("P7 W1", "P7 W2" …).
+    type Sheet = { period: number; week: number | null; rows: FullMetricsExportRow[] };
+    const sheetMap = new Map<string, Sheet>();
+    for (const row of rows) {
+      const key = weekLabel(row);
+      if (!sheetMap.has(key)) sheetMap.set(key, { period: row.period, week: row.week, rows: [] });
+      sheetMap.get(key)!.rows.push(row);
     }
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws["!cols"] = XL_COLS.map((c) => ({ wch: Math.max(c.header.length, 10) }));
-    XLSX.utils.book_append_sheet(wb, ws, name);
-  }
 
-  // Use Blob + anchor for reliable browser download (avoids writeFile quirks).
-  const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
-  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `soar-ranking-P${fromP}-P${toP}-${new Date().toISOString().slice(0, 10)}.xlsx`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+    // Sort sheets by period then week.
+    const sorted = [...sheetMap.entries()].sort(([, a], [, b]) =>
+      a.period !== b.period ? a.period - b.period : (a.week ?? 0) - (b.week ?? 0)
+    );
+
+    const wb = XLSX.utils.book_new();
+    for (const [name, sheet] of sorted) {
+      const aoa: unknown[][] = [XL_COLS.map((c) => c.header)];
+      for (const row of sheet.rows) {
+        aoa.push(XL_COLS.map((c) => row[c.key] ?? null));
+      }
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws["!cols"] = XL_COLS.map((c) => ({ wch: Math.max(c.header.length, 10) }));
+      XLSX.utils.book_append_sheet(wb, ws, name);
+    }
+
+    // Write to Uint8Array, then trigger download via hidden anchor.
+    const buf: Uint8Array = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([buf], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `soar-ranking-P${fromP}-P${toP}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    onError((e as Error).message ?? "Excel download failed");
+  }
 }
 
 // ── Period selector ───────────────────────────────────────────────────────────
@@ -170,6 +172,8 @@ function PeriodSelect({
 export function RankingP110ExportView() {
   const [fromP, setFromP] = useState(1);
   const [toP, setToP] = useState(13);
+  const [dlError, setDlError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["full-metrics-export", fromP, toP],
@@ -178,9 +182,14 @@ export function RankingP110ExportView() {
   });
 
   const rows = data?.rows ?? [];
+  const weekCount = new Set(rows.map(weekLabel)).size;
 
-  // Count unique weeks for the button label.
-  const weekCount = new Set(rows.map(sheetKey)).size;
+  async function handleDownload() {
+    setDlError(null);
+    setDownloading(true);
+    await downloadExcel(rows, fromP, toP, setDlError);
+    setDownloading(false);
+  }
 
   return (
     <div className="space-y-4">
@@ -201,19 +210,22 @@ export function RankingP110ExportView() {
         <Button
           size="sm"
           variant="secondary"
-          disabled={isLoading || rows.length === 0}
-          onClick={() => downloadExcel(rows, fromP, toP)}
+          disabled={isLoading || rows.length === 0 || downloading}
+          onClick={handleDownload}
           className="ml-auto"
         >
           <Download className="mr-1.5 h-4 w-4" />
-          Download Excel
-          {weekCount > 0 && ` (${weekCount} sheet${weekCount !== 1 ? "s" : ""})`}
+          {downloading
+            ? "Building…"
+            : `Download Excel${weekCount > 0 ? ` (${weekCount} sheet${weekCount !== 1 ? "s" : ""})` : ""}`}
         </Button>
       </div>
 
-      {/* Error */}
-      {error && (
-        <p className="text-sm text-destructive">{(error as Error).message}</p>
+      {/* Errors */}
+      {(error || dlError) && (
+        <p className="text-sm text-destructive">
+          {dlError ?? (error as Error).message}
+        </p>
       )}
 
       {/* Table preview */}
@@ -225,7 +237,7 @@ export function RankingP110ExportView() {
         </div>
       ) : rows.length === 0 ? (
         <p className="py-12 text-center text-sm text-muted-foreground">
-          No data for P{fromP}–P{toP}.
+          No run data for P{fromP}–P{toP}.
         </p>
       ) : (
         <div className="overflow-x-auto rounded border border-border">
@@ -250,16 +262,12 @@ export function RankingP110ExportView() {
                 <th className="whitespace-nowrap px-2 py-2 text-right font-medium">VOG</th>
                 <th className="whitespace-nowrap px-2 py-2 text-right font-medium">Fin Sc</th>
                 <th className="whitespace-nowrap px-2 py-2 text-right font-medium">Ops Sc</th>
-                <th className="whitespace-nowrap px-2 py-2 text-left font-medium">Src</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {rows.map((row, i) => (
                 <tr key={i} className="hover:bg-muted/40">
-                  <td className="whitespace-nowrap px-2 py-1.5">
-                    P{row.period}W{row.week ?? "?"}
-                    {row.week_ending && <span className="ml-1 text-muted-foreground">· {fmtWeekEnding(row.week_ending)}</span>}
-                  </td>
+                  <td className="whitespace-nowrap px-2 py-1.5 font-medium">{weekLabel(row)}</td>
                   <td className="px-2 py-1.5 font-mono">{row.store}</td>
                   <td className="max-w-[160px] truncate px-2 py-1.5">{row.location ?? "—"}</td>
                   <td className="max-w-[120px] truncate px-2 py-1.5">{row.gm ?? "—"}</td>
@@ -281,7 +289,6 @@ export function RankingP110ExportView() {
                   <td className="px-2 py-1.5 text-right">{n2(row.vog_raw, 2)}</td>
                   <td className="px-2 py-1.5 text-right">{n2(row.fin_score, 2)}</td>
                   <td className="px-2 py-1.5 text-right">{n2(row.ops_score, 2)}</td>
-                  <td className="px-2 py-1.5 text-muted-foreground">{row.source}</td>
                 </tr>
               ))}
             </tbody>
@@ -290,7 +297,7 @@ export function RankingP110ExportView() {
       )}
 
       <p className="text-xs text-muted-foreground">
-        Excel file contains one sheet per week (e.g. P10W4) with all {XL_COLS.length} tracked metrics.
+        One Excel sheet per week (P7 W1, P7 W2 …) · {XL_COLS.length} metric columns per sheet.
       </p>
     </div>
   );
