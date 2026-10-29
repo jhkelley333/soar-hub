@@ -457,8 +457,8 @@ export function RankingAdminPage() {
     { value: "shakers", label: "Movers & Shakers" },
     { value: "drill", label: "Drill" },
     { value: "watchlist", label: "Watchlist" },
-    { value: "awards", label: "Awards" },
-    { value: "export", label: "Export" },
+    ...(isAdmin ? [{ value: "awards" as AdminView, label: "Awards" }] : []),
+    ...(isAdmin ? [{ value: "export" as AdminView, label: "Export" }] : []),
     ...(canSettings ? [{ value: "settings" as AdminView, label: isAdmin ? "System settings" : "Ranker uploads" }] : []),
   ];
   const active = view === "settings" && !canSettings ? "ranking" : view;

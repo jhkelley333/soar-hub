@@ -719,3 +719,69 @@ export interface P110ExportResponse {
 export function fetchP110Export(from = 1, to = 13): Promise<P110ExportResponse> {
   return req(`${FN}?action=p1-p10-export&from=${from}&to=${to}`);
 }
+
+// ── Full metrics flat-row export ──────────────────────────────────────────────
+export interface FullMetricsExportRow {
+  period: number;
+  week: number | null;
+  week_ending: string | null;
+  source: "run" | "official";
+  rank: number | null;
+  total_points: number | null;
+  store: string;
+  location: string | null;
+  gm: string | null;
+  do_name: string | null;
+  sdo_name: string | null;
+  // Sales
+  ptd_sales: number | null;
+  ly_sales: number | null;
+  pct_vs_ly: number | null;
+  tickets: number | null;
+  tickets_vs_ly_pct: number | null;
+  sales_score: number | null;
+  // Food cost
+  cogs_eff: number | null;
+  fc_miss: number | null;
+  fc_annualized: number | null;
+  fc_score: number | null;
+  // Labor
+  labor_pct: number | null;
+  labor_chart: number | null;
+  labor_variance: number | null;
+  labor_miss: number | null;
+  labor_score: number | null;
+  // Ops
+  on_time_pct: number | null;
+  on_time_score: number | null;
+  calls_per_10k: number | null;
+  complaints_score: number | null;
+  vog_raw: number | null;
+  vog_score: number | null;
+  ecosure_score: number | null;
+  bsc_score: number | null;
+  total_training_pct: number | null;
+  total_training_score: number | null;
+  // Roll-up scores
+  fin_score: number | null;
+  ops_score: number | null;
+  // Info-only
+  voids: number | null;
+  voids_pct: number | null;
+  cash_over_short: number | null;
+  doh: number | null;
+  ms_count: number | null;
+  ms_score: number | null;
+  tr_vs_tz: number | null;
+  evening_pct: number | null;
+}
+
+export interface FullMetricsExportResponse {
+  periods: number[];
+  rows: FullMetricsExportRow[];
+  error: string | null;
+}
+
+export function fetchFullMetricsExport(from = 1, to = 13): Promise<FullMetricsExportResponse> {
+  return req(`${FN}?action=full-metrics-export&from=${from}&to=${to}`);
+}
