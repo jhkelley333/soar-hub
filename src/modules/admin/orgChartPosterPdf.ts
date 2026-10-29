@@ -1,8 +1,7 @@
 // SOAR QSR Org Chart — poster PDF. Reproduces the uploaded visual org chart:
 // an executive header block on top, then RVP -> SDO tiers, and beneath each SDO
 // its DOs stacked VERTICALLY in one or more columns (each DO box = leader /
-// district territory / store list). Acting ("DO TEMP") coverage is highlighted
-// yellow. jsPDF, client-side, downloadable from Org Admin.
+// district territory / store list). jsPDF, client-side, downloadable from Org Admin.
 import { jsPDF } from "jspdf";
 import type { OrgArea, OrgDistrict, OrgManager, OrgRegion, OrgTreeResponse } from "./api";
 
@@ -11,21 +10,20 @@ import type { OrgArea, OrgDistrict, OrgManager, OrgRegion, OrgTreeResponse } fro
 // from page center); links draw the reporting lines. Keep in sync with the
 // source chart.
 const EXEC = [
-  { id: "nik", name: "Nik Bhakta", title: "Principal", col: -3, row: 0 },
-  { id: "ron", name: "Ron Parikh", title: "Principal", col: 3, row: 0 },
-  { id: "khaled", name: "Khaled Habash", title: "COO", col: -3, row: 1 },
-  { id: "jay", name: "Jay Patel", title: "COS", col: 2, row: 1 },
-  { id: "syed", name: "Syed Zaidi", title: "Vice President of Accounting", col: 4.2, row: 1 },
-  { id: "adam", name: "Adam Scott", title: "Vice President of People Development", col: -4.5, row: 2 },
-  { id: "pinakin", name: "Pinakin Bhakta", title: "Compliance Manager", col: 1.4, row: 2 },
-  { id: "cory", name: "Cory Posey", title: "Director of Financial Analysis", col: 3.2, row: 2 },
-  { id: "qsc", name: "QSCulinary", title: "Full Back Office Solutions", col: 5, row: 2 },
-  { id: "crystal", name: "Crystal Boudreau", title: "Director of Training & Development", col: -4.5, row: 3 },
+  { id: "nik",     name: "Nik Bhakta",      title: "Principal",                              col: -3,   row: 0 },
+  { id: "ron",     name: "Ron Parikh",       title: "Principal",                              col: 3,    row: 0 },
+  { id: "khaled",  name: "Khaled Habash",    title: "COO",                                   col: -3,   row: 1 },
+  { id: "jay",     name: "Jay Patel",        title: "COS",                                   col: 2,    row: 1 },
+  { id: "syed",    name: "Syed Zaidi",       title: "Vice President of Accounting",           col: 4.2,  row: 1 },
+  { id: "crystal", name: "Crystal Boudreau", title: "Director of Training & Development",     col: -6.5, row: 2 },
+  { id: "adam",    name: "Adam Scott",       title: "Vice President of People Development",   col: -4.5, row: 2 },
+  { id: "pinakin", name: "Pinakin Bhakta",   title: "Compliance Manager",                     col: 1.4,  row: 2 },
+  { id: "cory",    name: "Cory Posey",       title: "Director of Financial Analysis",         col: 3.2,  row: 2 },
+  { id: "qsc",     name: "QSCulinary",       title: "Full Back Office Solutions",             col: 5,    row: 2 },
 ];
 const EXEC_LINKS: [string, string][] = [
-  ["nik", "ron"], ["nik", "khaled"], ["khaled", "adam"],
+  ["nik", "ron"], ["nik", "khaled"], ["khaled", "adam"], ["adam", "crystal"],
   ["ron", "jay"], ["jay", "syed"], ["jay", "pinakin"], ["jay", "cory"], ["syed", "qsc"],
-  ["adam", "crystal"],
 ];
 const EXEC_ORIGIN = "khaled"; // exec box the RVP tier hangs from
 
@@ -34,12 +32,25 @@ const EXEC_ORIGIN = "khaled"; // exec box the RVP tier hangs from
 // by default. Add names here to tint those DO boxes orange.
 const ORANGE_DISTRICTS = new Set<string>([]);
 
+// ── Highlight support ────────────────────────────────────────────────────────
+// Callers pass a highlights map (node id → color) and optional legend labels.
+// Colors appear on exec, RVP, SDO, and DO boxes.
+export type HighlightColor = "green" | "orange" | "blue" | "red";
+export type HighlightMap = Record<string, HighlightColor>;
+export type HighlightLegend = Record<HighlightColor, string>;
+
+const HIGHLIGHT_RGBS: Record<HighlightColor, RGB> = {
+  green:  [76, 175, 80],
+  orange: [255, 152, 0],
+  blue:   [33, 150, 243],
+  red:    [244, 67, 54],
+};
+
 const NAVY: RGB = [30, 58, 95];
 const SDO_BLUE: RGB = [46, 94, 140];
 const WHITE: RGB = [255, 255, 255];
 const INK: RGB = [20, 30, 45];
 const LINE: RGB = [120, 130, 145];
-const YELLOW: RGB = [255, 235, 59];
 const ORANGE: RGB = [245, 166, 35];
 const CHERRY: RGB = [206, 20, 44];
 type RGB = [number, number, number];
@@ -49,9 +60,9 @@ const RVP_W = 62, SDO_W = 56, TIER_H = 16;
 const DO_W = 44, DO_H = 24, DO_VGAP = 4, SUBCOL_GAP = 6, SDO_GAP = 14, MAX_PER_COL = 9;
 const M = 16;
 
-interface DoNode { name: string; territory: string; code: string; stores: string; acting: boolean; orange: boolean; col: number; row: number; x: number; y: number; }
-interface SdoNode { name: string; code: string; count: number; cx: number; dos: DoNode[]; cols: number; }
-interface RvpNode { name: string; code: string; count: number; cx: number; sdos: SdoNode[]; }
+interface DoNode  { id: string; name: string; territory: string; code: string; stores: string; acting: boolean; orange: boolean; col: number; row: number; x: number; y: number; }
+interface SdoNode { id: string; name: string; code: string; count: number; cx: number; dos: DoNode[]; cols: number; }
+interface RvpNode { id: string; name: string; code: string; count: number; cx: number; sdos: SdoNode[]; }
 
 function leaderInfo(managers: OrgManager[], role: string): { name: string; acting: boolean } {
   const scoped = managers.filter((m) => String(m.role).toLowerCase() === role);
@@ -64,7 +75,11 @@ const activeStores = (d: OrgDistrict) => d.stores.filter((s) => s.is_active !== 
 const areaCount = (a: OrgArea) => a.districts.reduce((n, d) => n + activeStores(d).length, 0);
 const regionCount = (r: OrgRegion) => r.areas.reduce((n, a) => n + areaCount(a), 0);
 
-export function exportOrgChartPosterPdf(tree: OrgTreeResponse | null): void {
+export function exportOrgChartPosterPdf(
+  tree: OrgTreeResponse | null,
+  highlights: HighlightMap = {},
+  legend: HighlightLegend = { green: "", orange: "", blue: "", red: "" },
+): void {
   if (!tree || !tree.regions.length) return;
 
   // ── Layout pass: place SDO slots left→right; DOs stack down in sub-columns ──
@@ -72,14 +87,15 @@ export function exportOrgChartPosterPdf(tree: OrgTreeResponse | null): void {
   let maxRows = 1;
   const rvps: RvpNode[] = [];
   for (const r of tree.regions.filter((x) => x.is_active !== false && x.code !== "CORP")) {
-    const rvp: RvpNode = { name: leaderInfo(r.managers, "rvp").name || r.name, code: r.code ?? "", count: regionCount(r), cx: 0, sdos: [] };
+    const rvp: RvpNode = { id: r.id, name: leaderInfo(r.managers, "rvp").name || r.name, code: r.code ?? "", count: regionCount(r), cx: 0, sdos: [] };
     const areas = r.areas.filter((a) => a.is_active !== false);
     for (const a of areas) {
       const dists = a.districts.filter((d) => d.is_active !== false);
       const dos: DoNode[] = dists.map((d) => {
         const li = leaderInfo(d.managers, "do");
         return {
-          name: (li.name || "—") + (li.acting ? "-(DO TEMP)" : ""),
+          id: d.id,
+          name: (li.name || "—") + (li.acting ? " (DO TEMP)" : ""),
           territory: d.name,
           code: d.code ?? "",
           stores: activeStores(d).map((s) => s.number).join(", "),
@@ -97,7 +113,7 @@ export function exportOrgChartPosterPdf(tree: OrgTreeResponse | null): void {
       });
       maxRows = Math.max(maxRows, Math.min(dos.length, MAX_PER_COL));
       const slotW = cols * DO_W + (cols - 1) * SUBCOL_GAP;
-      const sdo: SdoNode = { name: leaderInfo(a.managers, "sdo").name || a.name, code: a.code ?? "", count: areaCount(a), cx: slotStart + slotW / 2, dos, cols };
+      const sdo: SdoNode = { id: a.id, name: leaderInfo(a.managers, "sdo").name || a.name, code: a.code ?? "", count: areaCount(a), cx: slotStart + slotW / 2, dos, cols };
       rvp.sdos.push(sdo);
       cursor = slotStart + slotW + SDO_GAP;
     }
@@ -106,14 +122,16 @@ export function exportOrgChartPosterPdf(tree: OrgTreeResponse | null): void {
     rvps.push(rvp);
   }
 
+  const legendEntries = (Object.entries(legend) as [HighlightColor, string][]).filter(([, v]) => v.trim());
+  const legendH = legendEntries.length ? 10 : 0;
   const treeW = cursor - SDO_GAP + M + 26; // right logo room
   const execTop = M + 16;
-  const execBottom = execTop + 4 * EXEC_ROW_H;
+  const execBottom = execTop + 3 * EXEC_ROW_H; // 3 rows: 0, 1, 2
   const rvpY = execBottom + 16;
   const sdoY = rvpY + TIER_H + 20;
   const doStartY = sdoY + TIER_H + 16;
   const pageW = Math.max(300, treeW);
-  const pageH = doStartY + maxRows * (DO_H + DO_VGAP) + M;
+  const pageH = doStartY + maxRows * (DO_H + DO_VGAP) + M + legendH;
   const cx = pageW / 2;
 
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: [pageW, pageH] });
@@ -132,9 +150,13 @@ export function exportOrgChartPosterPdf(tree: OrgTreeResponse | null): void {
   doc.setDrawColor(...LINE); doc.setLineWidth(0.3);
   for (const [a, b] of EXEC_LINKS) {
     const pa = execXY.get(a)!, pb = execXY.get(b)!;
-    if (pa.y === pb.y) { // sibling link — straight across
-      doc.line(pa.x + EXEC_W / 2, pa.y + EXEC_H / 2, pb.x - EXEC_W / 2, pb.y + EXEC_H / 2);
-    } else { // parent → child elbow
+    if (pa.y === pb.y) {
+      // Sibling link — draw between inner edges regardless of left/right order.
+      const left = pa.x <= pb.x ? pa : pb;
+      const right = pa.x <= pb.x ? pb : pa;
+      doc.line(left.x + EXEC_W / 2, left.y + EXEC_H / 2, right.x - EXEC_W / 2, right.y + EXEC_H / 2);
+    } else {
+      // Parent → child elbow.
       const midY = (pa.y + EXEC_H + pb.y) / 2;
       doc.line(pa.x, pa.y + EXEC_H, pa.x, midY);
       doc.line(pa.x, midY, pb.x, midY);
@@ -143,10 +165,11 @@ export function exportOrgChartPosterPdf(tree: OrgTreeResponse | null): void {
   }
   for (const e of EXEC) {
     const p = execXY.get(e.id)!;
+    const hFill = highlights[e.id] ? HIGHLIGHT_RGBS[highlights[e.id]!] : WHITE;
     box(doc, p.x - EXEC_W / 2, p.y, EXEC_W, EXEC_H, [
       { t: e.name, size: 8, bold: true, color: INK },
       { t: e.title, size: 6, bold: false, color: [90, 100, 115] },
-    ], WHITE, INK);
+    ], hFill, INK);
   }
 
   // Bus from the exec origin down to the RVP tier.
@@ -162,8 +185,8 @@ export function exportOrgChartPosterPdf(tree: OrgTreeResponse | null): void {
 
   // ── RVP → SDO tiers ──
   for (const rvp of rvps) {
-    box(doc, rvp.cx - RVP_W / 2, rvpY, RVP_W, TIER_H, tierLines(rvp.name, "Regional Vice President of Operations", rvp.count, WHITE, [205, 218, 233], rvp.code), NAVY, WHITE);
-    // RVP → its SDOs
+    const rvpFill = highlights[rvp.id] ? HIGHLIGHT_RGBS[highlights[rvp.id]!] : NAVY;
+    box(doc, rvp.cx - RVP_W / 2, rvpY, RVP_W, TIER_H, tierLines(rvp.name, "Regional Vice President of Operations", rvp.count, WHITE, [205, 218, 233], rvp.code), rvpFill, WHITE);
     if (rvp.sdos.length) {
       doc.setDrawColor(...LINE); doc.setLineWidth(0.3);
       const busY = sdoY - 9;
@@ -173,25 +196,41 @@ export function exportOrgChartPosterPdf(tree: OrgTreeResponse | null): void {
       for (const s of rvp.sdos) doc.line(s.cx, busY, s.cx, sdoY);
     }
     for (const sdo of rvp.sdos) {
-      box(doc, sdo.cx - SDO_W / 2, sdoY, SDO_W, TIER_H, tierLines(sdo.name, "Senior Director of Operations", sdo.count, WHITE, [214, 226, 238], sdo.code), SDO_BLUE, WHITE);
-      // SDO → its DO columns: a left spine per sub-column with a stub per box.
+      const sdoFill = highlights[sdo.id] ? HIGHLIGHT_RGBS[highlights[sdo.id]!] : SDO_BLUE;
+      box(doc, sdo.cx - SDO_W / 2, sdoY, SDO_W, TIER_H, tierLines(sdo.name, "Senior Director of Operations", sdo.count, WHITE, [214, 226, 238], sdo.code), sdoFill, WHITE);
       doc.setDrawColor(...LINE); doc.setLineWidth(0.3);
       doc.line(sdo.cx, sdoY + TIER_H, sdo.cx, doStartY - 6);
       for (const d of sdo.dos) {
         d.y = doStartY + d.row * (DO_H + DO_VGAP);
-        drawDo(doc, d);
+        drawDo(doc, d, highlights);
       }
+    }
+  }
+
+  // ── Legend ──
+  if (legendEntries.length) {
+    let lx = M;
+    const ly = pageH - M + 2;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(...INK);
+    doc.text("Changes:", lx, ly); lx += 18;
+    for (const [color, label] of legendEntries) {
+      const rgb = HIGHLIGHT_RGBS[color];
+      doc.setFillColor(...rgb); doc.setDrawColor(...rgb);
+      doc.roundedRect(lx, ly - 3.5, 5, 3.5, 0.5, 0.5, "F");
+      doc.setFont("helvetica", "normal"); doc.setFontSize(6); doc.setTextColor(...INK);
+      doc.text(label, lx + 7, ly);
+      lx += 7 + doc.getTextWidth(label) + 8;
     }
   }
 
   doc.save(`SOAR QSR Org Chart - ${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 
-function drawDo(doc: jsPDF, d: DoNode) {
-  const fill: RGB = d.acting ? YELLOW : d.orange ? ORANGE : WHITE;
+function drawDo(doc: jsPDF, d: DoNode, highlights: HighlightMap) {
+  const hColor = highlights[d.id];
+  const fill: RGB = hColor ? HIGHLIGHT_RGBS[hColor] : d.orange ? ORANGE : WHITE;
   const textColor: RGB = INK;
   box(doc, d.x, d.y, DO_W, DO_H, [], fill, textColor);
-  // Custom stacked content (name / territory / up to 3 store lines).
   const cx = d.x + DO_W / 2;
   doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...textColor);
   doc.text(doc.splitTextToSize(d.name, DO_W - 4).slice(0, 2), cx, d.y + 4.5, { align: "center" });
@@ -220,7 +259,6 @@ function logo(doc: jsPDF, x: number, y: number) {
   doc.setFontSize(6.5); doc.text("QSR", x, y + 4, { align: "center" });
 }
 
-// Rounded box with optional vertically-centered stacked text lines.
 function box(
   doc: jsPDF, x: number, y: number, w: number, h: number,
   lines: { t: string; size: number; bold: boolean; color: RGB }[],
