@@ -23,7 +23,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { ROLE_LABELS } from "@/types/database";
 import { downloadCSV, toCSV } from "@/lib/csv";
 import { exportOrgChartPdf } from "./orgChartPdf";
-import { exportOrgChartPosterPdf } from "./orgChartPosterPdf";
+import { OrgChartHighlightModal } from "./OrgChartHighlightModal";
 import { formatPhoneForDisplay } from "@/lib/phone";
 import { cn } from "@/lib/cn";
 import {
@@ -378,6 +378,7 @@ export function OrgPage() {
   const [expanded, setExpanded] = useState<ExpandedSet>(new Set());
   const [showInactive, setShowInactive] = useState(false);
   const [search, setSearch] = useState("");
+  const [highlightOpen, setHighlightOpen] = useState(false);
 
   // Modal state
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
@@ -548,7 +549,7 @@ export function OrgPage() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => exportOrgChartPosterPdf(data)}
+              onClick={() => setHighlightOpen(true)}
               disabled={!data || data.regions.length === 0}
             >
               <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
@@ -592,6 +593,11 @@ export function OrgPage() {
         }
       />
 
+      <OrgChartHighlightModal
+        open={highlightOpen}
+        onClose={() => setHighlightOpen(false)}
+        tree={data ?? null}
+      />
       <EditOrgNodeModal
         open={!!editTarget}
         target={editTarget}
