@@ -16,19 +16,18 @@ const EXEC = [
   { id: "khaled", name: "Khaled Habash", title: "COO", col: -3, row: 1 },
   { id: "jay", name: "Jay Patel", title: "COS", col: 2, row: 1 },
   { id: "syed", name: "Syed Zaidi", title: "Vice President of Accounting", col: 4.2, row: 1 },
-  { id: "adam", name: "Adam Scott", title: "Vice President of People Development", col: -5, row: 2 },
-  { id: "heath", name: "Heath Kelley", title: "Vice President of Operations", col: -3, row: 2 },
+  { id: "adam", name: "Adam Scott", title: "Vice President of People Development", col: -4.5, row: 2 },
   { id: "pinakin", name: "Pinakin Bhakta", title: "Compliance Manager", col: 1.4, row: 2 },
   { id: "cory", name: "Cory Posey", title: "Director of Financial Analysis", col: 3.2, row: 2 },
   { id: "qsc", name: "QSCulinary", title: "Full Back Office Solutions", col: 5, row: 2 },
-  { id: "crystal", name: "Crystal Boudreau", title: "Director of Training & Development", col: -5, row: 3 },
+  { id: "crystal", name: "Crystal Boudreau", title: "Director of Training & Development", col: -4.5, row: 3 },
 ];
 const EXEC_LINKS: [string, string][] = [
-  ["nik", "ron"], ["nik", "khaled"], ["khaled", "heath"], ["khaled", "adam"],
+  ["nik", "ron"], ["nik", "khaled"], ["khaled", "adam"],
   ["ron", "jay"], ["jay", "syed"], ["jay", "pinakin"], ["jay", "cory"], ["syed", "qsc"],
   ["adam", "crystal"],
 ];
-const EXEC_ORIGIN = "heath"; // exec box the RVP tier hangs from
+const EXEC_ORIGIN = "khaled"; // exec box the RVP tier hangs from
 
 // Districts to flag orange (e.g. a transitioning / newly-acquired group). Not
 // derivable from the org tree, so it's an opt-in list of district names; empty
@@ -50,9 +49,9 @@ const RVP_W = 62, SDO_W = 56, TIER_H = 16;
 const DO_W = 44, DO_H = 24, DO_VGAP = 4, SUBCOL_GAP = 6, SDO_GAP = 14, MAX_PER_COL = 9;
 const M = 16;
 
-interface DoNode { name: string; territory: string; stores: string; acting: boolean; orange: boolean; col: number; row: number; x: number; y: number; }
-interface SdoNode { name: string; count: number; cx: number; dos: DoNode[]; cols: number; }
-interface RvpNode { name: string; count: number; cx: number; sdos: SdoNode[]; }
+interface DoNode { name: string; territory: string; code: string; stores: string; acting: boolean; orange: boolean; col: number; row: number; x: number; y: number; }
+interface SdoNode { name: string; code: string; count: number; cx: number; dos: DoNode[]; cols: number; }
+interface RvpNode { name: string; code: string; count: number; cx: number; sdos: SdoNode[]; }
 
 function leaderInfo(managers: OrgManager[], role: string): { name: string; acting: boolean } {
   const scoped = managers.filter((m) => String(m.role).toLowerCase() === role);
@@ -72,8 +71,8 @@ export function exportOrgChartPosterPdf(tree: OrgTreeResponse | null): void {
   let cursor = M + 26; // room for the left logo
   let maxRows = 1;
   const rvps: RvpNode[] = [];
-  for (const r of tree.regions.filter((x) => x.is_active !== false)) {
-    const rvp: RvpNode = { name: leaderInfo(r.managers, "rvp").name || r.name, count: regionCount(r), cx: 0, sdos: [] };
+  for (const r of tree.regions.filter((x) => x.is_active !== false && x.code !== "CORP")) {
+    const rvp: RvpNode = { name: leaderInfo(r.managers, "rvp").name || r.name, code: r.code ?? "", count: regionCount(r), cx: 0, sdos: [] };
     const areas = r.areas.filter((a) => a.is_active !== false);
     for (const a of areas) {
       const dists = a.districts.filter((d) => d.is_active !== false);
@@ -82,6 +81,7 @@ export function exportOrgChartPosterPdf(tree: OrgTreeResponse | null): void {
         return {
           name: (li.name || "—") + (li.acting ? "-(DO TEMP)" : ""),
           territory: d.name,
+          code: d.code ?? "",
           stores: activeStores(d).map((s) => s.number).join(", "),
           acting: li.acting,
           orange: ORANGE_DISTRICTS.has(d.name),
@@ -97,7 +97,7 @@ export function exportOrgChartPosterPdf(tree: OrgTreeResponse | null): void {
       });
       maxRows = Math.max(maxRows, Math.min(dos.length, MAX_PER_COL));
       const slotW = cols * DO_W + (cols - 1) * SUBCOL_GAP;
-      const sdo: SdoNode = { name: leaderInfo(a.managers, "sdo").name || a.name, count: areaCount(a), cx: slotStart + slotW / 2, dos, cols };
+      const sdo: SdoNode = { name: leaderInfo(a.managers, "sdo").name || a.name, code: a.code ?? "", count: areaCount(a), cx: slotStart + slotW / 2, dos, cols };
       rvp.sdos.push(sdo);
       cursor = slotStart + slotW + SDO_GAP;
     }
@@ -162,7 +162,7 @@ export function exportOrgChartPosterPdf(tree: OrgTreeResponse | null): void {
 
   // ── RVP → SDO tiers ──
   for (const rvp of rvps) {
-    box(doc, rvp.cx - RVP_W / 2, rvpY, RVP_W, TIER_H, tierLines(rvp.name, "Regional Vice President of Operations", rvp.count, WHITE, [205, 218, 233]), NAVY, WHITE);
+    box(doc, rvp.cx - RVP_W / 2, rvpY, RVP_W, TIER_H, tierLines(rvp.name, "Regional Vice President of Operations", rvp.count, WHITE, [205, 218, 233], rvp.code), NAVY, WHITE);
     // RVP → its SDOs
     if (rvp.sdos.length) {
       doc.setDrawColor(...LINE); doc.setLineWidth(0.3);
@@ -173,7 +173,7 @@ export function exportOrgChartPosterPdf(tree: OrgTreeResponse | null): void {
       for (const s of rvp.sdos) doc.line(s.cx, busY, s.cx, sdoY);
     }
     for (const sdo of rvp.sdos) {
-      box(doc, sdo.cx - SDO_W / 2, sdoY, SDO_W, TIER_H, tierLines(sdo.name, "Senior Director of Operations", sdo.count, WHITE, [214, 226, 238]), SDO_BLUE, WHITE);
+      box(doc, sdo.cx - SDO_W / 2, sdoY, SDO_W, TIER_H, tierLines(sdo.name, "Senior Director of Operations", sdo.count, WHITE, [214, 226, 238], sdo.code), SDO_BLUE, WHITE);
       // SDO → its DO columns: a left spine per sub-column with a stub per box.
       doc.setDrawColor(...LINE); doc.setLineWidth(0.3);
       doc.line(sdo.cx, sdoY + TIER_H, sdo.cx, doStartY - 6);
@@ -196,18 +196,19 @@ function drawDo(doc: jsPDF, d: DoNode) {
   doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...textColor);
   doc.text(doc.splitTextToSize(d.name, DO_W - 4).slice(0, 2), cx, d.y + 4.5, { align: "center" });
   doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(80, 95, 120);
-  doc.text(doc.splitTextToSize(d.territory || "", DO_W - 4)[0] || "", cx, d.y + 11, { align: "center" });
+  const territoryLabel = d.code ? `${d.territory} (${d.code})` : (d.territory || "");
+  doc.text(doc.splitTextToSize(territoryLabel, DO_W - 4)[0] || "", cx, d.y + 11, { align: "center" });
   doc.setFontSize(6); doc.setTextColor(70, 70, 70);
   const lines = doc.splitTextToSize(d.stores || "—", DO_W - 4).slice(0, 3);
   let sy = d.y + 15;
   for (const ln of lines) { doc.text(ln, cx, sy, { align: "center" }); sy += 3; }
 }
 
-function tierLines(name: string, title: string, count: number, nameColor: RGB, subColor: RGB) {
+function tierLines(name: string, title: string, count: number, nameColor: RGB, subColor: RGB, code?: string) {
   return [
     { t: name, size: 8.5, bold: true, color: nameColor },
     { t: title, size: 5.8, bold: false, color: subColor },
-    { t: String(count), size: 7, bold: true, color: subColor },
+    { t: code ? `${code} · ${count} stores` : String(count), size: 7, bold: true, color: subColor },
   ];
 }
 
