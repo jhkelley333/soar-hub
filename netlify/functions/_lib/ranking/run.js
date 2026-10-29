@@ -1756,3 +1756,161 @@ export async function yearlyAwards(supa) {
 
   return { periods, store_awards, leader_awards, error: null };
 }
+
+// Full P1–P10 pivot export. Returns per-store and per-DO rows with every
+// available metric sliced by period, plus company-level YTD averages.
+// Used by the Cowork handoff export tab in the Ranker admin.
+export async function p1p10Export(supa) {
+  // 1. Discover which official periods exist.
+  const { data: offPeriods } = await supa
+    .from("ranking_official_periods").select("period").order("period", { ascending: true });
+  const periods = [...new Set((offPeriods || []).map((r) => r.period))]
+    .filter((p) => p >= 1 && p <= 13).slice(0, 10);
+  if (!periods.length) return { periods: [], stores: [], leaders: [], company: null, error: null };
+
+  // 2. Fetch all store rows for those periods.
+  const { data: storeRows, error: storeErr } = await supa
+    .from("ranking_official_periods")
+    .select("store_number, period, soar_rank, total_points, ptd_sales, ly_sales, pct_vs_ly, gm, location")
+    .in("period", periods).order("period", { ascending: true });
+  if (storeErr) return { error: storeErr.message };
+
+  // 3. Fetch all DO-leader rows for those periods.
+  const { data: leaderRows } = await supa
+    .from("ranking_official_leaders")
+    .select("entity_name, sdo_name, rank, total_points, ptd_sales, ly_sales, period")
+    .eq("tier", "do").in("period", periods).order("period", { ascending: true });
+
+  const normSn = (v) => String(v ?? "").replace(/^0+(?=\d)/, "").trim();
+  const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
+  // Build per-store pivot: store_number → period → row
+  const byStore = new Map();
+  for (const r of storeRows || []) {
+    const sn = normSn(r.store_number);
+    if (!sn) continue;
+    if (!byStore.has(sn)) byStore.set(sn, { location: r.location, gm: r.gm, periods: new Map() });
+    const entry = byStore.get(sn);
+    if (!entry.location && r.location) entry.location = r.location;
+    if (!entry.gm && r.gm) entry.gm = r.gm;
+    entry.periods.set(r.period, {
+      rank: r.soar_rank ?? null,
+      total_points: r.total_points != null ? Number(r.total_points) : null,
+      ptd_sales: r.ptd_sales != null ? Number(r.ptd_sales) : null,
+      ly_sales: r.ly_sales != null ? Number(r.ly_sales) : null,
+      pct_vs_ly: r.pct_vs_ly != null ? Number(r.pct_vs_ly) : null,
+    });
+  }
+
+  // Build per-DO pivot: entity_name → period → row
+  const byLeader = new Map();
+  for (const r of leaderRows || []) {
+    const key = String(r.entity_name ?? "").trim();
+    if (!key) continue;
+    if (!byLeader.has(key)) byLeader.set(key, { sdo_name: r.sdo_name, periods: new Map() });
+    const entry = byLeader.get(key);
+    if (!entry.sdo_name && r.sdo_name) entry.sdo_name = r.sdo_name;
+    entry.periods.set(r.period, {
+      rank: r.rank ?? null,
+      total_points: r.total_points != null ? Number(r.total_points) : null,
+      ptd_sales: r.ptd_sales != null ? Number(r.ptd_sales) : null,
+      ly_sales: r.ly_sales != null ? Number(r.ly_sales) : null,
+    });
+  }
+
+  // Flatten store rows for the response.
+  const stores = [];
+  for (const [sn, data] of byStore) {
+    const pRows = [...data.periods.entries()].map(([p, v]) => ({ period: p, ...v }));
+    const ranks = pRows.map((r) => r.rank).filter((v) => typeof v === "number");
+    const pcts = pRows.map((r) => r.pct_vs_ly).filter((v) => typeof v === "number");
+    const firstP = pRows.length ? Math.min(...pRows.map((r) => r.period)) : null;
+    const lastP = pRows.length ? Math.max(...pRows.map((r) => r.period)) : null;
+    const rankFirst = firstP != null ? (data.periods.get(firstP)?.rank ?? null) : null;
+    const rankLast = lastP != null ? (data.periods.get(lastP)?.rank ?? null) : null;
+    const totalSales = pRows.reduce((s, r) => s + (r.ptd_sales ?? 0), 0);
+    const by_period = {};
+    for (const [p, v] of data.periods) by_period[p] = v;
+    stores.push({
+      store_number: sn,
+      location: data.location,
+      gm: data.gm,
+      by_period,
+      ytd: {
+        periods_in: pRows.length,
+        avg_rank: avg(ranks) != null ? Math.round(avg(ranks) * 10) / 10 : null,
+        best_rank: ranks.length ? Math.min(...ranks) : null,
+        rank_first: rankFirst,
+        rank_last: rankLast,
+        rank_delta: typeof rankFirst === "number" && typeof rankLast === "number" ? rankFirst - rankLast : null,
+        avg_pct_vs_ly: avg(pcts) != null ? Math.round(avg(pcts) * 10000) / 10000 : null,
+        total_sales: totalSales || null,
+      },
+    });
+  }
+  // Sort by YTD avg rank ascending (null last).
+  stores.sort((a, b) => {
+    const ra = a.ytd.avg_rank, rb = b.ytd.avg_rank;
+    if (ra == null && rb == null) return 0;
+    if (ra == null) return 1;
+    if (rb == null) return -1;
+    return ra - rb;
+  });
+
+  // Flatten leader rows.
+  const leaders = [];
+  for (const [name, data] of byLeader) {
+    const pRows = [...data.periods.entries()].map(([p, v]) => ({ period: p, ...v }));
+    const ranks = pRows.map((r) => r.rank).filter((v) => typeof v === "number");
+    const firstP = pRows.length ? Math.min(...pRows.map((r) => r.period)) : null;
+    const lastP = pRows.length ? Math.max(...pRows.map((r) => r.period)) : null;
+    const rankFirst = firstP != null ? (data.periods.get(firstP)?.rank ?? null) : null;
+    const rankLast = lastP != null ? (data.periods.get(lastP)?.rank ?? null) : null;
+    const by_period = {};
+    for (const [p, v] of data.periods) by_period[p] = v;
+    leaders.push({
+      name,
+      sdo_name: data.sdo_name,
+      by_period,
+      ytd: {
+        periods_in: pRows.length,
+        avg_rank: avg(ranks) != null ? Math.round(avg(ranks) * 10) / 10 : null,
+        best_rank: ranks.length ? Math.min(...ranks) : null,
+        rank_first: rankFirst,
+        rank_last: rankLast,
+        rank_delta: typeof rankFirst === "number" && typeof rankLast === "number" ? rankFirst - rankLast : null,
+      },
+    });
+  }
+  leaders.sort((a, b) => {
+    const ra = a.ytd.avg_rank, rb = b.ytd.avg_rank;
+    if (ra == null && rb == null) return 0;
+    if (ra == null) return 1;
+    if (rb == null) return -1;
+    return ra - rb;
+  });
+
+  // Company-level YTD averages.
+  const allRanks = stores.flatMap((s) => Object.values(s.by_period).map((v) => v.rank).filter((v) => typeof v === "number"));
+  const allPcts = stores.flatMap((s) => Object.values(s.by_period).map((v) => v.pct_vs_ly).filter((v) => typeof v === "number"));
+  const totalSales = stores.reduce((s, st) => s + (st.ytd.total_sales ?? 0), 0);
+  const avgRankByPeriod = {};
+  const avgPctByPeriod = {};
+  for (const p of periods) {
+    const pRanks = stores.map((s) => s.by_period[p]?.rank).filter((v) => typeof v === "number");
+    const pPcts = stores.map((s) => s.by_period[p]?.pct_vs_ly).filter((v) => typeof v === "number");
+    avgRankByPeriod[p] = pRanks.length ? Math.round(avg(pRanks) * 10) / 10 : null;
+    avgPctByPeriod[p] = pPcts.length ? Math.round(avg(pPcts) * 10000) / 10000 : null;
+  }
+  const company = {
+    store_count: byStore.size,
+    do_count: byLeader.size,
+    total_sales: totalSales || null,
+    avg_rank: avg(allRanks) != null ? Math.round(avg(allRanks) * 10) / 10 : null,
+    avg_pct_vs_ly: avg(allPcts) != null ? Math.round(avg(allPcts) * 10000) / 10000 : null,
+    avg_rank_by_period: avgRankByPeriod,
+    avg_pct_by_period: avgPctByPeriod,
+  };
+
+  return { periods, stores, leaders, company, error: null };
+}

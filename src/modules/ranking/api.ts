@@ -655,3 +655,67 @@ export async function saveCommsMeta(
   );
   if (error) throw error;
 }
+
+// ── P1–P10 Cowork export ─────────────────────────────────────────────────────
+export interface P110PeriodSlice {
+  rank: number | null;
+  total_points: number | null;
+  ptd_sales: number | null;
+  ly_sales: number | null;
+  pct_vs_ly: number | null;
+}
+export interface P110StoreRow {
+  store_number: string;
+  location: string | null;
+  gm: string | null;
+  by_period: Record<number, P110PeriodSlice>;
+  ytd: {
+    periods_in: number;
+    avg_rank: number | null;
+    best_rank: number | null;
+    rank_first: number | null;
+    rank_last: number | null;
+    rank_delta: number | null;
+    avg_pct_vs_ly: number | null;
+    total_sales: number | null;
+  };
+}
+export interface P110LeaderPeriodSlice {
+  rank: number | null;
+  total_points: number | null;
+  ptd_sales: number | null;
+  ly_sales: number | null;
+}
+export interface P110LeaderRow {
+  name: string;
+  sdo_name: string | null;
+  by_period: Record<number, P110LeaderPeriodSlice>;
+  ytd: {
+    periods_in: number;
+    avg_rank: number | null;
+    best_rank: number | null;
+    rank_first: number | null;
+    rank_last: number | null;
+    rank_delta: number | null;
+  };
+}
+export interface P110Company {
+  store_count: number;
+  do_count: number;
+  total_sales: number | null;
+  avg_rank: number | null;
+  avg_pct_vs_ly: number | null;
+  avg_rank_by_period: Record<number, number | null>;
+  avg_pct_by_period: Record<number, number | null>;
+}
+export interface P110ExportResponse {
+  periods: number[];
+  stores: P110StoreRow[];
+  leaders: P110LeaderRow[];
+  company: P110Company | null;
+  error: string | null;
+}
+
+export function fetchP110Export(): Promise<P110ExportResponse> {
+  return req(`${FN}?action=p1-p10-export`);
+}
