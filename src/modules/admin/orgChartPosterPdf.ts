@@ -4,6 +4,7 @@
 // district territory / store list). jsPDF, client-side, downloadable from Org Admin.
 import { jsPDF } from "jspdf";
 import type { OrgArea, OrgDistrict, OrgManager, OrgRegion, OrgTreeResponse } from "./api";
+import { SOAR_QSR_LOGO_PNG } from "./soarQsrLogo";
 
 // Executive leadership above the regions (the org tree only covers RVP and
 // below). Fixed, editable header — positions are on a coarse grid (col units
@@ -52,7 +53,6 @@ const WHITE: RGB = [255, 255, 255];
 const INK: RGB = [20, 30, 45];
 const LINE: RGB = [120, 130, 145];
 const ORANGE: RGB = [245, 166, 35];
-const CHERRY: RGB = [206, 20, 44];
 type RGB = [number, number, number];
 
 const EXEC_W = 46, EXEC_H = 15, EXEC_COL = 26, EXEC_ROW_H = 26;
@@ -252,11 +252,8 @@ function tierLines(name: string, title: string, count: number, nameColor: RGB, s
 }
 
 function logo(doc: jsPDF, x: number, y: number) {
-  doc.setFillColor(...CHERRY);
-  doc.circle(x, y, 11, "F");
-  doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold");
-  doc.setFontSize(8); doc.text("SOAR", x, y - 0.5, { align: "center" });
-  doc.setFontSize(6.5); doc.text("QSR", x, y + 4, { align: "center" });
+  // x, y is the center; image is 22 × 22 mm
+  doc.addImage(SOAR_QSR_LOGO_PNG, "PNG", x - 11, y - 11, 22, 22);
 }
 
 function box(
