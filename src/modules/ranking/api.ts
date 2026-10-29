@@ -573,3 +573,37 @@ export function fetchRankingRisk(): Promise<{
 }> {
   return req(`${FN}?action=risk`);
 }
+
+// ── Comms Board editable meta fields ────────────────────────────────────────
+export type CommMetaField =
+  | "employee_of_month"
+  | "new_team_members"
+  | "birthdays_this_month"
+  | "current_promotions"
+  | "top_3_food_variances";
+
+export type CommsMeta = Partial<Record<CommMetaField, string>>;
+
+export async function fetchCommsMeta(store: string, period: number): Promise<CommsMeta> {
+  const { data, error } = await supabase
+    .from("comms_board_meta")
+    .select("field, value")
+    .eq("store_number", store)
+    .eq("period", period);
+  if (error) throw error;
+  return Object.fromEntries((data ?? []).map((r) => [r.field, r.value ?? ""])) as CommsMeta;
+}
+
+export async function saveCommsMeta(
+  store: string,
+  period: number,
+  field: CommMetaField,
+  value: string,
+): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  const { error } = await supabase.from("comms_board_meta").upsert(
+    { store_number: store, period, field, value, updated_by: user?.id, updated_at: new Date().toISOString() },
+    { onConflict: "store_number,period,field" },
+  );
+  if (error) throw error;
+}

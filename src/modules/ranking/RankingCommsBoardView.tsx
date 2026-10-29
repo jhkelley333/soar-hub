@@ -1,14 +1,28 @@
-// Comms Board — a read-only Hub mirror of the in-store weekly Communication
-// Board. Each week's card is that week's isolated numbers (the WTD scope of the
-// P<period>W<week> ranking run), auto-filled from Hub data. Cells we don't have
-// a data source for yet show "—". GMs see their store; leaders pick any store
-// in scope.
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+// Comms Board — a Hub mirror of the in-store weekly Communication Board. Auto-
+// filled metric cells come from ranking runs; right-rail info fields are editable
+// per store per period and saved to comms_board_meta in Supabase.
+import { useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { cn } from "@/lib/cn";
-import { fetchCommsBoard, type CommsBoardResponse, type CommsWeek } from "./api";
+import {
+  fetchCommsBoard,
+  fetchCommsMeta,
+  saveCommsMeta,
+  type CommMetaField,
+  type CommsMeta,
+  type CommsBoardResponse,
+  type CommsWeek,
+} from "./api";
+
+const FIELD_LABELS: Record<CommMetaField, string> = {
+  employee_of_month: "Employee of the Month",
+  new_team_members: "New Team Members",
+  birthdays_this_month: "Birthdays this Month",
+  current_promotions: "Current Promotions",
+  top_3_food_variances: "Top 3 Food Variances (Item and Last Week loss)",
+};
 
 type MVal = number | string | null | undefined;
 const isNum = (v: MVal): v is number => typeof v === "number" && isFinite(v);
@@ -120,9 +134,77 @@ function SideInfo({ label, value }: { label: string; value?: React.ReactNode }) 
   );
 }
 
+function EditableSideInfo({
+  label, field, meta, onSave, saving,
+}: {
+  label: string;
+  field: CommMetaField;
+  meta: CommsMeta;
+  onSave: (field: CommMetaField, value: string) => void;
+  saving: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const current = meta[field] ?? "";
+
+  function startEdit() {
+    setDraft(current);
+    setEditing(true);
+    setTimeout(() => ref.current?.focus(), 0);
+  }
+
+  function commit() {
+    setEditing(false);
+    if (draft !== current) onSave(field, draft);
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between rounded bg-blue-500 px-2 py-1">
+        <span className="text-xs font-bold text-white">{label}</span>
+        {!editing && (
+          <button
+            onClick={startEdit}
+            className="ml-1 rounded px-1 text-[10px] text-blue-200 hover:bg-blue-400 hover:text-white"
+            title="Edit"
+          >
+            Edit
+          </button>
+        )}
+        {saving && <span className="ml-1 text-[10px] text-blue-200">Saving…</span>}
+      </div>
+      {editing ? (
+        <textarea
+          ref={ref}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => { if (e.key === "Escape") { setEditing(false); } }}
+          rows={3}
+          className="mt-0.5 w-full resize-none rounded border border-blue-300 px-2 py-1 text-sm text-zinc-800 focus:border-blue-500 focus:outline-none"
+          placeholder="Type here…"
+        />
+      ) : (
+        <div
+          className="min-h-[28px] cursor-pointer px-2 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50"
+          onClick={startEdit}
+          title="Click to edit"
+        >
+          {current
+            ? current.split("\n").map((ln, i) => <div key={i}>{ln}</div>)
+            : <span className="text-zinc-400">—</span>
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function RankingCommsBoardView() {
   const [storeSel, setStoreSel] = useState<string | null>(null);
   const [periodSel, setPeriodSel] = useState<number | null>(null);
+  const qc = useQueryClient();
 
   const q = useQuery({
     queryKey: ["comms-board", storeSel, periodSel],
@@ -130,6 +212,26 @@ export function RankingCommsBoardView() {
     staleTime: 60_000,
   });
   const d: CommsBoardResponse | undefined = q.data;
+
+  const metaQ = useQuery({
+    queryKey: ["comms-meta", d?.store?.number ?? storeSel, d?.period ?? periodSel],
+    queryFn: () => fetchCommsMeta(d!.store!.number, d!.period!),
+    enabled: !!(d?.store?.number && d?.period != null),
+    staleTime: 30_000,
+  });
+  const meta: CommsMeta = metaQ.data ?? {};
+
+  const [savingField, setSavingField] = useState<CommMetaField | null>(null);
+  const saveMut = useMutation({
+    mutationFn: ({ field, value }: { field: CommMetaField; value: string }) => {
+      setSavingField(field);
+      return saveCommsMeta(d!.store!.number, d!.period!, field, value);
+    },
+    onSettled: (_data, _err, vars) => {
+      setSavingField(null);
+      qc.invalidateQueries({ queryKey: ["comms-meta", d?.store?.number, d?.period] });
+    },
+  });
 
   const weekByNum = useMemo(() => {
     const m = new Map<number, CommsWeek>();
@@ -215,11 +317,16 @@ export function RankingCommsBoardView() {
         {/* Right rail */}
         <div className="space-y-2">
           <SideInfo label="General Manager" value={d.store.gm ?? undefined} />
-          <SideInfo label="Employee of the Month" />
-          <SideInfo label="New Team Members" />
-          <SideInfo label="Birthdays this Month" />
-          <SideInfo label="Current Promotions" />
-          <SideInfo label="Top 3 Food Variances (Item and Last Week loss)" />
+          {(["employee_of_month", "new_team_members", "birthdays_this_month", "current_promotions", "top_3_food_variances"] as CommMetaField[]).map((field) => (
+            <EditableSideInfo
+              key={field}
+              label={FIELD_LABELS[field]}
+              field={field}
+              meta={meta}
+              onSave={(f, v) => saveMut.mutate({ field: f, value: v })}
+              saving={savingField === field && saveMut.isPending}
+            />
+          ))}
         </div>
       </div>
     </div>
