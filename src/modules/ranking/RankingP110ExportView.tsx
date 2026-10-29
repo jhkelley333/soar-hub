@@ -26,8 +26,9 @@ function dollar(v: number | null | undefined): string {
 }
 
 // Sheet name: "P7 W1" — matches the Ranker week-picker format.
+// Avoid ? which is illegal in Excel sheet names; fall back to 0.
 function weekLabel(row: FullMetricsExportRow): string {
-  return `P${row.period} W${row.week ?? "?"}`;
+  return `P${row.period} W${row.week ?? 0}`;
 }
 
 // ── Excel column definitions ──────────────────────────────────────────────────

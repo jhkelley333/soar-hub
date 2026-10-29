@@ -1900,7 +1900,7 @@ export async function fullMetricsExport(supa, opts = {}) {
     }
   }
 
-  rows.sort((a, b) => a.period - b.period || (a.rank ?? 999) - (b.rank ?? 999));
+  rows.sort((a, b) => a.period - b.period || (a.week ?? 0) - (b.week ?? 0) || (a.rank ?? 999) - (b.rank ?? 999));
   const periods = [...new Set(rows.map((r) => r.period))].sort((a, b) => a - b);
   return { periods, rows, error: null };
 }
