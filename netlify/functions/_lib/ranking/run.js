@@ -1760,6 +1760,143 @@ export async function yearlyAwards(supa) {
 // Full P1–P10 pivot export. Returns per-store and per-DO rows with every
 // available metric sliced by period, plus company-level YTD averages.
 // Used by the Cowork handoff export tab in the Ranker admin.
+// Flat-row export of every metric the ranker tracks, per store per period.
+// Prefers computed ranking_rows (full metrics); falls back to official data
+// for periods that have no complete run. Used by the admin Export tab.
+export async function fullMetricsExport(supa, opts = {}) {
+  const fromP = Math.max(1, Math.min(13, Number(opts.from) || 1));
+  const toP   = Math.max(fromP, Math.min(13, Number(opts.to) || 13));
+
+  // 1. Latest complete run per period in range.
+  const { data: runs } = await supa
+    .from("ranking_runs")
+    .select("id, period, week, week_ending, completed_at")
+    .eq("status", "complete")
+    .gte("period", fromP).lte("period", toP)
+    .order("period", { ascending: true })
+    .order("completed_at", { ascending: false });
+
+  const latestByPeriod = new Map();
+  for (const r of runs || []) {
+    if (!latestByPeriod.has(r.period)) latestByPeriod.set(r.period, r);
+  }
+
+  const nn = (v, fallback = null) => (v == null ? fallback : v);
+  const numOrNull = (v) => (v === "NO LY" || v == null ? null : isFinite(Number(v)) ? Number(v) : null);
+
+  // 2. PTD store rows for each period with a complete run.
+  const rows = [];
+  for (const [period, run] of [...latestByPeriod.entries()].sort((a, b) => a[0] - b[0])) {
+    const { data: rr } = await supa
+      .from("ranking_rows")
+      .select("rank, total_points, metrics")
+      .eq("run_id", run.id).eq("scope", "ptd").eq("tier", "store")
+      .order("rank", { ascending: true }).limit(500);
+
+    for (const r of rr || []) {
+      const m = r.metrics || {};
+      rows.push({
+        period,
+        week: nn(run.week),
+        week_ending: nn(run.week_ending),
+        source: "run",
+        rank: r.rank ?? null,
+        total_points: r.total_points ?? null,
+        store: normStoreNum(m.store ?? ""),
+        location: nn(m.location),
+        gm: nn(m.gm),
+        do_name: nn(m.doName),
+        sdo_name: nn(m.sdoName),
+        // Sales
+        ptd_sales: nn(m.sales),
+        ly_sales: nn(m.lySales),
+        pct_vs_ly: numOrNull(m.pctVsLy),
+        tickets: nn(m.tickets),
+        tickets_vs_ly_pct: numOrNull(m.ticketsVsLyPct),
+        sales_score: nn(m.salesScore),
+        // Food cost
+        cogs_eff: nn(m.cogsEff),
+        fc_miss: nn(m.fcMiss),
+        fc_annualized: nn(m.fcAnnualized),
+        fc_score: nn(m.fcScore),
+        // Labor
+        labor_pct: nn(m.laborPct),
+        labor_chart: nn(m.chart),
+        labor_variance: nn(m.varianceToChart),
+        labor_miss: nn(m.laborMiss),
+        labor_score: nn(m.laborScore),
+        // Ops
+        on_time_pct: nn(m.onTimePct),
+        on_time_score: nn(m.onTimeScore),
+        calls_per_10k: typeof m.callsPer10k === "number" ? m.callsPer10k : null,
+        complaints_score: nn(m.complaintsScore),
+        vog_raw: nn(m.vog),
+        vog_score: nn(m.vogScore),
+        ecosure_score: nn(m.ecosureScore),
+        bsc_score: nn(m.bscScore),
+        total_training_pct: nn(m.totalTrainingPct),
+        total_training_score: nn(m.totalTrainingScore),
+        // Scores
+        fin_score: nn(m.finScore),
+        ops_score: nn(m.opsScore),
+        // Info-only
+        voids: nn(m.voids),
+        voids_pct: nn(m.voidsPct),
+        cash_over_short: nn(m.cashOverShort),
+        doh: nn(m.doh),
+        ms_count: nn(m.msCount),
+        ms_score: nn(m.msScore),
+        tr_vs_tz: nn(m.trVsTz),
+        evening_pct: nn(m.eveningPct),
+      });
+    }
+  }
+
+  // 3. Fallback to official data for periods with no run.
+  const coveredPeriods = new Set(latestByPeriod.keys());
+  const { data: offRows } = await supa
+    .from("ranking_official_periods")
+    .select("store_number, period, soar_rank, total_points, ptd_sales, ly_sales, pct_vs_ly, gm, location")
+    .gte("period", fromP).lte("period", toP);
+
+  const offByPeriod = new Map();
+  for (const r of offRows || []) {
+    if (!offByPeriod.has(r.period)) offByPeriod.set(r.period, []);
+    offByPeriod.get(r.period).push(r);
+  }
+  for (const [p, pRows] of offByPeriod) {
+    if (coveredPeriods.has(p)) continue;
+    pRows.sort((a, b) => (a.soar_rank ?? 999) - (b.soar_rank ?? 999));
+    for (const r of pRows) {
+      const blank = () => null;
+      rows.push({
+        period: p, week: null, week_ending: null, source: "official",
+        rank: r.soar_rank ?? null,
+        total_points: r.total_points != null ? Number(r.total_points) : null,
+        store: normStoreNum(r.store_number),
+        location: r.location ?? null, gm: r.gm ?? null,
+        do_name: null, sdo_name: null,
+        ptd_sales: r.ptd_sales != null ? Number(r.ptd_sales) : null,
+        ly_sales: r.ly_sales != null ? Number(r.ly_sales) : null,
+        pct_vs_ly: r.pct_vs_ly != null ? Number(r.pct_vs_ly) : null,
+        tickets: null, tickets_vs_ly_pct: null, sales_score: null,
+        cogs_eff: null, fc_miss: null, fc_annualized: null, fc_score: null,
+        labor_pct: null, labor_chart: null, labor_variance: null, labor_miss: null, labor_score: null,
+        on_time_pct: null, on_time_score: null, calls_per_10k: null, complaints_score: null,
+        vog_raw: null, vog_score: null, ecosure_score: null, bsc_score: null,
+        total_training_pct: null, total_training_score: null,
+        fin_score: null, ops_score: null,
+        voids: null, voids_pct: null, cash_over_short: null, doh: null,
+        ms_count: blank(), ms_score: blank(), tr_vs_tz: null, evening_pct: null,
+      });
+    }
+  }
+
+  rows.sort((a, b) => a.period - b.period || (a.rank ?? 999) - (b.rank ?? 999));
+  const periods = [...new Set(rows.map((r) => r.period))].sort((a, b) => a - b);
+  return { periods, rows, error: null };
+}
+
 export async function p1p10Export(supa, opts = {}) {
   const fromP = Math.max(1, Math.min(13, Number(opts.from) || 1));
   const toP = Math.max(fromP, Math.min(13, Number(opts.to) || 13));
