@@ -1767,26 +1767,34 @@ export async function fullMetricsExport(supa, opts = {}) {
   const fromP = Math.max(1, Math.min(13, Number(opts.from) || 1));
   const toP   = Math.max(fromP, Math.min(13, Number(opts.to) || 13));
 
-  // 1. Latest complete run per period in range.
-  const { data: runs } = await supa
+  // 1. All complete runs in range — one entry per unique week_ending,
+  //    keeping the most recently completed run when a week was re-run.
+  const { data: allRuns } = await supa
     .from("ranking_runs")
     .select("id, period, week, week_ending, completed_at")
     .eq("status", "complete")
     .gte("period", fromP).lte("period", toP)
     .order("period", { ascending: true })
+    .order("week", { ascending: true })
     .order("completed_at", { ascending: false });
 
-  const latestByPeriod = new Map();
-  for (const r of runs || []) {
-    if (!latestByPeriod.has(r.period)) latestByPeriod.set(r.period, r);
+  // De-dupe by week_ending — keep first (most recent completed_at).
+  const latestByWeek = new Map();
+  for (const r of allRuns || []) {
+    const key = r.week_ending ?? `${r.period}-w${r.week}`;
+    if (!latestByWeek.has(key)) latestByWeek.set(key, r);
   }
+  const runs = [...latestByWeek.values()].sort((a, b) =>
+    a.period !== b.period ? a.period - b.period : (a.week ?? 0) - (b.week ?? 0)
+  );
 
   const nn = (v, fallback = null) => (v == null ? fallback : v);
   const numOrNull = (v) => (v === "NO LY" || v == null ? null : isFinite(Number(v)) ? Number(v) : null);
 
-  // 2. PTD store rows for each period with a complete run.
+  // 2. PTD store rows for every week's run.
   const rows = [];
-  for (const [period, run] of [...latestByPeriod.entries()].sort((a, b) => a[0] - b[0])) {
+  for (const run of runs) {
+    const { period } = run;
     const { data: rr } = await supa
       .from("ranking_rows")
       .select("rank, total_points, metrics")
@@ -1852,8 +1860,8 @@ export async function fullMetricsExport(supa, opts = {}) {
     }
   }
 
-  // 3. Fallback to official data for periods with no run.
-  const coveredPeriods = new Set(latestByPeriod.keys());
+  // 3. Fallback to official data for periods with no run at all.
+  const coveredPeriods = new Set(runs.map((r) => r.period));
   const { data: offRows } = await supa
     .from("ranking_official_periods")
     .select("store_number, period, soar_rank, total_points, ptd_sales, ly_sales, pct_vs_ly, gm, location")
