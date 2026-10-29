@@ -388,6 +388,8 @@ export function RankingAdminPage() {
 
   // Non-admin scoped leaders (DO/SDO/RVP) can optionally expand to company view.
   const isDo = profile?.role === "do" || profile?.role === "sdo";
+  const isRvp = profile?.role === "rvp";
+  const isLeader = isDo || isRvp;
   const [leaderViewScope, setLeaderViewScope] = useState<"own" | "company">("own");
 
   // A GM owns a single store — show a view switcher so they can see
@@ -462,7 +464,7 @@ export function RankingAdminPage() {
     ...(canSettings ? [{ value: "settings" as AdminView, label: isAdmin ? "System settings" : "Ranker uploads" }] : []),
   ];
   const active = view === "settings" && !canSettings ? "ranking" : view;
-  const boardViewScope = isDo ? leaderViewScope : "own";
+  const boardViewScope = isLeader ? leaderViewScope : "own";
   return (
     <>
       <PageHeader
@@ -471,7 +473,7 @@ export function RankingAdminPage() {
       />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <Segmented<AdminView> value={active} onChange={setView} options={options} />
-        {isDo && active === "ranking" && (
+        {isLeader && active === "ranking" && (
           <div className="flex overflow-hidden rounded-lg border border-zinc-200 bg-white text-sm">
             {(["own", "company"] as const).map((s) => (
               <button
@@ -483,7 +485,7 @@ export function RankingAdminPage() {
                   boardViewScope === s ? "bg-accent text-white" : "text-zinc-600 hover:bg-zinc-50",
                 )}
               >
-                {s === "own" ? "My District" : "Company"}
+                {s === "own" ? (isRvp ? "My Market" : "My District") : "Company"}
               </button>
             ))}
           </div>
