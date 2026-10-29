@@ -404,6 +404,54 @@ export function backfillRankingFields(days: number): Promise<BackfillResult> {
   return req(`${FN}?action=backfill`, { method: "POST", body: JSON.stringify({ days }) });
 }
 
+// ── Year-in-Review Awards ─────────────────────────────────────────────
+export interface AwardStoreRow {
+  store_number: string;
+  location: string | null;
+  gm: string | null;
+  periods_in: number;
+  avg_rank: number | null;
+  best_rank: number | null;
+  top1_count: number;
+  top5_count: number;
+  best_pct: number | null;
+  best_pct_period: number | null;
+  latest_sales: number | null;
+  rank_first: number | null;
+  rank_last: number | null;
+  rank_delta: number | null;
+  latest_period: number;
+}
+export interface AwardLeaderRow {
+  name: string;
+  sdo_name: string | null;
+  periods_in: number;
+  avg_rank: number | null;
+  best_rank: number | null;
+  rank_first: number | null;
+  rank_last: number | null;
+  rank_delta: number | null;
+  best_points: number | null;
+  latest_period: number;
+}
+export interface AwardCategory<T> {
+  id: string;
+  label: string;
+  description: string;
+  icon: string;
+  podium: T[];
+  sort_note: string;
+}
+export interface AwardsResponse {
+  periods: number[];
+  store_awards: AwardCategory<AwardStoreRow>[];
+  leader_awards: AwardCategory<AwardLeaderRow>[];
+  error: string | null;
+}
+export function fetchAwards(): Promise<AwardsResponse> {
+  return req(`${FN}?action=awards`);
+}
+
 // ── Source ingestion ─────────────────────────────────────────────────
 
 // Post an ingest; if the backend blocks it as an already-ingested duplicate,

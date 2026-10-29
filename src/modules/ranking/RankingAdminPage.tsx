@@ -14,6 +14,7 @@ import { RankingSevenUpView } from "./RankingSevenUpView";
 import { RankingShakersView } from "./RankingShakersView";
 import { RankingTopPerformersView } from "./RankingTopPerformersView";
 import { RankingEveningView } from "./RankingEveningView";
+import { RankingAwardsView } from "./RankingAwardsView";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Copy, ExternalLink, Eye, EyeOff, HelpCircle, KeyRound, PauseCircle, Pencil, Plus, Save, Trash2, Users } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -366,7 +367,7 @@ function DelegationPanel() {
   );
 }
 
-type AdminView = "ranking" | "top" | "sevenup" | "evening" | "shakers" | "drill" | "watchlist" | "comms" | "settings";
+type AdminView = "ranking" | "top" | "sevenup" | "evening" | "shakers" | "drill" | "watchlist" | "comms" | "awards" | "settings";
 
 export function RankingAdminPage() {
   const { profile } = useAuth();
@@ -455,6 +456,7 @@ export function RankingAdminPage() {
     { value: "shakers", label: "Movers & Shakers" },
     { value: "drill", label: "Drill" },
     { value: "watchlist", label: "Watchlist" },
+    { value: "awards", label: "Awards" },
     ...(canSettings ? [{ value: "settings" as AdminView, label: isAdmin ? "System settings" : "Ranker uploads" }] : []),
   ];
   const active = view === "settings" && !canSettings ? "ranking" : view;
@@ -493,6 +495,7 @@ export function RankingAdminPage() {
         : active === "drill" ? <RankingDrillView />
         : active === "watchlist" ? <RankingWatchlistView />
         : active === "comms" ? <RankingCommsBoardView />
+        : active === "awards" ? <RankingAwardsView />
         : <SettingsView delegatedOnly={delegated && !isAdmin} />}
     </>
   );
