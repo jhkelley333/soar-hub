@@ -21,10 +21,12 @@ const EXEC = [
   { id: "pinakin", name: "Pinakin Bhakta", title: "Compliance Manager", col: 1.4, row: 2 },
   { id: "cory", name: "Cory Posey", title: "Director of Financial Analysis", col: 3.2, row: 2 },
   { id: "qsc", name: "QSCulinary", title: "Full Back Office Solutions", col: 5, row: 2 },
+  { id: "crystal", name: "Crystal Boudreau", title: "Director of Training & Development", col: -5, row: 3 },
 ];
 const EXEC_LINKS: [string, string][] = [
   ["nik", "ron"], ["nik", "khaled"], ["khaled", "heath"], ["khaled", "adam"],
   ["ron", "jay"], ["jay", "syed"], ["jay", "pinakin"], ["jay", "cory"], ["syed", "qsc"],
+  ["adam", "crystal"],
 ];
 const EXEC_ORIGIN = "heath"; // exec box the RVP tier hangs from
 
@@ -106,7 +108,7 @@ export function exportOrgChartPosterPdf(tree: OrgTreeResponse | null): void {
 
   const treeW = cursor - SDO_GAP + M + 26; // right logo room
   const execTop = M + 16;
-  const execBottom = execTop + 3 * EXEC_ROW_H;
+  const execBottom = execTop + 4 * EXEC_ROW_H;
   const rvpY = execBottom + 16;
   const sdoY = rvpY + TIER_H + 20;
   const doStartY = sdoY + TIER_H + 16;

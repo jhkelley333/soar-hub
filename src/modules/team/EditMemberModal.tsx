@@ -157,29 +157,41 @@ export function EditMemberModal({
 
   const scopeOptions = useMemo(() => {
     if (!scopeQuery.data) return [];
+    const numCode = (s: string | null | undefined) => {
+      const m = s?.match(/\d+/);
+      return m ? parseInt(m[0], 10) : Infinity;
+    };
     if (scopeKind === "store") {
-      return scopeQuery.data.stores.map((s) => ({
-        value: s.id,
-        label: `Store ${s.number}${s.name ? " — " + s.name : ""}`,
-      }));
+      return [...scopeQuery.data.stores]
+        .sort((a, b) => Number(a.number) - Number(b.number))
+        .map((s) => ({
+          value: s.id,
+          label: `Store ${s.number}${s.name ? " — " + s.name : ""}`,
+        }));
     }
     if (scopeKind === "district") {
-      return scopeQuery.data.districts.map((d) => ({
-        value: d.id,
-        label: `${d.name}${d.code ? ` (${d.code})` : ""}`,
-      }));
+      return [...scopeQuery.data.districts]
+        .sort((a, b) => numCode(a.code) - numCode(b.code))
+        .map((d) => ({
+          value: d.id,
+          label: `${d.name}${d.code ? ` (${d.code})` : ""}`,
+        }));
     }
     if (scopeKind === "area") {
-      return scopeQuery.data.areas.map((a) => ({
-        value: a.id,
-        label: `${a.name}${a.code ? ` (${a.code})` : ""}`,
-      }));
+      return [...scopeQuery.data.areas]
+        .sort((a, b) => numCode(a.code) - numCode(b.code))
+        .map((a) => ({
+          value: a.id,
+          label: `${a.name}${a.code ? ` (${a.code})` : ""}`,
+        }));
     }
     if (scopeKind === "region") {
-      return scopeQuery.data.regions.map((r) => ({
-        value: r.id,
-        label: `${r.name}${r.code ? ` (${r.code})` : ""}`,
-      }));
+      return [...scopeQuery.data.regions]
+        .sort((a, b) => numCode(a.code) - numCode(b.code))
+        .map((r) => ({
+          value: r.id,
+          label: `${r.name}${r.code ? ` (${r.code})` : ""}`,
+        }));
     }
     return [];
   }, [scopeKind, scopeQuery.data]);
@@ -619,25 +631,37 @@ function AdditionalCoverageSection({
 
   const nodeOptions = useMemo(() => {
     if (!scopeData) return [] as { value: string; label: string }[];
+    const numCode = (s: string | null | undefined) => {
+      const m = s?.match(/\d+/);
+      return m ? parseInt(m[0], 10) : Infinity;
+    };
     if (kind === "store")
-      return scopeData.stores.map((s) => ({
-        value: s.id,
-        label: `Store ${s.number}${s.name ? " — " + s.name : ""}`,
-      }));
+      return [...scopeData.stores]
+        .sort((a, b) => Number(a.number) - Number(b.number))
+        .map((s) => ({
+          value: s.id,
+          label: `Store ${s.number}${s.name ? " — " + s.name : ""}`,
+        }));
     if (kind === "district")
-      return scopeData.districts.map((d) => ({
-        value: d.id,
-        label: `${d.name}${d.code ? ` (${d.code})` : ""}`,
-      }));
+      return [...scopeData.districts]
+        .sort((a, b) => numCode(a.code) - numCode(b.code))
+        .map((d) => ({
+          value: d.id,
+          label: `${d.name}${d.code ? ` (${d.code})` : ""}`,
+        }));
     if (kind === "area")
-      return scopeData.areas.map((a) => ({
-        value: a.id,
-        label: `${a.name}${a.code ? ` (${a.code})` : ""}`,
+      return [...scopeData.areas]
+        .sort((a, b) => numCode(a.code) - numCode(b.code))
+        .map((a) => ({
+          value: a.id,
+          label: `${a.name}${a.code ? ` (${a.code})` : ""}`,
+        }));
+    return [...scopeData.regions]
+      .sort((a, b) => numCode(a.code) - numCode(b.code))
+      .map((r) => ({
+        value: r.id,
+        label: `${r.name}${r.code ? ` (${r.code})` : ""}`,
       }));
-    return scopeData.regions.map((r) => ({
-      value: r.id,
-      label: `${r.name}${r.code ? ` (${r.code})` : ""}`,
-    }));
   }, [kind, scopeData]);
 
   // Patch the cached team list's member.additional_scopes so the change shows

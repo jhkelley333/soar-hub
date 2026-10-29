@@ -98,29 +98,41 @@ export function AddUserModal({
 
   const scopeOptions = useMemo(() => {
     if (!scopeKind || !scopeQuery.data) return [];
+    const numCode = (s: string | null | undefined) => {
+      const m = s?.match(/\d+/);
+      return m ? parseInt(m[0], 10) : Infinity;
+    };
     if (scopeKind === "store") {
-      return scopeQuery.data.stores.map((s) => ({
-        value: s.id,
-        label: `Store ${s.number}${s.name ? " — " + s.name : ""}`,
-      }));
+      return [...scopeQuery.data.stores]
+        .sort((a, b) => Number(a.number) - Number(b.number))
+        .map((s) => ({
+          value: s.id,
+          label: `Store ${s.number}${s.name ? " — " + s.name : ""}`,
+        }));
     }
     if (scopeKind === "district") {
-      return scopeQuery.data.districts.map((d) => ({
-        value: d.id,
-        label: `${d.name}${d.code ? ` (${d.code})` : ""}`,
-      }));
+      return [...scopeQuery.data.districts]
+        .sort((a, b) => numCode(a.code) - numCode(b.code))
+        .map((d) => ({
+          value: d.id,
+          label: `${d.name}${d.code ? ` (${d.code})` : ""}`,
+        }));
     }
     if (scopeKind === "area") {
-      return scopeQuery.data.areas.map((a) => ({
-        value: a.id,
-        label: `${a.name}${a.code ? ` (${a.code})` : ""}`,
-      }));
+      return [...scopeQuery.data.areas]
+        .sort((a, b) => numCode(a.code) - numCode(b.code))
+        .map((a) => ({
+          value: a.id,
+          label: `${a.name}${a.code ? ` (${a.code})` : ""}`,
+        }));
     }
     if (scopeKind === "region") {
-      return scopeQuery.data.regions.map((r) => ({
-        value: r.id,
-        label: `${r.name}${r.code ? ` (${r.code})` : ""}`,
-      }));
+      return [...scopeQuery.data.regions]
+        .sort((a, b) => numCode(a.code) - numCode(b.code))
+        .map((r) => ({
+          value: r.id,
+          label: `${r.name}${r.code ? ` (${r.code})` : ""}`,
+        }));
     }
     return [];
   }, [scopeKind, scopeQuery.data]);
