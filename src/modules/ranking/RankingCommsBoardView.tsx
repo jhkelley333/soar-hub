@@ -227,7 +227,7 @@ export function RankingCommsBoardView() {
       setSavingField(field);
       return saveCommsMeta(d!.store!.number, d!.period!, field, value);
     },
-    onSettled: (_data, _err, vars) => {
+    onSettled: (_data, _err, _vars) => {
       setSavingField(null);
       qc.invalidateQueries({ queryKey: ["comms-meta", d?.store?.number, d?.period] });
     },
