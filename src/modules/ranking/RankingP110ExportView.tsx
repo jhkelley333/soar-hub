@@ -119,7 +119,8 @@ async function downloadExcel(
     }
 
     // Write to Uint8Array, then trigger download via hidden anchor.
-    const buf: Uint8Array = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    // Cast through unknown to satisfy strict BlobPart typing.
+    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" }) as unknown as BlobPart;
     const blob = new Blob([buf], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
