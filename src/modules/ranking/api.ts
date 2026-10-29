@@ -404,6 +404,54 @@ export function backfillRankingFields(days: number): Promise<BackfillResult> {
   return req(`${FN}?action=backfill`, { method: "POST", body: JSON.stringify({ days }) });
 }
 
+// ── Year-in-Review Awards ─────────────────────────────────────────────
+export interface AwardStoreRow {
+  store_number: string;
+  location: string | null;
+  gm: string | null;
+  periods_in: number;
+  avg_rank: number | null;
+  best_rank: number | null;
+  top1_count: number;
+  top5_count: number;
+  best_pct: number | null;
+  best_pct_period: number | null;
+  latest_sales: number | null;
+  rank_first: number | null;
+  rank_last: number | null;
+  rank_delta: number | null;
+  latest_period: number;
+}
+export interface AwardLeaderRow {
+  name: string;
+  sdo_name: string | null;
+  periods_in: number;
+  avg_rank: number | null;
+  best_rank: number | null;
+  rank_first: number | null;
+  rank_last: number | null;
+  rank_delta: number | null;
+  best_points: number | null;
+  latest_period: number;
+}
+export interface AwardCategory<T> {
+  id: string;
+  label: string;
+  description: string;
+  icon: string;
+  podium: T[];
+  sort_note: string;
+}
+export interface AwardsResponse {
+  periods: number[];
+  store_awards: AwardCategory<AwardStoreRow>[];
+  leader_awards: AwardCategory<AwardLeaderRow>[];
+  error: string | null;
+}
+export function fetchAwards(): Promise<AwardsResponse> {
+  return req(`${FN}?action=awards`);
+}
+
 // ── Source ingestion ─────────────────────────────────────────────────
 
 // Post an ingest; if the backend blocks it as an already-ingested duplicate,
@@ -606,4 +654,68 @@ export async function saveCommsMeta(
     { onConflict: "store_number,period,field" },
   );
   if (error) throw error;
+}
+
+// ── P1–P10 Cowork export ─────────────────────────────────────────────────────
+export interface P110PeriodSlice {
+  rank: number | null;
+  total_points: number | null;
+  ptd_sales: number | null;
+  ly_sales: number | null;
+  pct_vs_ly: number | null;
+}
+export interface P110StoreRow {
+  store_number: string;
+  location: string | null;
+  gm: string | null;
+  by_period: Record<number, P110PeriodSlice>;
+  ytd: {
+    periods_in: number;
+    avg_rank: number | null;
+    best_rank: number | null;
+    rank_first: number | null;
+    rank_last: number | null;
+    rank_delta: number | null;
+    avg_pct_vs_ly: number | null;
+    total_sales: number | null;
+  };
+}
+export interface P110LeaderPeriodSlice {
+  rank: number | null;
+  total_points: number | null;
+  ptd_sales: number | null;
+  ly_sales: number | null;
+}
+export interface P110LeaderRow {
+  name: string;
+  sdo_name: string | null;
+  by_period: Record<number, P110LeaderPeriodSlice>;
+  ytd: {
+    periods_in: number;
+    avg_rank: number | null;
+    best_rank: number | null;
+    rank_first: number | null;
+    rank_last: number | null;
+    rank_delta: number | null;
+  };
+}
+export interface P110Company {
+  store_count: number;
+  do_count: number;
+  total_sales: number | null;
+  avg_rank: number | null;
+  avg_pct_vs_ly: number | null;
+  avg_rank_by_period: Record<number, number | null>;
+  avg_pct_by_period: Record<number, number | null>;
+}
+export interface P110ExportResponse {
+  periods: number[];
+  stores: P110StoreRow[];
+  leaders: P110LeaderRow[];
+  company: P110Company | null;
+  error: string | null;
+}
+
+export function fetchP110Export(from = 1, to = 13): Promise<P110ExportResponse> {
+  return req(`${FN}?action=p1-p10-export&from=${from}&to=${to}`);
 }
