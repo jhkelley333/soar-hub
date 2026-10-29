@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
-import type { OrgTreeResponse } from "./api";
+import type { OrgManager, OrgTreeResponse } from "./api";
 import {
   exportOrgChartPosterPdf,
   type HighlightColor,
@@ -29,6 +29,14 @@ const EXEC_NODES = [
   { id: "cory",    name: "Cory Posey",       subtitle: "Director of Financial Analysis" },
   { id: "qsc",     name: "QSCulinary",       subtitle: "Full Back Office Solutions" },
 ];
+
+function getLeader(managers: OrgManager[], role: string): string {
+  const scoped = managers.filter((m) => String(m.role).toLowerCase() === role);
+  const pool = scoped.length ? scoped : managers;
+  const primary = pool.filter((m) => !m.acting);
+  const chosen = (primary.length ? primary : pool).map((m) => m.full_name || m.email).filter(Boolean);
+  return chosen[0] ?? "—";
+}
 
 function loadStored<T>(key: string, fallback: T): T {
   try { return JSON.parse(localStorage.getItem(key) ?? "") as T; } catch { return fallback; }
@@ -149,7 +157,8 @@ export function OrgChartHighlightModal({
           <section key={r.id}>
             <div className="mb-1 flex items-center gap-2">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
-                {r.name}{r.code ? ` (${r.code})` : ""}
+                {getLeader(r.managers, "rvp")}
+                {r.code ? <span className="ml-1 font-normal normal-case text-zinc-400">· {r.code}</span> : null}
               </h3>
               <ColorPicker id={r.id} highlights={highlights} onChange={setHighlight} />
             </div>
@@ -158,14 +167,18 @@ export function OrgChartHighlightModal({
                 <div key={a.id}>
                   <div className="flex items-center gap-2 pb-0.5">
                     <span className="font-medium text-zinc-700">
-                      {a.name}{a.code ? ` (${a.code})` : ""}
+                      {getLeader(a.managers, "sdo")}
+                      {a.code ? <span className="ml-1 font-normal text-zinc-400 text-xs">· {a.code}</span> : null}
                     </span>
                     <ColorPicker id={a.id} highlights={highlights} onChange={setHighlight} />
                   </div>
                   <div className="divide-y divide-zinc-100 rounded-md border border-zinc-200 pl-2">
                     {a.districts.filter((d) => d.is_active !== false).map((d) => (
                       <div key={d.id} className="flex items-center gap-2 px-2 py-1">
-                        <span className="flex-1 text-zinc-700">{d.name}{d.code ? ` (${d.code})` : ""}</span>
+                        <span className="flex-1 text-zinc-700">
+                          {getLeader(d.managers, "do")}
+                          {d.code ? <span className="ml-1 text-zinc-400 text-xs">· {d.code}</span> : null}
+                        </span>
                         <ColorPicker id={d.id} highlights={highlights} onChange={setHighlight} />
                       </div>
                     ))}
