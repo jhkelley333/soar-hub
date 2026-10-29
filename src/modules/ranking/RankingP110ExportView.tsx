@@ -1,8 +1,9 @@
-// Full metrics export — select period range, view all metrics per store per
-// period in a scrollable table, and download the complete dataset as CSV.
+// Full metrics export — select period range, preview in a scrollable table,
+// and download an Excel workbook with one sheet per week.
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import * as XLSX from "xlsx";
 import { fetchFullMetricsExport, type FullMetricsExportRow } from "./api";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { Button } from "@/shared/ui/Button";
@@ -25,78 +26,96 @@ function dollar(v: number | null | undefined): string {
   return `$${Math.round(v).toLocaleString()}`;
 }
 
-// CSV column definitions — key matches FullMetricsExportRow property names.
-const CSV_COLS: { header: string; key: keyof FullMetricsExportRow }[] = [
-  { header: "Period", key: "period" },
-  { header: "Week", key: "week" },
-  { header: "Week Ending", key: "week_ending" },
-  { header: "Source", key: "source" },
-  { header: "Rank", key: "rank" },
-  { header: "Total Points", key: "total_points" },
-  { header: "Store #", key: "store" },
-  { header: "Location", key: "location" },
-  { header: "GM", key: "gm" },
-  { header: "DO", key: "do_name" },
-  { header: "SDO", key: "sdo_name" },
-  { header: "PTD Sales", key: "ptd_sales" },
-  { header: "LY Sales", key: "ly_sales" },
-  { header: "% vs LY", key: "pct_vs_ly" },
-  { header: "Tickets", key: "tickets" },
-  { header: "Tickets vs LY %", key: "tickets_vs_ly_pct" },
-  { header: "Sales Score", key: "sales_score" },
-  { header: "COGS Eff", key: "cogs_eff" },
-  { header: "FC Miss", key: "fc_miss" },
-  { header: "FC Annualized", key: "fc_annualized" },
-  { header: "FC Score", key: "fc_score" },
-  { header: "Labor %", key: "labor_pct" },
-  { header: "Labor Chart", key: "labor_chart" },
-  { header: "Labor Variance", key: "labor_variance" },
-  { header: "Labor Miss", key: "labor_miss" },
-  { header: "Labor Score", key: "labor_score" },
-  { header: "On-Time %", key: "on_time_pct" },
-  { header: "On-Time Score", key: "on_time_score" },
-  { header: "Calls/10K", key: "calls_per_10k" },
+// ── Excel column definitions ──────────────────────────────────────────────────
+
+const XL_COLS: { header: string; key: keyof FullMetricsExportRow }[] = [
+  { header: "Period",           key: "period" },
+  { header: "Week",             key: "week" },
+  { header: "Week Ending",      key: "week_ending" },
+  { header: "Source",           key: "source" },
+  { header: "Rank",             key: "rank" },
+  { header: "Total Points",     key: "total_points" },
+  { header: "Store #",          key: "store" },
+  { header: "Location",         key: "location" },
+  { header: "GM",               key: "gm" },
+  { header: "DO",               key: "do_name" },
+  { header: "SDO",              key: "sdo_name" },
+  { header: "PTD Sales",        key: "ptd_sales" },
+  { header: "LY Sales",         key: "ly_sales" },
+  { header: "% vs LY",          key: "pct_vs_ly" },
+  { header: "Tickets",          key: "tickets" },
+  { header: "Tickets vs LY %",  key: "tickets_vs_ly_pct" },
+  { header: "Sales Score",      key: "sales_score" },
+  { header: "COGS Eff",         key: "cogs_eff" },
+  { header: "FC Miss",          key: "fc_miss" },
+  { header: "FC Annualized",    key: "fc_annualized" },
+  { header: "FC Score",         key: "fc_score" },
+  { header: "Labor %",          key: "labor_pct" },
+  { header: "Labor Chart",      key: "labor_chart" },
+  { header: "Labor Variance",   key: "labor_variance" },
+  { header: "Labor Miss",       key: "labor_miss" },
+  { header: "Labor Score",      key: "labor_score" },
+  { header: "On-Time %",        key: "on_time_pct" },
+  { header: "On-Time Score",    key: "on_time_score" },
+  { header: "Calls/10K",        key: "calls_per_10k" },
   { header: "Complaints Score", key: "complaints_score" },
-  { header: "VOG Raw", key: "vog_raw" },
-  { header: "VOG Score", key: "vog_score" },
-  { header: "EcoSure Score", key: "ecosure_score" },
-  { header: "BSC Score", key: "bsc_score" },
-  { header: "Training %", key: "total_training_pct" },
-  { header: "Training Score", key: "total_training_score" },
-  { header: "Fin Score", key: "fin_score" },
-  { header: "Ops Score", key: "ops_score" },
-  { header: "Voids", key: "voids" },
-  { header: "Voids %", key: "voids_pct" },
-  { header: "Cash Over/Short", key: "cash_over_short" },
-  { header: "DOH", key: "doh" },
-  { header: "MS Count", key: "ms_count" },
-  { header: "MS Score", key: "ms_score" },
-  { header: "TR vs TZ", key: "tr_vs_tz" },
-  { header: "Evening %", key: "evening_pct" },
+  { header: "VOG Raw",          key: "vog_raw" },
+  { header: "VOG Score",        key: "vog_score" },
+  { header: "EcoSure Score",    key: "ecosure_score" },
+  { header: "BSC Score",        key: "bsc_score" },
+  { header: "Training %",       key: "total_training_pct" },
+  { header: "Training Score",   key: "total_training_score" },
+  { header: "Fin Score",        key: "fin_score" },
+  { header: "Ops Score",        key: "ops_score" },
+  { header: "Voids",            key: "voids" },
+  { header: "Voids %",          key: "voids_pct" },
+  { header: "Cash Over/Short",  key: "cash_over_short" },
+  { header: "DOH",              key: "doh" },
+  { header: "MS Count",         key: "ms_count" },
+  { header: "MS Score",         key: "ms_score" },
+  { header: "TR vs TZ",         key: "tr_vs_tz" },
+  { header: "Evening %",        key: "evening_pct" },
 ];
 
-function buildCsv(rows: FullMetricsExportRow[]): string {
-  const escape = (v: unknown) => {
-    if (v == null) return "";
-    const s = String(v);
-    return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const header = CSV_COLS.map((c) => c.header).join(",");
-  const body = rows
-    .map((row) => CSV_COLS.map((c) => escape(row[c.key])).join(","))
-    .join("\n");
-  return `${header}\n${body}`;
-}
+// ── Excel download ────────────────────────────────────────────────────────────
 
-function downloadCsv(rows: FullMetricsExportRow[], fromP: number, toP: number) {
-  const csv = buildCsv(rows);
-  const blob = new Blob([csv], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `soar-ranking-P${fromP}-P${toP}-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+function downloadExcel(rows: FullMetricsExportRow[], fromP: number, toP: number) {
+  // Group rows by period+week so each week gets its own sheet.
+  const weekMap = new Map<string, FullMetricsExportRow[]>();
+  for (const row of rows) {
+    const key = `P${row.period}W${row.week ?? "?"}`;
+    if (!weekMap.has(key)) weekMap.set(key, []);
+    weekMap.get(key)!.push(row);
+  }
+
+  const wb = XLSX.utils.book_new();
+
+  // Sort sheets by period then week.
+  const sheetKeys = [...weekMap.keys()].sort((a, b) => {
+    const pa = rows.find((r) => `P${r.period}W${r.week ?? "?"}` === a);
+    const pb = rows.find((r) => `P${r.period}W${r.week ?? "?"}` === b);
+    if (!pa || !pb) return 0;
+    if (pa.period !== pb.period) return pa.period - pb.period;
+    return (pa.week ?? 0) - (pb.week ?? 0);
+  });
+
+  for (const key of sheetKeys) {
+    const sheetRows = weekMap.get(key)!;
+    // Build array-of-arrays: header row then data rows.
+    const aoa: unknown[][] = [XL_COLS.map((c) => c.header)];
+    for (const row of sheetRows) {
+      aoa.push(XL_COLS.map((c) => row[c.key] ?? null));
+    }
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    // Freeze the header row.
+    ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+    // Auto column widths (rough estimate).
+    ws["!cols"] = XL_COLS.map((c) => ({ wch: Math.max(c.header.length, 10) }));
+    XLSX.utils.book_append_sheet(wb, ws, key);
+  }
+
+  const filename = `soar-ranking-P${fromP}-P${toP}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  XLSX.writeFile(wb, filename);
 }
 
 // ── Period selector ───────────────────────────────────────────────────────────
@@ -123,9 +142,7 @@ function PeriodSelect({
         className="rounded border border-border bg-background px-2 py-1 text-sm"
       >
         {PERIODS.filter((p) => (min == null || p >= min) && (max == null || p <= max)).map((p) => (
-          <option key={p} value={p}>
-            P{p}
-          </option>
+          <option key={p} value={p}>P{p}</option>
         ))}
       </select>
     </label>
@@ -146,32 +163,44 @@ export function RankingP110ExportView() {
 
   const rows = data?.rows ?? [];
 
+  // Count unique weeks for the button label.
+  const weekCount = new Set(rows.map((r) => `P${r.period}W${r.week ?? "?"}`)).size;
+
   return (
     <div className="space-y-4">
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-4">
-        <PeriodSelect label="From" value={fromP} onChange={(v) => { setFromP(v); if (v > toP) setToP(v); }} max={toP} />
-        <PeriodSelect label="To" value={toP} onChange={(v) => { setToP(v); if (v < fromP) setFromP(v); }} min={fromP} />
+        <PeriodSelect
+          label="From"
+          value={fromP}
+          onChange={(v) => { setFromP(v); if (v > toP) setToP(v); }}
+          max={toP}
+        />
+        <PeriodSelect
+          label="To"
+          value={toP}
+          onChange={(v) => { setToP(v); if (v < fromP) setFromP(v); }}
+          min={fromP}
+        />
         <Button
           size="sm"
           variant="secondary"
           disabled={isLoading || rows.length === 0}
-          onClick={() => downloadCsv(rows, fromP, toP)}
+          onClick={() => downloadExcel(rows, fromP, toP)}
           className="ml-auto"
         >
           <Download className="mr-1.5 h-4 w-4" />
-          Download CSV ({rows.length} rows)
+          Download Excel
+          {weekCount > 0 && ` (${weekCount} sheet${weekCount !== 1 ? "s" : ""})`}
         </Button>
       </div>
 
-      {/* Status / error */}
+      {/* Error */}
       {error && (
-        <p className="text-sm text-destructive">
-          {(error as Error).message}
-        </p>
+        <p className="text-sm text-destructive">{(error as Error).message}</p>
       )}
 
-      {/* Table */}
+      {/* Table preview */}
       {isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 8 }).map((_, i) => (
@@ -188,6 +217,7 @@ export function RankingP110ExportView() {
             <thead className="sticky top-0 bg-muted">
               <tr>
                 <th className="whitespace-nowrap px-2 py-2 text-left font-medium">Period</th>
+                <th className="whitespace-nowrap px-2 py-2 text-left font-medium">Week</th>
                 <th className="whitespace-nowrap px-2 py-2 text-left font-medium">Store</th>
                 <th className="whitespace-nowrap px-2 py-2 text-left font-medium">Location</th>
                 <th className="whitespace-nowrap px-2 py-2 text-left font-medium">GM</th>
@@ -212,6 +242,7 @@ export function RankingP110ExportView() {
               {rows.map((row, i) => (
                 <tr key={i} className="hover:bg-muted/40">
                   <td className="px-2 py-1.5 font-medium">P{row.period}</td>
+                  <td className="px-2 py-1.5">W{row.week ?? "?"}</td>
                   <td className="px-2 py-1.5 font-mono">{row.store}</td>
                   <td className="max-w-[160px] truncate px-2 py-1.5">{row.location ?? "—"}</td>
                   <td className="max-w-[120px] truncate px-2 py-1.5">{row.gm ?? "—"}</td>
@@ -222,9 +253,13 @@ export function RankingP110ExportView() {
                   <td className="px-2 py-1.5 text-right">{pct(row.pct_vs_ly)}</td>
                   <td className="px-2 py-1.5 text-right">{n2(row.sales_score, 2)}</td>
                   <td className="px-2 py-1.5 text-right">{n2(row.fc_score, 2)}</td>
-                  <td className="px-2 py-1.5 text-right">{row.labor_pct != null ? `${(row.labor_pct * 100).toFixed(1)}%` : "—"}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    {row.labor_pct != null ? `${(row.labor_pct * 100).toFixed(1)}%` : "—"}
+                  </td>
                   <td className="px-2 py-1.5 text-right">{n2(row.labor_score, 2)}</td>
-                  <td className="px-2 py-1.5 text-right">{row.on_time_pct != null ? `${(row.on_time_pct * 100).toFixed(1)}%` : "—"}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    {row.on_time_pct != null ? `${(row.on_time_pct * 100).toFixed(1)}%` : "—"}
+                  </td>
                   <td className="px-2 py-1.5 text-right">{n2(row.on_time_score, 2)}</td>
                   <td className="px-2 py-1.5 text-right">{n2(row.vog_raw, 2)}</td>
                   <td className="px-2 py-1.5 text-right">{n2(row.fin_score, 2)}</td>
@@ -238,7 +273,7 @@ export function RankingP110ExportView() {
       )}
 
       <p className="text-xs text-muted-foreground">
-        CSV download includes all {CSV_COLS.length} tracked metrics per store per period.
+        Excel file contains one sheet per week (e.g. P10W4) with all {XL_COLS.length} tracked metrics.
       </p>
     </div>
   );
