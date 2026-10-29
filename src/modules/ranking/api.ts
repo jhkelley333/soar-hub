@@ -716,6 +716,6 @@ export interface P110ExportResponse {
   error: string | null;
 }
 
-export function fetchP110Export(): Promise<P110ExportResponse> {
-  return req(`${FN}?action=p1-p10-export`);
+export function fetchP110Export(from = 1, to = 13): Promise<P110ExportResponse> {
+  return req(`${FN}?action=p1-p10-export&from=${from}&to=${to}`);
 }

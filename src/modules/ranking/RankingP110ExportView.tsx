@@ -1,6 +1,5 @@
-// P1–P10 Cowork handoff export — pivot table of every official period's data
-// for all stores and DOs, with YTD averages and a formatted "Copy for Cowork"
-// text block.
+// Period-range pivot export — choose any from/to period, see all stores and
+// DOs with per-period metrics, and copy or download the result.
 
 import { useState, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -286,8 +285,33 @@ function DoTable({ periods, leaders }: { periods: number[]; leaders: P110LeaderR
 
 // ── Main view ────────────────────────────────────────────────────────────────
 
+const PERIOD_OPTS = Array.from({ length: 13 }, (_, i) => i + 1);
+
+function PeriodSelect({ label, value, max, onChange }: { label: string; value: number; max: number; onChange: (v: number) => void }) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs text-zinc-600">
+      {label}
+      <select
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="rounded border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-800 focus:border-accent focus:outline-none"
+      >
+        {PERIOD_OPTS.filter((p) => p <= max).map((p) => (
+          <option key={p} value={p}>P{p}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 export function RankingP110ExportView() {
-  const q = useQuery({ queryKey: ["p110-export"], queryFn: fetchP110Export, staleTime: 5 * 60_000 });
+  const [fromP, setFromP] = useState(1);
+  const [toP, setToP] = useState(13);
+  const q = useQuery({
+    queryKey: ["p110-export", fromP, toP],
+    queryFn: () => fetchP110Export(fromP, toP),
+    staleTime: 5 * 60_000,
+  });
   const [copied, setCopied] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
 
@@ -321,6 +345,13 @@ export function RankingP110ExportView() {
   if (q.isLoading) {
     return (
       <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5">
+            <PeriodSelect label="From" value={fromP} max={toP} onChange={setFromP} />
+            <span className="text-xs text-zinc-400">→</span>
+            <PeriodSelect label="To" value={toP} max={13} onChange={(v) => { setToP(v); if (v < fromP) setFromP(v); }} />
+          </div>
+        </div>
         <Skeleton className="h-10 w-64" />
         <Skeleton className="h-64 w-full" />
       </div>
@@ -335,10 +366,17 @@ export function RankingP110ExportView() {
     );
   }
 
-  if (!periods.length) {
+  if (!periods.length && !q.isFetching) {
     return (
-      <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-8 text-center text-sm text-zinc-500">
-        No official period data found. Upload the PTD ranking sheet for at least one period first.
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 w-fit">
+          <PeriodSelect label="From" value={fromP} max={toP} onChange={setFromP} />
+          <span className="text-xs text-zinc-400">→</span>
+          <PeriodSelect label="To" value={toP} max={13} onChange={(v) => { setToP(v); if (v < fromP) setFromP(v); }} />
+        </div>
+        <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-8 text-center text-sm text-zinc-500">
+          No official period data found for P{fromP}–P{toP}. Try a different range or upload the PTD ranking sheet.
+        </div>
       </div>
     );
   }
@@ -347,20 +385,26 @@ export function RankingP110ExportView() {
 
   return (
     <div className="space-y-6">
-      {/* Header + actions */}
+      {/* Header + period range + actions */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-midnight">{ps} Official Ranking Export</p>
           <p className="mt-0.5 text-xs text-zinc-500">
-            {stores.length} stores · {leaders.length} DOs · {periods.length} periods
+            {stores.length} stores · {leaders.length} DOs · {periods.length} periods loaded
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="ghost" size="sm" onClick={downloadCsv} className="gap-1.5 text-xs">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Period range selector */}
+          <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5">
+            <PeriodSelect label="From" value={fromP} max={toP} onChange={(v) => setFromP(v)} />
+            <span className="text-xs text-zinc-400">→</span>
+            <PeriodSelect label="To" value={toP} max={13} onChange={(v) => { setToP(v); if (v < fromP) setFromP(v); }} />
+          </div>
+          <Button variant="ghost" size="sm" onClick={downloadCsv} disabled={!data || q.isFetching} className="gap-1.5 text-xs">
             <Download className="h-3.5 w-3.5" />
             Download CSV
           </Button>
-          <Button size="sm" onClick={copyForCowork} className="gap-1.5 text-xs">
+          <Button size="sm" onClick={copyForCowork} disabled={!data || q.isFetching} className="gap-1.5 text-xs">
             {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
             {copied ? "Copied!" : "Copy for Cowork"}
           </Button>

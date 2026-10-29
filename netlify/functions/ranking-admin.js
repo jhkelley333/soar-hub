@@ -826,7 +826,7 @@ export const handler = async (event) => {
     if (action === "period-movers") return unwrap(await periodMovers(supa, params, storeNums));
     if (action === "top-performers") return unwrap(await topPerformers(supa, params, storeNums));
     if (action === "awards") return unwrap(await yearlyAwards(supa));
-    if (action === "p1-p10-export") return unwrap(await p1p10Export(supa));
+    if (action === "p1-p10-export") return unwrap(await p1p10Export(supa, { from: params.from, to: params.to }));
     if (action === "bottom-performers") {
       if (!["sdo", "rvp", "vp", "coo", "admin"].includes(role)) return respond(403, { error: "Bottom Performers is for SDO and above." });
       return unwrap(await bottomPerformers(supa, params, storeNums));

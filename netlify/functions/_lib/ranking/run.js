@@ -1760,12 +1760,15 @@ export async function yearlyAwards(supa) {
 // Full P1–P10 pivot export. Returns per-store and per-DO rows with every
 // available metric sliced by period, plus company-level YTD averages.
 // Used by the Cowork handoff export tab in the Ranker admin.
-export async function p1p10Export(supa) {
-  // 1. Discover which official periods exist.
+export async function p1p10Export(supa, opts = {}) {
+  const fromP = Math.max(1, Math.min(13, Number(opts.from) || 1));
+  const toP = Math.max(fromP, Math.min(13, Number(opts.to) || 13));
+
+  // 1. Discover which official periods exist within the requested range.
   const { data: offPeriods } = await supa
     .from("ranking_official_periods").select("period").order("period", { ascending: true });
   const periods = [...new Set((offPeriods || []).map((r) => r.period))]
-    .filter((p) => p >= 1 && p <= 13).slice(0, 10);
+    .filter((p) => p >= fromP && p <= toP);
   if (!periods.length) return { periods: [], stores: [], leaders: [], company: null, error: null };
 
   // 2. Fetch all store rows for those periods.
