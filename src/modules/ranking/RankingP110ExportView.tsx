@@ -79,43 +79,59 @@ const XL_COLS: { header: string; key: keyof FullMetricsExportRow }[] = [
 
 // ── Excel download ────────────────────────────────────────────────────────────
 
+// Format a week_ending date string ("2025-07-05") → "Sun, Jul 5"
+function fmtWeekEnding(dateStr: string | null): string {
+  if (!dateStr) return "";
+  // Use noon UTC to avoid date shifting due to local timezone offsets.
+  const d = new Date(dateStr + "T12:00:00Z");
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+// Build the sheet-name key for a row: "P7W1 · Sun, Jul 5"
+// Excel sheet names max 31 chars; this format is ~18 chars.
+function sheetKey(row: FullMetricsExportRow): string {
+  const label = fmtWeekEnding(row.week_ending);
+  return label ? `P${row.period}W${row.week ?? "?"} · ${label}` : `P${row.period}W${row.week ?? "?"}`;
+}
+
 function downloadExcel(rows: FullMetricsExportRow[], fromP: number, toP: number) {
-  // Group rows by period+week so each week gets its own sheet.
-  const weekMap = new Map<string, FullMetricsExportRow[]>();
+  // Group rows by week, preserving one representative row for sort metadata.
+  type WeekMeta = { period: number; week: number | null; rows: FullMetricsExportRow[] };
+  const weekMap = new Map<string, WeekMeta>();
   for (const row of rows) {
-    const key = `P${row.period}W${row.week ?? "?"}`;
-    if (!weekMap.has(key)) weekMap.set(key, []);
-    weekMap.get(key)!.push(row);
+    const key = sheetKey(row);
+    if (!weekMap.has(key)) weekMap.set(key, { period: row.period, week: row.week, rows: [] });
+    weekMap.get(key)!.rows.push(row);
   }
 
-  const wb = XLSX.utils.book_new();
-
-  // Sort sheets by period then week.
-  const sheetKeys = [...weekMap.keys()].sort((a, b) => {
-    const pa = rows.find((r) => `P${r.period}W${r.week ?? "?"}` === a);
-    const pb = rows.find((r) => `P${r.period}W${r.week ?? "?"}` === b);
-    if (!pa || !pb) return 0;
-    if (pa.period !== pb.period) return pa.period - pb.period;
-    return (pa.week ?? 0) - (pb.week ?? 0);
+  // Sort sheets by period then week number.
+  const sorted = [...weekMap.entries()].sort(([, a], [, b]) => {
+    if (a.period !== b.period) return a.period - b.period;
+    return (a.week ?? 0) - (b.week ?? 0);
   });
 
-  for (const key of sheetKeys) {
-    const sheetRows = weekMap.get(key)!;
-    // Build array-of-arrays: header row then data rows.
+  const wb = XLSX.utils.book_new();
+  for (const [name, meta] of sorted) {
     const aoa: unknown[][] = [XL_COLS.map((c) => c.header)];
-    for (const row of sheetRows) {
+    for (const row of meta.rows) {
       aoa.push(XL_COLS.map((c) => row[c.key] ?? null));
     }
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    // Freeze the header row.
-    ws["!freeze"] = { xSplit: 0, ySplit: 1 };
-    // Auto column widths (rough estimate).
     ws["!cols"] = XL_COLS.map((c) => ({ wch: Math.max(c.header.length, 10) }));
-    XLSX.utils.book_append_sheet(wb, ws, key);
+    XLSX.utils.book_append_sheet(wb, ws, name);
   }
 
-  const filename = `soar-ranking-P${fromP}-P${toP}-${new Date().toISOString().slice(0, 10)}.xlsx`;
-  XLSX.writeFile(wb, filename);
+  // Use Blob + anchor for reliable browser download (avoids writeFile quirks).
+  const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
+  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `soar-ranking-P${fromP}-P${toP}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ── Period selector ───────────────────────────────────────────────────────────
@@ -164,7 +180,7 @@ export function RankingP110ExportView() {
   const rows = data?.rows ?? [];
 
   // Count unique weeks for the button label.
-  const weekCount = new Set(rows.map((r) => `P${r.period}W${r.week ?? "?"}`)).size;
+  const weekCount = new Set(rows.map(sheetKey)).size;
 
   return (
     <div className="space-y-4">
@@ -216,7 +232,6 @@ export function RankingP110ExportView() {
           <table className="min-w-full text-xs">
             <thead className="sticky top-0 bg-muted">
               <tr>
-                <th className="whitespace-nowrap px-2 py-2 text-left font-medium">Period</th>
                 <th className="whitespace-nowrap px-2 py-2 text-left font-medium">Week</th>
                 <th className="whitespace-nowrap px-2 py-2 text-left font-medium">Store</th>
                 <th className="whitespace-nowrap px-2 py-2 text-left font-medium">Location</th>
@@ -241,8 +256,10 @@ export function RankingP110ExportView() {
             <tbody className="divide-y divide-border">
               {rows.map((row, i) => (
                 <tr key={i} className="hover:bg-muted/40">
-                  <td className="px-2 py-1.5 font-medium">P{row.period}</td>
-                  <td className="px-2 py-1.5">W{row.week ?? "?"}</td>
+                  <td className="whitespace-nowrap px-2 py-1.5">
+                    P{row.period}W{row.week ?? "?"}
+                    {row.week_ending && <span className="ml-1 text-muted-foreground">· {fmtWeekEnding(row.week_ending)}</span>}
+                  </td>
                   <td className="px-2 py-1.5 font-mono">{row.store}</td>
                   <td className="max-w-[160px] truncate px-2 py-1.5">{row.location ?? "—"}</td>
                   <td className="max-w-[120px] truncate px-2 py-1.5">{row.gm ?? "—"}</td>
