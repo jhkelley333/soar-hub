@@ -1,26 +1,28 @@
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { cn } from "@/lib/cn";
 import { ListTab } from "./tabs/ListTab";
 import { StaticTab } from "./tabs/StaticTab";
+import { VideosTab } from "./tabs/VideosTab";
 import { SOLUGENIX, COKE, RF_TECH } from "./tabs/staticContent";
 
-// Vendors and Videos tabs are temporarily hidden — they depend on a Google
-// service account that's still being configured. Re-enable by:
-//   1. importing VendorsTab + VideosTab from ./tabs/
-//   2. adding "vendors" / "videos" back to TabKey + TABS
-//   3. restoring the conditional render below
-type TabKey = "list" | "solugenix" | "coke" | "rftech";
+type TabKey = "list" | "solugenix" | "coke" | "rftech" | "videos";
 
-const TABS: { key: TabKey; label: string }[] = [
+const TABS: { key: TabKey; label: string; cherry?: boolean }[] = [
   { key: "list", label: "Work orders" },
   { key: "solugenix", label: "Solugenix" },
   { key: "coke", label: "Coke" },
   { key: "rftech", label: "RF Tech" },
+  { key: "videos", label: "🎬 POP How to Videos", cherry: true },
 ];
 
 export function WorkOrdersPage() {
-  const [tab, setTab] = useState<TabKey>("list");
+  const [searchParams] = useSearchParams();
+  const initialTab = (searchParams.get("tab") as TabKey) ?? "list";
+  const [tab, setTab] = useState<TabKey>(
+    TABS.some((t) => t.key === initialTab) ? initialTab : "list"
+  );
 
   return (
     <>
@@ -47,7 +49,11 @@ export function WorkOrdersPage() {
               onClick={() => setTab(t.key)}
               className={cn(
                 "whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition",
-                tab === t.key
+                t.cherry && tab === t.key
+                  ? "border-cherry text-cherry"
+                  : t.cherry && tab !== t.key
+                  ? "border-transparent text-cherry/70 hover:border-cherry/40 hover:text-cherry"
+                  : tab === t.key
                   ? "border-accent text-accent"
                   : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-midnight"
               )}
@@ -63,6 +69,7 @@ export function WorkOrdersPage() {
       {tab === "solugenix" && <StaticTab content={SOLUGENIX} />}
       {tab === "coke" && <StaticTab content={COKE} />}
       {tab === "rftech" && <StaticTab content={RF_TECH} />}
+      {tab === "videos" && <VideosTab />}
     </>
   );
 }
