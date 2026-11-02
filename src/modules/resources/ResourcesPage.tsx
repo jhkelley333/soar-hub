@@ -4,11 +4,13 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ChevronRight, ExternalLink, Loader2, Search, X } from "lucide-react";
+import { ChevronRight, ExternalLink, FolderOpen, Loader2, Search, Settings, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/auth/AuthProvider";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Input } from "@/shared/ui/Input";
+import { Modal } from "@/shared/ui/Modal";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
@@ -67,8 +69,83 @@ function searchResources(q: string): Promise<FolderResponse> {
 interface NavCrumb { id: string | null; name: string }
 const ROOT: NavCrumb = { id: null, name: "Resources" };
 
+const DRIVE_FOLDER_URL =
+  "https://drive.google.com/drive/folders/1E7ATygR2gg2CKny8NFhjVhee68HbsVkQ?usp=sharing";
+
+function AdminGuideModal({ onClose }: { onClose: () => void }) {
+  return (
+    <Modal open title="Manage Hub Resources" onClose={onClose}>
+      <div className="space-y-5 text-sm text-zinc-700">
+        <p className="text-zinc-500">
+          The Resources section is powered by Google Drive. Everything you add,
+          move, or remove in the Drive folder shows up here automatically — no
+          code changes needed.
+        </p>
+
+        <a
+          href={DRIVE_FOLDER_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 font-medium text-midnight transition hover:border-accent hover:bg-accent-50"
+        >
+          <FolderOpen className="h-5 w-5 flex-shrink-0 text-accent" strokeWidth={1.75} />
+          <span className="flex-1">Open Resources Drive Folder</span>
+          <ExternalLink className="h-4 w-4 flex-shrink-0 text-zinc-400" strokeWidth={1.75} />
+        </a>
+
+        <div className="space-y-4">
+          <GuideSection emoji="➕" title="Adding a file or video">
+            <p>Open the Drive folder above and drag your file in, or use <strong>+ New → File upload</strong>. It appears in the hub within 30 seconds on the next page load.</p>
+            <p className="mt-1 text-zinc-500">Videos upload directly to Drive and open in Drive's viewer when clicked. For YouTube or Vimeo links, create a Google Doc with the link instead.</p>
+          </GuideSection>
+
+          <GuideSection emoji="📁" title="Organizing with folders">
+            <p>Create a subfolder in Drive (<strong>+ New → Folder</strong>) and the hub shows it as a folder card. Users click in to browse. Nest as many levels as you like.</p>
+            <p className="mt-1 text-zinc-500">Folder names show exactly as typed, so use clear names — "Training Videos", "SOPs", "New Hire Docs", etc.</p>
+          </GuideSection>
+
+          <GuideSection emoji="✏️" title="Renaming or moving files">
+            <p>Right-click any file or folder in Drive and choose <strong>Rename</strong> or <strong>Move to</strong>. The hub reflects the change immediately.</p>
+          </GuideSection>
+
+          <GuideSection emoji="🗑️" title="Removing a file">
+            <p>Right-click the file in Drive and choose <strong>Move to trash</strong>. It disappears from the hub on the next load. No one can restore it from the hub — only from Drive's trash.</p>
+          </GuideSection>
+
+          <GuideSection emoji="🔒" title="Access control">
+            <p>Everyone with a hub login (GM and above) can see all files in the folder. There is no per-file permission control from within the hub — if you need to restrict something, keep it in a separate Drive folder outside this one.</p>
+          </GuideSection>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function GuideSection({
+  emoji,
+  title,
+  children,
+}: {
+  emoji: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-100 bg-white p-4">
+      <div className="mb-1.5 flex items-center gap-2 font-semibold text-midnight">
+        <span>{emoji}</span>
+        <span>{title}</span>
+      </div>
+      <div className="space-y-1 text-zinc-600">{children}</div>
+    </div>
+  );
+}
+
 export function ResourcesPage() {
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
   const toast = useToast();
+  const [showGuide, setShowGuide] = useState(false);
   // Breadcrumb-as-history: pushing into a folder appends a crumb;
   // clicking a crumb slices back to that depth. Beats wiring router
   // state for a single screen.
@@ -133,7 +210,22 @@ export function ResourcesPage() {
       <PageHeader
         title={isSearching ? `Search: ${debounced}` : current.name}
         description="SOPs, training, and reference docs from the Soar Drive."
+        actions={
+          isAdmin ? (
+            <button
+              type="button"
+              onClick={() => setShowGuide(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-midnight"
+              title="Manage resources (admin)"
+            >
+              <Settings className="h-3.5 w-3.5" strokeWidth={1.75} />
+              Manage
+            </button>
+          ) : undefined
+        }
       />
+
+      {showGuide && <AdminGuideModal onClose={() => setShowGuide(false)} />}
 
       <div className="relative mb-4">
         <Search
