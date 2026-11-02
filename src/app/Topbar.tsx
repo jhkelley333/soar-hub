@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Search, Sun, Moon, Bell, Building2, Hammer, BookUser, BookOpen, Users } from "lucide-react";
+import { Search, Sun, Moon, Bell, Building2, Film, Hammer, BookUser, BookOpen, Users } from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import { useAuth } from "@/auth/AuthProvider";
 import { useEffectiveRole } from "@/lib/useViewAs";
@@ -183,15 +183,22 @@ export function Topbar() {
       }
     }
 
-    // Resources are folder/Drive-backed (no single cached list), so deep-link
-    // into the library's own search instead of duplicating it inline.
+    // Resources and Videos are Drive-backed — deep-link into their own search
+    // rather than duplicating Drive listings inline.
     if (term.length >= 2) {
       out.push({
         key: "resources-search",
         icon: BookOpen,
-        label: `Search Resources for “${q.trim()}”`,
+        label: `Search Resources for "${q.trim()}"`,
         sub: "Open the resource library",
         to: `/resources?q=${encodeURIComponent(q.trim())}`,
+      });
+      out.push({
+        key: "videos-search",
+        icon: Film,
+        label: `POP How to Videos`,
+        sub: "Open training videos on the Facilities page",
+        to: `/work-orders?tab=videos`,
       });
     }
 
@@ -263,7 +270,7 @@ export function Topbar() {
               <div className="px-4 py-3 text-sm text-ink-muted dark:text-night-muted">Searching…</div>
             ) : hits.length === 0 ? (
               <div className="px-4 py-3 text-sm text-ink-muted dark:text-night-muted">
-                No matches for “{q.trim()}”.
+                No matches for "{q.trim()}".
               </div>
             ) : (
               <ul className="max-h-80 overflow-y-auto py-1">
