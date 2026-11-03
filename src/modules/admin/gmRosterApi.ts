@@ -171,6 +171,7 @@ export interface BirthdaySyncPreview {
   headers: string[];
   cols: { nameCol: number; bdayCol: number; roleCol: number };
   rows: BirthdaySheetRow[];
+  headerRowIndex: number;
 }
 
 export interface BirthdaySyncResult {

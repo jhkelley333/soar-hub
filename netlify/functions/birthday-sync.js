@@ -112,20 +112,38 @@ async function actionPreview(sheets) {
     range: SHEET_RANGE,
   });
   const rows = res.data.values ?? [];
-  if (!rows.length) return { rows: [], cols: { nameCol: -1, bdayCol: -1, roleCol: -1 }, headers: [] };
+  if (!rows.length) return { rows: [], cols: { nameCol: -1, bdayCol: -1, roleCol: -1 }, headers: [], headerRowIndex: 0 };
 
-  const headers = rows[0];
-  const cols = detectColumns(headers);
+  // Scan the first 5 rows to find one that has both a Name and Birthday column.
+  // Many sheets have a merged group-header row above the real column names.
+  let headerRowIndex = 0;
+  let headers = rows[0];
+  let cols = detectColumns(headers);
 
-  const parsed = rows.slice(1).map((r, i) => ({
-    rowIndex: i + 2, // 1-based, row 1 is headers
+  for (let i = 1; i < Math.min(5, rows.length); i++) {
+    if (cols.nameCol >= 0 && cols.bdayCol >= 0) break;
+    const candidate = detectColumns(rows[i]);
+    if (
+      (candidate.nameCol >= 0 && candidate.bdayCol >= 0) ||
+      (candidate.nameCol >= 0 && cols.nameCol < 0) ||
+      (candidate.bdayCol >= 0 && cols.bdayCol < 0)
+    ) {
+      headerRowIndex = i;
+      headers = rows[i];
+      cols = candidate;
+    }
+  }
+
+  const dataRows = rows.slice(headerRowIndex + 1);
+  const parsed = dataRows.map((r, i) => ({
+    rowIndex: headerRowIndex + i + 2, // 1-based sheet row
     name: cols.nameCol >= 0 ? String(r[cols.nameCol] ?? "").trim() : "",
     birthday: cols.bdayCol >= 0 ? normaliseDate(r[cols.bdayCol]) : null,
     role: cols.roleCol >= 0 ? String(r[cols.roleCol] ?? "").trim() : "",
     rawBirthday: cols.bdayCol >= 0 ? String(r[cols.bdayCol] ?? "").trim() : "",
   })).filter((r) => r.name);
 
-  return { headers, cols, rows: parsed };
+  return { headers, cols, rows: parsed, headerRowIndex };
 }
 
 async function actionSyncFromSheet(supa, sheets) {
