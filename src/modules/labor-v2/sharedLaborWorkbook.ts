@@ -52,7 +52,7 @@ function writeCell(cell: any, r: Row, c: Col) {
   }
   let v: number | null = null;
   if (c.credit) v = r.credits[c.credit] ?? null;
-  else if (c.band && c.key) v = r[c.band][c.key];
+  else if (c.band && c.key) v = r[c.band][c.key] ?? null;
   if (!isNum(v)) { cell.value = ""; return; }
   cell.alignment = { horizontal: "right" };
   // Percentages: store the FRACTION with a real "%" format (value/100 + "0.00%").

@@ -148,7 +148,7 @@ export function LaborTableModal({ stores, onClose }: { stores: ShareNode[]; onCl
                   </td>
                   {wins.map((w) => TABLE_METRICS.map((m, i) => (
                     <td key={`${w}-${m.key}`} className={cn("px-2 py-1.5 text-right", i === 0 && "border-l border-zinc-100", cellTone(m.key, s[w]))}>
-                      {m.fmt(s[w][m.key])}
+                      {m.fmt(s[w][m.key] ?? null)}
                     </td>
                   )))}
                 </tr>
