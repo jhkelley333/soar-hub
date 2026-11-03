@@ -834,8 +834,11 @@ function BirthdaySyncModal({ onClose }: { onClose: () => void }) {
             </div>
           ) : !colsOk ? (
             <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-200">
-              Couldn't auto-detect Name and Birthday columns. Headers found:{" "}
-              <span className="font-mono">{preview?.headers.join(", ") || "none"}</span>
+              <p className="font-semibold">Couldn't auto-detect Name and Birthday columns.</p>
+              <p className="mt-1 text-xs">Headers found (row {(preview?.headerRowIndex ?? 0) + 1}):{" "}
+                <span className="font-mono">{preview?.headers.filter(Boolean).join(", ") || "none"}</span>
+              </p>
+              <p className="mt-1 text-xs text-amber-700">The column headers need to include words like "Name" and "Birthday" (or "DOB"). Check what your sheet's header row says and rename those columns if needed.</p>
             </div>
           ) : (
             <>
