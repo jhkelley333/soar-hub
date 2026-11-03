@@ -212,6 +212,46 @@ async function setLaborHrsWeekly(supa, enabled, userId) {
   });
 }
 
+// Minimum daily labor hours floor. When a store's sales-based allowed hours
+// would fall below this value, the effective target is raised to the floor so
+// the store isn't penalised for scheduling the minimum needed to operate.
+// Stored as { hours: <number> }; null / 0 = feature disabled.
+const LABOR_MIN_DAILY_HRS_KEY = "labor_min_daily_hours";
+async function getMinDailyHours(supa) {
+  try {
+    const { data } = await supa.from("store_portal_settings").select("value").eq("key", LABOR_MIN_DAILY_HRS_KEY).maybeSingle();
+    const v = data?.value?.hours;
+    return v != null && Number(v) > 0 ? Number(v) : null;
+  } catch { return null; }
+}
+async function setMinDailyHours(supa, hours, userId) {
+  return supa.from("store_portal_settings").upsert({
+    key: LABOR_MIN_DAILY_HRS_KEY, value: { hours: hours != null && Number(hours) > 0 ? Number(hours) : null },
+    updated_by: userId ?? null, updated_at: new Date().toISOString(),
+  });
+}
+
+// Raise each row's effective daily target_labor_pct so the floor kicks in when
+// the sales-based allowed hours would fall below minHours. Mutates in-place,
+// same pattern as applyCreditsToRows. Only the daily band — WTD/PTD span
+// multiple days and their floors require knowing elapsed day counts.
+function applyMinHoursFloor(rows, minHours) {
+  if (!minHours || minHours <= 0) return;
+  for (const r of rows) {
+    const sales = numv(r.net_sales);
+    const cost  = numv(r.labor_cost);
+    const hours = numv(r.labor_hours);
+    const target = numv(r.target_labor_pct);
+    if (!sales || !cost || !hours || !target) continue;
+    const avgWage = cost / hours;
+    const allowedHours = (sales * target) / avgWage;
+    if (allowedHours >= minHours) continue;
+    // Raise the effective target so allowedHours == minHours.
+    r.target_labor_pct = Math.max(target, (minHours * avgWage) / sales);
+    r._floor = { allowedWas: round1(allowedHours), floor: minHours };
+  }
+}
+
 // Aggregate one band (prefix "" = daily, "wtd_", "ptd_") across a set of store
 // rows, weighting from $ and hours (never averaging percentages). $ over chart =
 // cost − sales×target; hours over chart = $ over ÷ blended avg wage (cost÷hours).
@@ -569,6 +609,7 @@ async function gmView(supa, user, params) {
     supa.from("labor_reviews").select("*").eq("store_number", storeNumber).gte("business_date", week[0]).lte("business_date", week[6]),
   ]);
   applyCreditsToRows(rows ?? [], await loadLaborCredits(supa, [storeNumber]));
+  applyMinHoursFloor(rows ?? [], await getMinDailyHours(supa));
   const rowByDate = new Map((rows ?? []).map((r) => [r.business_date, r]));
   const reviewByDate = new Map((reviews ?? []).map((r) => [r.business_date, r]));
 
@@ -1907,7 +1948,7 @@ async function teamView(supa, user, params) {
   // per-store hours-over by this, so the PTD Hrs/Store aggregates below match.
   const weeksInPeriod = fiscalForDate(anchor)?.weekInPeriod || null;
   // Toggle: per-week rate (÷ weeks elapsed) vs. raw period total (÷ 1).
-  const weeklyRate = await getLaborHrsWeekly(supa);
+  const [weeklyRate, minDailyHours] = await Promise.all([getLaborHrsWeekly(supa), getMinDailyHours(supa)]);
   const hrsWeeks = weeklyRate ? weeksInPeriod : 1;
 
   const [{ data: rows }, { data: reviews }] = await Promise.all([
@@ -1927,6 +1968,7 @@ async function teamView(supa, user, params) {
   const mergedCredits = new Map();
   for (const src of [tcMap, ptoMap, noGmMap, gmSupMap, corpMap]) for (const [sn, arr] of src) mergedCredits.set(sn, (mergedCredits.get(sn) || []).concat(arr));
   applyCreditsToRows(rows || [], mergedCredits);
+  applyMinHoursFloor(rows || [], minDailyHours);
   // Period-to-date credit $ per store (periodStart → anchor), summed per node.
   const periodStart = fiscalForDate(anchor)?.periodStart ?? anchor;
   const creditPtd = (map, sn) => (map.get(sn) || []).reduce((a, c) => (c.date >= periodStart && c.date <= anchor ? a + numv(c.amount) : a), 0);
@@ -2039,6 +2081,7 @@ async function teamView(supa, user, params) {
     levels,
     missing,
     hrs_weekly_rate: weeklyRate,
+    min_daily_hours: minDailyHours,
   };
 }
 
@@ -2553,6 +2596,13 @@ export const handler = async (event) => {
         await setLaborHrsWeekly(supa, body.hrs_weekly_rate, user.id);
         return respond(200, { ok: true, hrs_weekly_rate: !!body.hrs_weekly_rate });
       }
+      if (action === "set-min-daily-hours") {
+        if (!isAdmin) return respond(403, { error: "Admins only." });
+        const h = body.min_daily_hours != null ? Number(body.min_daily_hours) : null;
+        if (h !== null && (isNaN(h) || h < 0)) return respond(400, { error: "min_daily_hours must be a non-negative number." });
+        await setMinDailyHours(supa, h || null, user.id);
+        return respond(200, { ok: true, min_daily_hours: h || null });
+      }
       if (action === "no-gm-add") return unwrap(await noGmAdd(supa, user, body));
       if (action === "no-gm-end") return unwrap(await noGmEnd(supa, user, body));
       if (action === "no-gm-update") return unwrap(await noGmUpdate(supa, user, body));
@@ -2578,7 +2628,10 @@ export const handler = async (event) => {
     // GM-facing reads — scope enforced per store in the function.
     if (action === "gm") return unwrap(await gmView(supa, user, params));
     if (action === "team") return unwrap(await teamView(supa, user, params));
-    if (action === "labor-settings") return respond(200, { ok: true, hrs_weekly_rate: await getLaborHrsWeekly(supa) });
+    if (action === "labor-settings") {
+      const [hrs_weekly_rate, min_daily_hours] = await Promise.all([getLaborHrsWeekly(supa), getMinDailyHours(supa)]);
+      return respond(200, { ok: true, hrs_weekly_rate, min_daily_hours });
+    }
     if (action === "labor-file") return unwrap(await laborFile(supa, user));
     if (action === "labor-file-week") return unwrap(await laborFileWeek(supa, user, params));
     if (action === "rvp-scorecard") return unwrap(await rvpScorecard(supa, user, params));

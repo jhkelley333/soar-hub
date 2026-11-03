@@ -530,10 +530,13 @@ export function revokeLaborShare(id: string): Promise<{ ok: true }> {
   return req(`${FN}?action=labor-share-revoke`, { method: "POST", body: JSON.stringify({ id }) });
 }
 
-// Labor settings — the company-wide Hrs/Store per-week-rate toggle.
-export function fetchLaborSettings(): Promise<{ ok: true; hrs_weekly_rate: boolean }> {
+// Labor settings — Hrs/Store per-week-rate toggle + min daily hours floor.
+export function fetchLaborSettings(): Promise<{ ok: true; hrs_weekly_rate: boolean; min_daily_hours: number | null }> {
   return req(`${FN}?action=labor-settings`);
 }
 export function setLaborSettings(hrs_weekly_rate: boolean): Promise<{ ok: true; hrs_weekly_rate: boolean }> {
   return req(`${FN}?action=set-labor-settings`, { method: "POST", body: JSON.stringify({ hrs_weekly_rate }) });
+}
+export function setMinDailyHours(min_daily_hours: number | null): Promise<{ ok: true; min_daily_hours: number | null }> {
+  return req(`${FN}?action=set-min-daily-hours`, { method: "POST", body: JSON.stringify({ min_daily_hours }) });
 }
