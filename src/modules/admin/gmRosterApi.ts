@@ -156,55 +156,61 @@ export function importGmRoster(rows: GmRosterImportRow[]): Promise<{ ok: true; u
   return req(`${FN}?action=import`, { method: "POST", body: JSON.stringify({ rows }) });
 }
 
-// ── Birthday sheet sync ──────────────────────────────────────────────────────
+// ── Birthday / GM sheet sync ─────────────────────────────────────────────────
 const BSYNC_FN = "/.netlify/functions/birthday-sync";
 
-export interface BirthdaySheetRow {
-  rowIndex: number;
-  name: string;
-  birthday: string | null;
-  role: string;
-  rawBirthday: string;
+export interface GmDiffRow {
+  store_number: string;
+  store_name: string | null;
+  matchedBy: "store_number" | "name";
+  currentName: string | null;
+  sheetName: string | null;
+  nameChanged: boolean;
+  currentBirthday: string | null;
+  sheetBirthday: string | null;
+  birthdayChanged: boolean;
+  currentPhone: string | null;
+  sheetPhone: string | null;
+  phoneChanged: boolean;
 }
 
-export interface BirthdaySyncPreview {
+export interface GmSyncPreview {
+  ok: true;
+  cols: { storeCol: number; nameCol: number; bdayCol: number; phoneCol: number };
   headers: string[];
-  cols: { nameCol: number; bdayCol: number; roleCol: number };
-  rows: BirthdaySheetRow[];
   headerRowIndex: number;
+  diffs: GmDiffRow[];
+  unchanged: number;
+  unmatched: string[];
 }
 
-export interface BirthdaySyncResult {
+export interface GmSyncResult {
   ok: true;
   updated: number;
-  no_match?: number;
   message?: string;
-  results?: { name: string; birthday: string | null; status: string; error?: string }[];
+  errors?: { store_number: string; error: string }[];
 }
 
-async function bsyncReq<T>(path: string, method: "GET" | "POST" = "GET"): Promise<T> {
+async function bsyncReq<T>(path: string, method: "GET" | "POST" = "GET", body?: unknown): Promise<T> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error("Not signed in");
   const res = await fetch(path, {
     method,
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((body as { message?: string })?.message || `Request failed (${res.status})`);
-  return body as T;
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((json as { message?: string })?.message || `Request failed (${res.status})`);
+  return json as T;
 }
 
-export function previewBirthdaySheet(): Promise<BirthdaySyncPreview> {
-  return bsyncReq(`${BSYNC_FN}?action=preview`);
+export function previewGmSync(): Promise<GmSyncPreview> {
+  return bsyncReq(`${BSYNC_FN}?action=preview-gm`);
 }
 
-export function syncFromSheet(): Promise<BirthdaySyncResult> {
-  return bsyncReq(`${BSYNC_FN}?action=sync-from-sheet`, "POST");
-}
-
-export function writeToSheet(): Promise<BirthdaySyncResult> {
-  return bsyncReq(`${BSYNC_FN}?action=write-to-sheet`, "POST");
+export function applyGmSync(storeNumbers: string[]): Promise<GmSyncResult> {
+  return bsyncReq(`${BSYNC_FN}?action=sync-gm`, "POST", { store_numbers: storeNumbers });
 }
 
 // Parse a paste of the ops roster sheet (tab-separated) into import rows.

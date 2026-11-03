@@ -5,7 +5,7 @@
 // team-mgmt update-user. A paste importer keeps the roster current from the ops
 // sheet.
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Ban, Cake, Check, Download, HelpCircle, History, Mail, Pencil, Phone, RefreshCw, Upload, UserX } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -15,8 +15,9 @@ import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fetchGmLeaders, fetchGmRoster, fetchGmRosterHistory, importGmRoster, previewBirthdaySheet, setGmRosterDetails, setGmRosterName, syncFromSheet, writeToSheet, type BirthdaySyncPreview, type BirthdaySyncResult, type GmRosterHistoryEntry, type GmRosterRow, type LeaderRow, type ReconcileStatus } from "./gmRosterApi";
+import { applyGmSync, fetchGmLeaders, fetchGmRoster, fetchGmRosterHistory, importGmRoster, previewGmSync, setGmRosterDetails, setGmRosterName, type GmDiffRow, type GmRosterHistoryEntry, type GmRosterRow, type GmSyncPreview, type LeaderRow, type ReconcileStatus } from "./gmRosterApi";
 import { updateUser, type UpdateUserInput } from "@/modules/team/api";
+import { useAuth } from "@/auth/AuthProvider";
 import { TraitChip } from "@/modules/culture-index/TraitChip";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { diffUpload, fmtDate, mergedImportRow, parseDate, parsePaste, parseRosterXlsx, sinceLabel, type DiffRow, type UploadRow } from "./rosterImport";
@@ -36,6 +37,8 @@ const STATUS_META: Record<ReconcileStatus, { label: string; cls: string; icon: t
 };
 
 export function GmRosterPage() {
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
   const [tab, setTab] = useState<"gms" | "leaders">("gms");
   const [bdayOpen, setBdayOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
@@ -97,9 +100,11 @@ export function GmRosterPage() {
             <Button variant="secondary" size="sm" onClick={() => setBdayOpen(true)}>
               <Cake className="mr-1 h-3.5 w-3.5" /> Birthdays
             </Button>
-            <Button variant="secondary" size="sm" onClick={() => setSyncOpen(true)}>
-              <RefreshCw className="mr-1 h-3.5 w-3.5" /> Sync Sheet
-            </Button>
+            {isAdmin && (
+              <Button variant="secondary" size="sm" onClick={() => setSyncOpen(true)}>
+                <RefreshCw className="mr-1 h-3.5 w-3.5" /> Sync Sheet
+              </Button>
+            )}
             {tab === "gms" && (
               <Button variant="secondary" size="sm" onClick={exportCsv} disabled={rows.length === 0}>
                 <Download className="mr-1 h-3.5 w-3.5" /> Download
@@ -766,165 +771,165 @@ function HistoryEntry({ e }: { e: GmRosterHistoryEntry }) {
   );
 }
 
-// ── Birthday sheet sync modal ────────────────────────────────────────────────
+// ── GM sheet sync modal ──────────────────────────────────────────────────────
 function BirthdaySyncModal({ onClose }: { onClose: () => void }) {
   const toast = useToast();
+  const qc = useQueryClient();
   const [step, setStep] = useState<"preview" | "result">("preview");
-  const [result, setResult] = useState<BirthdaySyncResult | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [appliedCount, setAppliedCount] = useState(0);
 
-  const previewQ = useQuery<BirthdaySyncPreview>({
-    queryKey: ["birthday-sync-preview"],
-    queryFn: previewBirthdaySheet,
+  const previewQ = useQuery<GmSyncPreview>({
+    queryKey: ["gm-sync-preview"],
+    queryFn: previewGmSync,
     staleTime: 0,
   });
 
-  const syncMut = useMutation({
-    mutationFn: syncFromSheet,
-    onSuccess: (r) => { setResult(r); setStep("result"); },
+  // Pre-select all diffs when they load.
+  const diffs = previewQ.data?.diffs ?? [];
+  const allSelected = useCallback(() => new Set(diffs.map((d) => d.store_number)), [diffs]);
+
+  // Initialise selection when diffs arrive.
+  if (previewQ.isSuccess && selected.size === 0 && diffs.length > 0) {
+    setSelected(allSelected());
+  }
+
+  const toggleRow = (sn: string) =>
+    setSelected((s) => { const x = new Set(s); x.has(sn) ? x.delete(sn) : x.add(sn); return x; });
+  const toggleAll = () =>
+    setSelected((s) => s.size === diffs.length ? new Set() : allSelected());
+
+  const applyMut = useMutation({
+    mutationFn: () => applyGmSync([...selected]),
+    onSuccess: (r) => {
+      setAppliedCount(r.updated);
+      setStep("result");
+      qc.invalidateQueries({ queryKey: ["gm-roster"] });
+    },
     onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Sync failed.", "error"),
   });
 
-  const writeMut = useMutation({
-    mutationFn: writeToSheet,
-    onSuccess: (r) => {
-      toast.push(r.updated ? `Wrote ${r.updated} birthday${r.updated === 1 ? "" : "s"} back to the sheet.` : "Sheet is already up to date.", "success");
-    },
-    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Write-back failed.", "error"),
-  });
-
   const preview = previewQ.data;
-  const colsOk = preview && preview.cols.nameCol >= 0 && preview.cols.bdayCol >= 0;
-  const rowsWithBday = preview?.rows.filter((r) => r.birthday).length ?? 0;
+  const colsOk = preview && (preview.cols.nameCol >= 0 || preview.cols.storeCol >= 0) && preview.cols.bdayCol >= 0;
 
   return (
-    <Modal open onClose={onClose} title="Birthday Sync — Google Sheet" maxWidth="max-w-2xl"
+    <Modal open onClose={onClose} title="Sync GM Roster from Sheet" maxWidth="max-w-3xl"
       footer={
         step === "preview" ? (
           <>
             <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
-            {colsOk && (
-              <Button variant="secondary" size="sm" onClick={() => writeMut.mutate()} disabled={writeMut.isPending}>
-                {writeMut.isPending ? "Writing…" : "Hub → Sheet"}
-              </Button>
-            )}
-            <Button size="sm" onClick={() => syncMut.mutate()} disabled={!colsOk || syncMut.isPending || previewQ.isLoading}>
-              {syncMut.isPending ? "Syncing…" : "Sheet → Hub"}
+            <Button size="sm" onClick={() => applyMut.mutate()}
+              disabled={!colsOk || selected.size === 0 || applyMut.isPending || previewQ.isLoading}>
+              {applyMut.isPending ? "Applying…" : `Apply ${selected.size} change${selected.size === 1 ? "" : "s"}`}
             </Button>
           </>
         ) : (
-          <>
-            <Button variant="secondary" size="sm" onClick={() => { setStep("preview"); setResult(null); }}>Back</Button>
-            <Button size="sm" onClick={onClose}>Done</Button>
-          </>
+          <Button size="sm" onClick={onClose}>Done</Button>
         )
       }>
 
       {step === "preview" && (
         <>
           <p className="mb-3 text-xs text-zinc-500">
-            Reads the birthday spreadsheet and matches rows to Hub profiles by name.
-            <strong> Sheet → Hub</strong> updates Hub profiles from the sheet.
-            <strong> Hub → Sheet</strong> writes Hub birthday values back to the sheet.
+            Compares the spreadsheet against the GM roster — name, birthday, and phone. Deselect rows you don't want to overwrite, then click Apply.
           </p>
+
           {previewQ.isLoading ? (
-            <div className="py-8 text-center text-sm text-zinc-500">Reading sheet…</div>
+            <div className="py-8 text-center text-sm text-zinc-500">Reading sheet and roster…</div>
           ) : previewQ.isError ? (
             <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-inset ring-red-200">
               {(previewQ.error as Error)?.message ?? "Couldn't read the sheet."}
             </div>
           ) : !colsOk ? (
             <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-200">
-              <p className="font-semibold">Couldn't auto-detect Name and Birthday columns.</p>
-              <p className="mt-1 text-xs">Headers found (row {(preview?.headerRowIndex ?? 0) + 1}):{" "}
+              <p className="font-semibold">Couldn't detect required columns.</p>
+              <p className="mt-1 text-xs">Headers scanned (row {(preview?.headerRowIndex ?? 0) + 1}):{" "}
                 <span className="font-mono">{preview?.headers.filter(Boolean).join(", ") || "none"}</span>
               </p>
-              <p className="mt-1 text-xs text-amber-700">The column headers need to include words like "Name" and "Birthday" (or "DOB"). Check what your sheet's header row says and rename those columns if needed.</p>
+              <p className="mt-1 text-xs">Column headers need words like "Store #", "Name", "Birthday", and "Phone".</p>
+            </div>
+          ) : diffs.length === 0 ? (
+            <div className="rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-700 ring-1 ring-inset ring-emerald-200">
+              Everything in the sheet matches the roster — nothing to update.
+              {preview.unchanged > 0 && <span className="ml-1 text-xs text-emerald-600">({preview.unchanged} row{preview.unchanged === 1 ? "" : "s"} checked)</span>}
             </div>
           ) : (
             <>
-              <div className="mb-3 flex gap-4 text-xs text-zinc-500">
-                <span>Name column: <strong className="text-midnight">{preview.headers[preview.cols.nameCol]}</strong></span>
-                <span>Birthday column: <strong className="text-midnight">{preview.headers[preview.cols.bdayCol]}</strong></span>
-                <span><strong className="text-midnight">{rowsWithBday}</strong> rows with a birthday</span>
+              <div className="mb-2 flex items-center justify-between text-xs text-zinc-500">
+                <span>
+                  <strong className="text-midnight">{diffs.length}</strong> store{diffs.length === 1 ? "" : "s"} with changes ·{" "}
+                  {preview.unchanged} unchanged
+                  {preview.unmatched.length > 0 && ` · ${preview.unmatched.length} unmatched`}
+                </span>
+                <button type="button" onClick={toggleAll} className="font-semibold text-accent hover:underline">
+                  {selected.size === diffs.length ? "Deselect all" : "Select all"}
+                </button>
               </div>
-              <div className="max-h-64 overflow-y-auto rounded-lg ring-1 ring-inset ring-zinc-200">
+              <div className="max-h-[52vh] overflow-y-auto rounded-lg ring-1 ring-inset ring-zinc-200">
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-zinc-50">
                     <tr className="border-b border-zinc-200 text-left text-[10px] uppercase tracking-wide text-zinc-400">
-                      <th className="px-3 py-2">Name</th>
-                      <th className="px-3 py-2">Birthday in sheet</th>
-                      {preview.cols.roleCol >= 0 && <th className="px-3 py-2">Role</th>}
+                      <th className="w-8 px-3 py-2"></th>
+                      <th className="px-3 py-2">Store</th>
+                      <th className="px-3 py-2">Field</th>
+                      <th className="px-3 py-2">Current</th>
+                      <th className="px-3 py-2">From Sheet</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
-                    {preview.rows.slice(0, 50).map((r) => (
-                      <tr key={r.rowIndex}>
-                        <td className="px-3 py-1.5 font-medium text-midnight">{r.name}</td>
-                        <td className="px-3 py-1.5 text-zinc-600">{r.birthday ? fmtDate(r.birthday) : <span className="text-zinc-300">—</span>}</td>
-                        {preview.cols.roleCol >= 0 && <td className="px-3 py-1.5 text-zinc-500">{r.role || "—"}</td>}
-                      </tr>
+                    {diffs.map((d) => (
+                      <DiffRows key={d.store_number} d={d} checked={selected.has(d.store_number)} onToggle={() => toggleRow(d.store_number)} />
                     ))}
-                    {preview.rows.length > 50 && (
-                      <tr><td colSpan={3} className="px-3 py-2 text-center text-zinc-400">…and {preview.rows.length - 50} more rows</td></tr>
-                    )}
                   </tbody>
                 </table>
               </div>
+              {preview.unmatched.length > 0 && (
+                <p className="mt-2 text-[11px] text-zinc-400">
+                  Unmatched sheet rows (no store # or name match): {preview.unmatched.join(", ")}
+                </p>
+              )}
             </>
           )}
         </>
       )}
 
-      {step === "result" && result && (
-        <>
-          <div className="mb-4 flex gap-6 text-center">
-            <div className="flex-1 rounded-lg bg-emerald-50 py-3 ring-1 ring-inset ring-emerald-200">
-              <div className="text-2xl font-bold text-emerald-700">{result.updated}</div>
-              <div className="text-xs text-emerald-600">Profiles updated</div>
-            </div>
-            {result.no_match != null && (
-              <div className="flex-1 rounded-lg bg-amber-50 py-3 ring-1 ring-inset ring-amber-200">
-                <div className="text-2xl font-bold text-amber-700">{result.no_match}</div>
-                <div className="text-xs text-amber-600">No match found</div>
-              </div>
-            )}
-          </div>
-          {result.results && result.results.length > 0 && (
-            <div className="max-h-64 overflow-y-auto rounded-lg ring-1 ring-inset ring-zinc-200">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-zinc-50">
-                  <tr className="border-b border-zinc-200 text-left text-[10px] uppercase tracking-wide text-zinc-400">
-                    <th className="px-3 py-2">Name</th>
-                    <th className="px-3 py-2">Birthday</th>
-                    <th className="px-3 py-2">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100">
-                  {result.results.map((r, i) => (
-                    <tr key={i}>
-                      <td className="px-3 py-1.5 font-medium text-midnight">{r.name}</td>
-                      <td className="px-3 py-1.5 text-zinc-600">{r.birthday ? fmtDate(r.birthday) : "—"}</td>
-                      <td className="px-3 py-1.5">
-                        <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                          r.status === "updated" ? "bg-emerald-50 text-emerald-700" :
-                          r.status === "no_match" ? "bg-amber-50 text-amber-700" :
-                          r.status === "already_current" ? "bg-zinc-100 text-zinc-500" :
-                          "bg-red-50 text-red-700")}>
-                          {r.status === "updated" ? "Updated" :
-                           r.status === "no_match" ? "No match" :
-                           r.status === "already_current" ? "No change" :
-                           r.error ?? "Error"}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
+      {step === "result" && (
+        <div className="py-4 text-center">
+          <div className="mb-1 text-3xl font-bold text-emerald-600">{appliedCount}</div>
+          <div className="text-sm text-zinc-600">store{appliedCount === 1 ? "" : "s"} updated in the GM roster</div>
+        </div>
       )}
     </Modal>
+  );
+}
+
+function DiffRows({ d, checked, onToggle }: { d: GmDiffRow; checked: boolean; onToggle: () => void }) {
+  const changes: { field: string; current: string | null; next: string | null }[] = [];
+  if (d.nameChanged)     changes.push({ field: "Name",     current: d.currentName,     next: d.sheetName });
+  if (d.birthdayChanged) changes.push({ field: "Birthday", current: d.currentBirthday ? fmtDate(d.currentBirthday) : null, next: d.sheetBirthday ? fmtDate(d.sheetBirthday) : null });
+  if (d.phoneChanged)    changes.push({ field: "Phone",    current: d.currentPhone,    next: d.sheetPhone });
+
+  return (
+    <>
+      {changes.map((c, i) => (
+        <tr key={c.field} className={cn("align-middle", !checked && "opacity-40")}>
+          {i === 0 ? (
+            <td className="px-3 py-2" rowSpan={changes.length}>
+              <input type="checkbox" checked={checked} onChange={onToggle} />
+            </td>
+          ) : null}
+          {i === 0 ? (
+            <td className="px-3 py-2 font-semibold text-midnight" rowSpan={changes.length}>
+              #{d.store_number}
+              {d.store_name && <div className="text-[10px] font-normal text-zinc-400">{d.store_name}</div>}
+            </td>
+          ) : null}
+          <td className="px-3 py-2 text-zinc-500">{c.field}</td>
+          <td className="px-3 py-2 text-zinc-400 line-through">{c.current ?? "—"}</td>
+          <td className="px-3 py-2 font-semibold text-amber-700">{c.next ?? "—"}</td>
+        </tr>
+      ))}
+    </>
   );
 }
 

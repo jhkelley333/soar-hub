@@ -1,14 +1,13 @@
 // netlify/functions/birthday-sync.js
 //
-// Two-way birthday sync between a Google Sheet and Hub profiles.
+// Admin-only sync between a Google Sheet and the GM roster (gm_roster table).
+// Compares name, birthday, and phone; shows a diff preview before writing.
 //
 // Actions:
-//   GET  ?action=preview          → read sheet, auto-detect columns, return rows
-//   POST ?action=sync-from-sheet  → match sheet rows to profiles, update birthdays
-//   POST ?action=write-to-sheet   → push Hub profile birthdays back into the sheet
+//   GET  ?action=preview-gm   → read sheet + gm_roster, return diff rows
+//   POST ?action=sync-gm      → body: { store_numbers: string[] } → apply diffs
 //
-// Auth: Bearer JWT → Supabase → must be do/sdo/rvp/vp/coo/admin.
-// The service account must have view/edit access to the sheet.
+// Auth: Bearer JWT → Supabase → must be admin.
 
 import { google } from "googleapis";
 import { createClient } from "@supabase/supabase-js";
@@ -18,9 +17,7 @@ const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const SHEET_ID = process.env.BIRTHDAY_SHEET_ID || "1pLpW2-GJpV26TTsTiQt2lg3hZ0AUy7EZclYFd8jWk10";
-const SHEET_RANGE = "A1:Z500"; // generous; trimmed to data rows
-
-const SYNC_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+const SHEET_RANGE = "A1:Z500";
 
 function supabaseAdmin() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("Supabase env vars not set.");
@@ -53,218 +50,207 @@ function respond(status, body) {
 async function getSheets() {
   const auth = new google.auth.GoogleAuth({
     credentials: await getGoogleCredentials(),
-    scopes: [
-      "https://www.googleapis.com/auth/spreadsheets",
-      "https://www.googleapis.com/auth/drive.readonly",
-    ],
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
   return google.sheets({ version: "v4", auth });
 }
 
-// Try to detect which column indices hold "name" and "birthday" by scanning
-// the header row. Returns { nameCol, bdayCol, roleCol, headerRow }.
+// Auto-detect columns from a header row. Returns -1 for any not found.
 function detectColumns(headers) {
   const h = headers.map((v) => String(v ?? "").toLowerCase().trim());
-  const nameCol = h.findIndex((v) => /\bname\b/.test(v) || v === "full name");
-  const bdayCol = h.findIndex((v) =>
-    /birth|bday|dob|date of birth/.test(v));
-  const roleCol = h.findIndex((v) => /\brole\b/.test(v) || v === "title" || v === "position");
-  return { nameCol, bdayCol, roleCol };
+  return {
+    storeCol: h.findIndex((v) => /store\s*#|store\s*num|store\s*number|^#$|^store$/.test(v)),
+    nameCol:  h.findIndex((v) => /\bname\b|full name/.test(v)),
+    bdayCol:  h.findIndex((v) => /birth|bday|dob|date of birth/.test(v)),
+    phoneCol: h.findIndex((v) => /phone|cell|mobile/.test(v)),
+  };
 }
 
-// Normalise a date value from a sheet cell into YYYY-MM-DD, or null.
+// Scan the first 5 rows, pick the one that scores best on detected columns.
+function findHeaderRow(allRows) {
+  let best = { index: 0, score: 0, headers: allRows[0] ?? [], cols: { storeCol: -1, nameCol: -1, bdayCol: -1, phoneCol: -1 } };
+  for (let i = 0; i < Math.min(5, allRows.length); i++) {
+    const cols = detectColumns(allRows[i]);
+    const score = (cols.storeCol >= 0 ? 3 : 0) + (cols.nameCol >= 0 ? 2 : 0) + (cols.bdayCol >= 0 ? 2 : 0) + (cols.phoneCol >= 0 ? 1 : 0);
+    if (score > best.score) best = { index: i, score, headers: allRows[i], cols };
+  }
+  return best;
+}
+
+// Normalise a date cell into YYYY-MM-DD, or null.
 function normaliseDate(raw) {
   if (!raw) return null;
   const s = String(raw).trim();
   if (!s) return null;
-
-  // Already ISO
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-
-  // MM/DD/YYYY or M/D/YYYY
   const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
   if (mdy) {
     const [, m, d, y] = mdy;
     const year = y.length === 2 ? (parseInt(y, 10) > 30 ? `19${y}` : `20${y}`) : y;
     return `${year}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
   }
-
-  // Try JS Date as a last resort (handles "January 5, 1990", etc.)
   const dt = new Date(s);
-  if (!isNaN(dt.getTime())) {
-    return dt.toISOString().slice(0, 10);
-  }
-
+  if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
   return null;
 }
 
-// Normalise a name for fuzzy matching: lowercase, collapse whitespace, strip
-// punctuation so "McDonald" and "Mcdonald" and "McDonald, Jane" all compare ok.
+// Normalise a phone number to digits-only 10-digit string, or null.
+function normalisePhone(raw) {
+  if (!raw) return null;
+  const digits = String(raw).replace(/\D/g, "");
+  if (digits.length === 11 && digits[0] === "1") return digits.slice(1);
+  if (digits.length === 10) return digits;
+  return null;
+}
+
+// Format 10-digit phone for display: (555) 123-4567
+function fmtPhone(digits) {
+  if (!digits || digits.length !== 10) return digits ?? null;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
 function normName(s) {
   return String(s ?? "").toLowerCase().replace(/[^a-z\s]/g, "").replace(/\s+/g, " ").trim();
 }
 
-// ── Actions ─────────────────────────────────────────────────────────────────
-
-async function actionPreview(sheets) {
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range: SHEET_RANGE,
-  });
-  const rows = res.data.values ?? [];
-  if (!rows.length) return { rows: [], cols: { nameCol: -1, bdayCol: -1, roleCol: -1 }, headers: [], headerRowIndex: 0 };
-
-  // Scan the first 5 rows to find one that has both a Name and Birthday column.
-  // Many sheets have a merged group-header row above the real column names.
-  let headerRowIndex = 0;
-  let headers = rows[0];
-  let cols = detectColumns(headers);
-
-  for (let i = 1; i < Math.min(5, rows.length); i++) {
-    if (cols.nameCol >= 0 && cols.bdayCol >= 0) break;
-    const candidate = detectColumns(rows[i]);
-    if (
-      (candidate.nameCol >= 0 && candidate.bdayCol >= 0) ||
-      (candidate.nameCol >= 0 && cols.nameCol < 0) ||
-      (candidate.bdayCol >= 0 && cols.bdayCol < 0)
-    ) {
-      headerRowIndex = i;
-      headers = rows[i];
-      cols = candidate;
-    }
+// ── Preview-GM: read sheet + gm_roster, return diff ─────────────────────────
+async function actionPreviewGm(supa, sheets) {
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_RANGE });
+  const allRows = res.data.values ?? [];
+  if (!allRows.length) {
+    return { ok: true, cols: { storeCol: -1, nameCol: -1, bdayCol: -1, phoneCol: -1 }, headers: [], headerRowIndex: 0, diffs: [], unchanged: 0, unmatched: [] };
   }
 
-  const dataRows = rows.slice(headerRowIndex + 1);
-  const parsed = dataRows.map((r, i) => ({
-    rowIndex: headerRowIndex + i + 2, // 1-based sheet row
-    name: cols.nameCol >= 0 ? String(r[cols.nameCol] ?? "").trim() : "",
-    birthday: cols.bdayCol >= 0 ? normaliseDate(r[cols.bdayCol]) : null,
-    role: cols.roleCol >= 0 ? String(r[cols.roleCol] ?? "").trim() : "",
-    rawBirthday: cols.bdayCol >= 0 ? String(r[cols.bdayCol] ?? "").trim() : "",
-  })).filter((r) => r.name);
+  const { index: headerRowIndex, headers, cols } = findHeaderRow(allRows);
+  const dataRows = allRows.slice(headerRowIndex + 1);
 
-  return { headers, cols, rows: parsed, headerRowIndex };
-}
+  // Parse sheet rows
+  const sheetRows = dataRows.map((r, i) => ({
+    rowIndex: headerRowIndex + i + 2,
+    storeNumber: cols.storeCol >= 0 ? String(r[cols.storeCol] ?? "").trim().replace(/^0+/, "") : "",
+    name:        cols.nameCol  >= 0 ? String(r[cols.nameCol]  ?? "").trim() : "",
+    birthday:    cols.bdayCol  >= 0 ? normaliseDate(r[cols.bdayCol]) : null,
+    phone:       cols.phoneCol >= 0 ? normalisePhone(r[cols.phoneCol]) : null,
+    rawPhone:    cols.phoneCol >= 0 ? String(r[cols.phoneCol] ?? "").trim() : "",
+  })).filter((r) => r.storeNumber || r.name);
 
-async function actionSyncFromSheet(supa, sheets) {
-  const preview = await actionPreview(sheets);
-  if (preview.cols.nameCol < 0 || preview.cols.bdayCol < 0) {
-    return { error: "Couldn't detect Name and Birthday columns in the sheet." };
-  }
-
-  // Load every active profile we might match against.
-  const { data: profiles, error } = await supa
-    .from("profiles")
-    .select("id, full_name, preferred_name, birthday, role, is_active")
-    .eq("is_active", true);
+  // Load gm_roster
+  const { data: roster, error } = await supa
+    .from("gm_roster")
+    .select("store_number, store_name, gm_name, gm_cell, gm_birthday");
   if (error) throw new Error(error.message);
 
-  const results = [];
-  for (const row of preview.rows) {
-    if (!row.birthday) continue;
-    const normRow = normName(row.name);
+  const rosterByStore = new Map(roster.map((r) => [String(r.store_number).replace(/^0+/, ""), r]));
+  const rosterByName  = new Map(roster.map((r) => [normName(r.gm_name), r]));
 
-    // Find best match: exact normalised first, then first-word match.
-    let match = profiles.find((p) => normName(p.full_name) === normRow || normName(p.preferred_name) === normRow);
-    if (!match) {
-      // Try matching on first+last name with permutation (sheet might be "Last, First")
-      const words = normRow.split(" ");
-      if (words.length >= 2) {
-        const flipped = `${words.slice(1).join(" ")} ${words[0]}`.trim();
-        match = profiles.find((p) => normName(p.full_name) === flipped || normName(p.preferred_name) === flipped);
+  const diffs = [];
+  const unmatched = [];
+  const seen = new Set();
+
+  for (const row of sheetRows) {
+    // Match by store number first, fall back to name.
+    let match = row.storeNumber ? rosterByStore.get(row.storeNumber) : null;
+    let matchedBy = "store_number";
+    if (!match && row.name) {
+      const normRow = normName(row.name);
+      match = rosterByName.get(normRow);
+      if (!match) {
+        // Try "Last, First" → "First Last" flip
+        const words = normRow.split(" ");
+        if (words.length >= 2) {
+          const flipped = `${words.slice(1).join(" ")} ${words[0]}`.trim();
+          match = rosterByName.get(flipped);
+        }
       }
+      matchedBy = "name";
     }
 
     if (!match) {
-      results.push({ name: row.name, birthday: row.birthday, status: "no_match" });
+      unmatched.push(row.storeNumber ? `#${row.storeNumber}` : row.name);
       continue;
     }
 
-    if (match.birthday === row.birthday) {
-      results.push({ name: row.name, profileId: match.id, birthday: row.birthday, status: "already_current" });
-      continue;
+    const storeKey = String(match.store_number).replace(/^0+/, "");
+    if (seen.has(storeKey)) continue;
+    seen.add(storeKey);
+
+    const currentPhone = normalisePhone(match.gm_cell);
+    const nameChanged     = row.name     && normName(row.name) !== normName(match.gm_name);
+    const birthdayChanged = row.birthday && row.birthday !== match.gm_birthday;
+    const phoneChanged    = row.phone    && row.phone !== currentPhone;
+
+    if (!nameChanged && !birthdayChanged && !phoneChanged) continue;
+
+    diffs.push({
+      store_number:    String(match.store_number),
+      store_name:      match.store_name ?? null,
+      matchedBy,
+      // name
+      currentName:     match.gm_name    ?? null,
+      sheetName:       row.name         || null,
+      nameChanged:     !!nameChanged,
+      // birthday
+      currentBirthday: match.gm_birthday ?? null,
+      sheetBirthday:   row.birthday      ?? null,
+      birthdayChanged: !!birthdayChanged,
+      // phone
+      currentPhone:    fmtPhone(currentPhone),
+      sheetPhone:      fmtPhone(row.phone),
+      phoneChanged:    !!phoneChanged,
+    });
+  }
+
+  const unchanged = sheetRows.length - diffs.length - unmatched.length;
+
+  return {
+    ok: true,
+    cols,
+    headers,
+    headerRowIndex,
+    diffs,
+    unchanged: Math.max(0, unchanged),
+    unmatched,
+  };
+}
+
+// ── Sync-GM: apply selected diffs ───────────────────────────────────────────
+async function actionSyncGm(supa, sheets, body) {
+  const selected = Array.isArray(body?.store_numbers) ? body.store_numbers : null;
+
+  const preview = await actionPreviewGm(supa, sheets);
+  const toApply = selected
+    ? preview.diffs.filter((d) => selected.includes(d.store_number))
+    : preview.diffs;
+
+  if (!toApply.length) return { ok: true, updated: 0, message: "Nothing to apply." };
+
+  // Re-read sheet to get the latest row values (avoid stale diffs).
+  // We already have them in preview.diffs — apply directly.
+  let updated = 0;
+  const errors = [];
+
+  for (const diff of toApply) {
+    try {
+      if (diff.nameChanged && diff.sheetName) {
+        await supa.from("gm_roster").update({ gm_name: diff.sheetName }).eq("store_number", diff.store_number);
+      }
+      const fields = {};
+      if (diff.birthdayChanged && diff.sheetBirthday) fields.gm_birthday = diff.sheetBirthday;
+      if (diff.phoneChanged && diff.sheetPhone) {
+        // Store normalised digits
+        const digits = normalisePhone(diff.sheetPhone) ?? diff.sheetPhone;
+        fields.gm_cell = fmtPhone(digits) ?? diff.sheetPhone;
+      }
+      if (Object.keys(fields).length) {
+        await supa.from("gm_roster").update(fields).eq("store_number", diff.store_number);
+      }
+      updated++;
+    } catch (e) {
+      errors.push({ store_number: diff.store_number, error: e?.message ?? "unknown" });
     }
-
-    const { error: updErr } = await supa
-      .from("profiles")
-      .update({ birthday: row.birthday })
-      .eq("id", match.id);
-
-    results.push({
-      name: row.name,
-      profileId: match.id,
-      birthday: row.birthday,
-      oldBirthday: match.birthday,
-      status: updErr ? "error" : "updated",
-      error: updErr?.message,
-    });
   }
 
-  const updated = results.filter((r) => r.status === "updated").length;
-  const noMatch = results.filter((r) => r.status === "no_match").length;
-  return { ok: true, updated, no_match: noMatch, results };
-}
-
-async function actionWriteToSheet(supa, sheets) {
-  const preview = await actionPreview(sheets);
-  if (preview.cols.nameCol < 0 || preview.cols.bdayCol < 0) {
-    return { error: "Couldn't detect Name and Birthday columns in the sheet." };
-  }
-
-  // Load active profiles with birthdays.
-  const { data: profiles, error } = await supa
-    .from("profiles")
-    .select("id, full_name, preferred_name, birthday, is_active")
-    .eq("is_active", true)
-    .not("birthday", "is", null);
-  if (error) throw new Error(error.message);
-
-  const profileMap = new Map(profiles.map((p) => [normName(p.full_name), p]));
-
-  // For each sheet row, check if the Hub has a birthday to write back.
-  const updates = []; // { range, value }
-  for (const row of preview.rows) {
-    const normRow = normName(row.name);
-    const profile = profileMap.get(normRow);
-    if (!profile?.birthday) continue;
-
-    const formatted = new Date(profile.birthday + "T12:00:00").toLocaleDateString("en-US", {
-      month: "numeric", day: "numeric", year: "numeric",
-    });
-
-    if (row.rawBirthday === formatted || row.birthday === profile.birthday) continue;
-
-    // Convert col index to A1 column letter
-    const colLetter = colToLetter(preview.cols.bdayCol);
-    updates.push({
-      range: `${colLetter}${row.rowIndex}`,
-      value: formatted,
-    });
-  }
-
-  if (!updates.length) {
-    return { ok: true, updated: 0, message: "Sheet is already up to date." };
-  }
-
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId: SHEET_ID,
-    requestBody: {
-      valueInputOption: "USER_ENTERED",
-      data: updates.map((u) => ({ range: u.range, values: [[u.value]] })),
-    },
-  });
-
-  return { ok: true, updated: updates.length };
-}
-
-function colToLetter(index) {
-  let n = index;
-  let s = "";
-  while (n >= 0) {
-    s = String.fromCharCode(65 + (n % 26)) + s;
-    n = Math.floor(n / 26) - 1;
-  }
-  return s;
+  return { ok: true, updated, errors: errors.length ? errors : undefined };
 }
 
 export const handler = async (event) => {
@@ -275,30 +261,20 @@ export const handler = async (event) => {
     return respond(500, { ok: false, message: e.message });
   }
   if (!user) return respond(401, { ok: false, message: "Not authenticated." });
-  if (!SYNC_ROLES.has(user.role)) return respond(403, { ok: false, message: "Not authorised." });
+  if (user.role !== "admin") return respond(403, { ok: false, message: "Admin only." });
 
   const params = event.queryStringParameters || {};
-  const action = params.action || "preview";
+  const action = params.action || "preview-gm";
 
   let body = {};
-  if (event.body) {
-    try { body = JSON.parse(event.body); } catch { /* ignore */ }
-  }
-  void body;
+  if (event.body) { try { body = JSON.parse(event.body); } catch { /* ignore */ } }
 
   try {
     const sheets = await getSheets();
     const supa = supabaseAdmin();
 
-    if (action === "preview") {
-      return respond(200, await actionPreview(sheets));
-    }
-    if (action === "sync-from-sheet") {
-      return respond(200, await actionSyncFromSheet(supa, sheets));
-    }
-    if (action === "write-to-sheet") {
-      return respond(200, await actionWriteToSheet(supa, sheets));
-    }
+    if (action === "preview-gm") return respond(200, await actionPreviewGm(supa, sheets));
+    if (action === "sync-gm")    return respond(200, await actionSyncGm(supa, sheets, body));
     return respond(400, { ok: false, message: "Unknown action." });
   } catch (err) {
     console.error("birthday-sync error:", err);
