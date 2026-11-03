@@ -12,9 +12,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Search, Sun, Moon, Bell, Building2, Film, Hammer, BookUser, BookOpen, Users } from "lucide-react";
+import { Search, Sun, Moon, Bell, Building2, FileText, Film, Hammer, BookUser, BookOpen, Users } from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import { useAuth } from "@/auth/AuthProvider";
+import { supabase } from "@/lib/supabase";
 import { useEffectiveRole } from "@/lib/useViewAs";
 import { useChatUnreadCount } from "@/modules/chat/useChatUnread";
 import { fetchCallerStores, fetchTickets } from "@/modules/work-orders-v2/api";
@@ -38,6 +39,7 @@ interface Hit {
   label: string;
   sub: string;
   to: string;
+  external?: boolean;
 }
 
 export function Topbar() {
@@ -81,6 +83,24 @@ export function Topbar() {
     queryFn: () => fetchDirectory(profile?.role ?? null, profile?.id ?? null),
     enabled: open && !!profile,
     staleTime: 60_000,
+  });
+
+  // Resources — live Drive filename search. Fires when term is 2+ chars.
+  const resourcesSearchQ = useQuery({
+    queryKey: ["global-resources-search", q.trim()],
+    queryFn: async () => {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) return { files: [] as { id: string; name: string; url: string; isFolder: boolean }[] };
+      const res = await fetch(
+        `/.netlify/functions/resources?action=search&q=${encodeURIComponent(q.trim())}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) return { files: [] as { id: string; name: string; url: string; isFolder: boolean }[] };
+      return res.json() as Promise<{ files: { id: string; name: string; url: string; isFolder: boolean }[] }>;
+    },
+    enabled: open && q.trim().length >= 2,
+    staleTime: 30_000,
   });
 
   const hits = useMemo<Hit[]>(() => {
@@ -183,16 +203,29 @@ export function Topbar() {
       }
     }
 
-    // Resources and Videos are Drive-backed — deep-link into their own search
-    // rather than duplicating Drive listings inline.
+    // Resources — actual Drive file hits (by filename).
     if (term.length >= 2) {
-      out.push({
-        key: "resources-search",
-        icon: BookOpen,
-        label: `Search Resources for "${q.trim()}"`,
-        sub: "Open the resource library",
-        to: `/resources?q=${encodeURIComponent(q.trim())}`,
-      });
+      const resourceFiles = (resourcesSearchQ.data?.files ?? []).filter((f) => !f.isFolder).slice(0, 5);
+      for (const f of resourceFiles) {
+        out.push({
+          key: `resource-${f.id}`,
+          icon: FileText,
+          label: f.name,
+          sub: "Resource",
+          to: f.url,
+          external: true,
+        });
+      }
+      // Fallback: jump to full resource library search if user wants more.
+      if (resourceFiles.length === 0) {
+        out.push({
+          key: "resources-search",
+          icon: BookOpen,
+          label: `Search Resources for "${q.trim()}"`,
+          sub: "Open the resource library",
+          to: `/resources?q=${encodeURIComponent(q.trim())}`,
+        });
+      }
       out.push({
         key: "videos-search",
         icon: Film,
@@ -203,7 +236,7 @@ export function Topbar() {
     }
 
     return out;
-  }, [q, storesQ.data, ticketsQ.data, contactsQ.data, directoryQ.data]);
+  }, [q, storesQ.data, ticketsQ.data, contactsQ.data, directoryQ.data, resourcesSearchQ.data]);
 
   // Close on click-outside.
   useEffect(() => {
@@ -215,10 +248,14 @@ export function Topbar() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
-  function go(to: string) {
+  function go(h: Hit) {
     setOpen(false);
     setQ("");
-    navigate(to);
+    if (h.external) {
+      window.open(h.to, "_blank", "noopener,noreferrer");
+    } else {
+      navigate(h.to);
+    }
   }
 
   const showDropdown = open && q.trim().length >= 1;
@@ -247,7 +284,7 @@ export function Topbar() {
           onFocus={() => setOpen(true)}
           onKeyDown={(e) => {
             if (e.key === "Escape") setOpen(false);
-            if (e.key === "Enter" && hits[0]) go(hits[0].to);
+            if (e.key === "Enter" && hits[0]) go(hits[0]);
           }}
           placeholder="Search stores, work orders…"
           aria-label="Search"
@@ -279,7 +316,7 @@ export function Topbar() {
                     <button
                       type="button"
                       onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => go(h.to)}
+                      onClick={() => go(h)}
                       className="flex w-full items-center gap-3 px-4 py-2 text-left transition hover:bg-zinc-50 dark:hover:bg-white/5"
                     >
                       <h.icon className="h-4 w-4 shrink-0 text-ink-subtle dark:text-night-muted" strokeWidth={1.75} />
