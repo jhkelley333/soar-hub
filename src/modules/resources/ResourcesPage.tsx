@@ -4,9 +4,10 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ChevronRight, ExternalLink, FolderOpen, Loader2, Search, Settings, X } from "lucide-react";
+import { ChevronRight, ExternalLink, Film, FolderOpen, Loader2, Search, Settings, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/auth/AuthProvider";
+import { listVideos } from "@/modules/work-orders/api";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Input } from "@/shared/ui/Input";
@@ -186,6 +187,15 @@ export function ResourcesPage() {
   const folders = files.filter((f) => f.isFolder);
   const docs = files.filter((f) => !f.isFolder);
 
+  // Inject POP How-to Videos at the bottom of the Signage / POPS folder.
+  const showVideos = !isSearching && current.name.toLowerCase().includes("pops");
+  const videosQ = useQuery({
+    queryKey: ["work-orders", "videos"],
+    queryFn: listVideos,
+    enabled: showVideos,
+    staleTime: 60_000,
+  });
+
   useEffect(() => {
     if (active.error) {
       toast.push(
@@ -361,6 +371,50 @@ export function ResourcesPage() {
               </ul>
             </CardBody>
           </Card>
+        </section>
+      )}
+
+      {showVideos && videosQ.data && videosQ.data.length > 0 && (
+        <section className="mt-6">
+          <SectionLabel>
+            <Film className="h-3.5 w-3.5 text-cherry" strokeWidth={1.75} />
+            <span className="text-cherry">POP How to Videos</span>
+          </SectionLabel>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {videosQ.data.map((file) => (
+              <a
+                key={file.id}
+                href={file.webViewLink}
+                target="_blank"
+                rel="noreferrer"
+                className="group"
+              >
+                <Card className="overflow-hidden transition group-hover:ring-2 group-hover:ring-frost">
+                  {file.thumbnailLink ? (
+                    <img
+                      src={file.thumbnailLink}
+                      alt={file.name}
+                      className="h-32 w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-32 w-full items-center justify-center bg-zinc-50 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                      Video
+                    </div>
+                  )}
+                  <CardBody>
+                    <div className="line-clamp-2 text-sm font-semibold tracking-tight text-midnight">
+                      {file.name}
+                    </div>
+                    {file.createdTime && (
+                      <div className="mt-1 text-xs text-zinc-500">
+                        Added {new Date(file.createdTime).toLocaleDateString()}
+                      </div>
+                    )}
+                  </CardBody>
+                </Card>
+              </a>
+            ))}
+          </div>
         </section>
       )}
     </>
