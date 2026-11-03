@@ -58,12 +58,21 @@ async function getSheets() {
 // Auto-detect columns from a header row. Returns -1 for any not found.
 function detectColumns(headers) {
   const h = headers.map((v) => String(v ?? "").toLowerCase().trim());
-  return {
-    storeCol: h.findIndex((v) => /store\s*#|store\s*num|store\s*number|^#$|^store$/.test(v)),
-    nameCol:  h.findIndex((v) => /\bname\b|full name/.test(v)),
-    bdayCol:  h.findIndex((v) => /birth|bday|dob|date of birth/.test(v)),
-    phoneCol: h.findIndex((v) => /phone|cell|mobile/.test(v)),
-  };
+
+  const storeCol = h.findIndex((v) => /store\s*#|store\s*num|store\s*number|^#$|^store$/.test(v));
+
+  // Prefer GM-specific name columns ("GM (Full Name)", "GM Name", "GM") over
+  // generic "Name" / "Store Name" columns, so we don't accidentally grab the
+  // store name when both columns are present.
+  let nameCol = h.findIndex((v) => /\bgm\b.*\bname\b|gm\s*\(.*name|^gm$/.test(v));
+  if (nameCol < 0) nameCol = h.findIndex((v) => /\bfull\s*name\b/.test(v));
+  if (nameCol < 0) nameCol = h.findIndex((v) => /\bname\b/.test(v) && !/store|location|address/.test(v));
+  if (nameCol < 0) nameCol = h.findIndex((v) => /\bname\b/.test(v));
+
+  const bdayCol  = h.findIndex((v) => /birth|bday|dob|date of birth/.test(v));
+  const phoneCol = h.findIndex((v) => /phone|cell|mobile/.test(v));
+
+  return { storeCol, nameCol, bdayCol, phoneCol };
 }
 
 // Scan the first 5 rows, pick the one that scores best on detected columns.
