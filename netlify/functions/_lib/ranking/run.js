@@ -712,6 +712,30 @@ export async function latestRun(supa, params, storeNums = null) {
     .order("rank", { ascending: true });
   if (rowsErr) return { error: rowsErr.message, status: 500 };
 
+  // Recompute the entity-missing warning live so it clears immediately when
+  // soar_company_name is filled in My Stores, without needing a full re-run.
+  if (run.issues?.length) {
+    const ENTITY_MSG = "have no legal entity on My Stores";
+    const staleEntityIssue = run.issues.some((i) => i.msg?.includes(ENTITY_MSG));
+    if (staleEntityIssue) {
+      const { data: storeRows } = await supa
+        .from("ranking_rows").select("entity_key, metrics")
+        .eq("run_id", run.id).eq("scope", "ptd").eq("tier", "store");
+      const storeNums = (storeRows || []).map((r) => String(r.entity_key));
+      if (storeNums.length) {
+        const { data: storeMeta } = await supa
+          .from("stores").select("number, soar_company_name").in("number", storeNums);
+        const entityByNum = new Map((storeMeta || []).map((s) => [String(s.number), s.soar_company_name]));
+        const missingNow = storeNums.filter((n) => !entityByNum.get(n));
+        run = { ...run, issues: run.issues.filter((i) => !i.msg?.includes(ENTITY_MSG)) };
+        if (missingNow.length) {
+          const list = missingNow.slice(0, 10).map((n) => `#${n}`).join(", ");
+          run.issues = [...run.issues, { level: "warn", msg: `${missingNow.length} store(s) have no legal entity on My Stores (soar_company_name): ${list}${missingNow.length > 10 ? " …" : ""} — grouped as "Unassigned" on the Entities tab. Fix: edit each store in My Stores and fill in Soar Company Name.` }];
+        }
+      }
+    }
+  }
+
   // view_scope = "company" → treat caller as org-wide for this request.
   // view_scope = "district" → expand a scoped caller to their full DO's stores.
   // default ("own") → use storeNums as-is.
