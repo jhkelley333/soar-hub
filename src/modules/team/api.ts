@@ -201,6 +201,7 @@ export interface UpdateUserInput {
   // YYYY-MM-DD or null/"" to clear.
   start_date?: string | null;
   gm_assigned_date?: string | null;
+  birthday?: string | null;
 }
 
 export interface UpdateUserResponse {
