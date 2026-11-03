@@ -255,7 +255,7 @@ export async function runRankingNow(supa, user, opts = {}) {
   const { data: storeMeta } = await supa.from("stores").select("id, number, name, soar_company_name").in("number", numbers).eq("is_active", true);
   const metaByNumber = new Map((storeMeta || []).map((s) => [String(s.number), s]));
 
-  // Expected active-store count — so a week where some stores never polled
+  // Expected active-store list — so a week where some stores never polled
   // reads as PARTIAL instead of silently passing as complete. `numbers` is the
   // set of stores that captured labor for this week; compare against every
   // active SONIC store in the org. Apricus (Little Caesars) stores share the
@@ -263,9 +263,12 @@ export async function runRankingNow(supa, user, opts = {}) {
   // Skunkworks KPI feed, so they must NOT count toward "expected" — same brand
   // guard the other Sonic-scoped functions use (keep Sonic + legacy null-brand,
   // drop Apricus). Without this the partial note is inflated by every LC store.
-  const { count: expectedStores } = await supa
-    .from("stores").select("id", { count: "exact", head: true })
+  const { data: activeStoreRows } = await supa
+    .from("stores").select("number")
     .eq("is_active", true).or("brand.eq.sonic,brand.is.null").not("number", "in", corpNotInFilter);
+  const expectedStores = activeStoreRows?.length ?? 0;
+  const numbersSet = new Set(numbers);
+  const missingLaborNums = (activeStoreRows || []).map((s) => String(s.number)).filter((n) => !numbersSet.has(n));
 
   // 4. Config slice + live avg wage (B8).
   const rc = await loadRankingConfig(supa, weekEnding);
@@ -394,7 +397,7 @@ export async function runRankingNow(supa, user, opts = {}) {
   const unmatched = [];
   const onTimeSuspect = [];
   const badIx = [];
-  let ixMissing = 0;
+  const ixMissingStores = [];
   let onTimeMissing = 0;
   for (const r of rows) {
     const num = String(r.store_number);
@@ -403,7 +406,7 @@ export async function runRankingNow(supa, user, opts = {}) {
     const meta = metaByNumber.get(num);
     const ixPtd = ix.ptd?.stores.get(num) ?? null;
     const ixWtd = ix.wtd?.stores.get(num) ?? null;
-    if (ix.ptd && !ixPtd) ixMissing++;
+    if (ix.ptd && !ixPtd) ixMissingStores.push(num);
     if (isNum(ixPtd?.cogs_eff) && ixPtd.cogs_eff <= 0) badIx.push(`${num} (${(ixPtd.cogs_eff * 100).toFixed(1)}%)`);
     const ptd = bandInput(r, "ptd_", ixPtd, rc.fcTargetEfficiency);
     const wtd = bandInput(r, "wtd_", ixWtd, rc.fcTargetEfficiency);
@@ -458,9 +461,10 @@ export async function runRankingNow(supa, user, opts = {}) {
   // date, so the board is incomplete. `numbers` = stores that captured any
   // labor this week; `expectedStores` = active stores in the org.
   const polledStores = numbers.length;
-  const missingStores = isNum(expectedStores) ? Math.max(0, expectedStores - polledStores) : 0;
+  const missingStores = missingLaborNums.length;
   if (missingStores > 0) {
-    issues.push({ level: "warn", msg: `${missingStores} of ${expectedStores} store(s) haven't polled labor for week ending ${weekEnding} yet — the week is partial and will fill in as they capture.` });
+    const list = missingLaborNums.slice(0, 10).map((n) => `#${n}`).join(", ");
+    issues.push({ level: "warn", msg: `${missingStores} of ${expectedStores} store(s) haven't polled labor for week ending ${weekEnding} yet: ${list}${missingStores > 10 ? " …" : ""} — the week is partial and will fill in as they capture.` });
   }
   if (onTimeMissing === stores.length) {
     issues.push({ level: "bad", msg: "No on-time data captured yet (run migration 0238, then wait for the next KPI capture) — ops scores and total points will be blank." });
@@ -473,8 +477,9 @@ export async function runRankingNow(supa, user, opts = {}) {
   if (badIx.length) {
     issues.push({ level: "bad", msg: `${badIx.length} store(s) excluded from ranking — IX efficiency at or below zero: ${badIx.join(", ")}. Fix the IX row or they stay unranked.` });
   }
-  if (ixMissing) {
-    issues.push({ level: "warn", msg: `${ixMissing} store(s) not in the IX file — they default to 96.0% efficiency (the sheet's missing-IX rule).` });
+  if (ixMissingStores.length) {
+    const list = ixMissingStores.slice(0, 10).map((n) => `#${n}`).join(", ");
+    issues.push({ level: "warn", msg: `${ixMissingStores.length} store(s) not in the IX file — they default to 96.0% efficiency (the sheet's missing-IX rule): ${list}${ixMissingStores.length > 10 ? " …" : ""}` });
   }
   // $ Over Goal (IX excess $) is summed up the org. The sum skips blank stores
   // (engine sumSkip) so one gap no longer blanks the whole leader's total — it
