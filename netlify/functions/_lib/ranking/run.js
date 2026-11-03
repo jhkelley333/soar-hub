@@ -252,7 +252,7 @@ export async function runRankingNow(supa, user, opts = {}) {
 
   // 3. Org + entity.
   const orgMap = await resolveOrg(supa, numbers);
-  const { data: storeMeta } = await supa.from("stores").select("id, number, name, soar_company_name").in("number", numbers);
+  const { data: storeMeta } = await supa.from("stores").select("id, number, name, soar_company_name").in("number", numbers).eq("is_active", true);
   const metaByNumber = new Map((storeMeta || []).map((s) => [String(s.number), s]));
 
   // Expected active-store count — so a week where some stores never polled
@@ -724,7 +724,7 @@ export async function latestRun(supa, params, storeNums = null) {
       const storeNums = (storeRows || []).map((r) => String(r.entity_key));
       if (storeNums.length) {
         const { data: storeMeta } = await supa
-          .from("stores").select("number, soar_company_name").in("number", storeNums);
+          .from("stores").select("number, soar_company_name").in("number", storeNums).eq("is_active", true);
         const entityByNum = new Map((storeMeta || []).map((s) => [String(s.number), s.soar_company_name]));
         const missingNow = storeNums.filter((n) => !entityByNum.get(n));
         run = { ...run, issues: run.issues.filter((i) => !i.msg?.includes(ENTITY_MSG)) };
