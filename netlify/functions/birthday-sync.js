@@ -183,9 +183,10 @@ async function actionPreviewGm(supa, sheets) {
     if (seen.has(storeKey)) continue;
     seen.add(storeKey);
 
-    const currentPhone = normalisePhone(match.gm_cell);
+    const currentPhone   = normalisePhone(match.gm_cell);
+    const currentBdayIso = normaliseDate(match.gm_birthday); // normalise stored value too
     const nameChanged     = row.name     && normName(row.name) !== normName(match.gm_name);
-    const birthdayChanged = row.birthday && row.birthday !== match.gm_birthday;
+    const birthdayChanged = row.birthday && row.birthday !== currentBdayIso;
     const phoneChanged    = row.phone    && row.phone !== currentPhone;
 
     if (!nameChanged && !birthdayChanged && !phoneChanged) continue;
@@ -199,8 +200,8 @@ async function actionPreviewGm(supa, sheets) {
       sheetName:       row.name         || null,
       nameChanged:     !!nameChanged,
       // birthday
-      currentBirthday: match.gm_birthday ?? null,
-      sheetBirthday:   row.birthday      ?? null,
+      currentBirthday: currentBdayIso   ?? null,
+      sheetBirthday:   row.birthday     ?? null,
       birthdayChanged: !!birthdayChanged,
       // phone
       currentPhone:    fmtPhone(currentPhone),
