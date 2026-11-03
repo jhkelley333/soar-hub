@@ -970,6 +970,18 @@ async function updateUser(supa, manager, body) {
     }
   }
 
+  // Birthday — YYYY-MM-DD or null/"" to clear.
+  if (body.birthday !== undefined) {
+    const raw = body.birthday;
+    if (raw === null || (typeof raw === "string" && raw.trim() === "")) {
+      updates.birthday = null;
+    } else if (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) {
+      updates.birthday = raw.trim();
+    } else {
+      return { error: "birthday must be YYYY-MM-DD or empty.", status: 400 };
+    }
+  }
+
   // Active state
   if (body.is_active !== undefined && body.is_active !== target.is_active) {
     if (body.is_active === true && manager.role !== "admin") {

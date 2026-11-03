@@ -122,7 +122,7 @@ export function GmRosterPage() {
       </div>
 
       {tab === "leaders" ? (
-        <LeadersTab q={leadersQ} />
+        <LeadersTab q={leadersQ} canEdit={q.data?.can_edit ?? false} />
       ) : (
         <>
       {summary && (
@@ -195,8 +195,9 @@ function TabButton({ active, onClick, label, count }: { active: boolean; onClick
 }
 
 // ── Leaders tab (DO / SDO / RVP roster) ─────────────────────────────────────
-function LeadersTab({ q }: { q: UseQueryResult<{ ok: true; rows: LeaderRow[] }> }) {
+function LeadersTab({ q, canEdit }: { q: UseQueryResult<{ ok: true; rows: LeaderRow[] }>; canEdit: boolean }) {
   const [search, setSearch] = useState("");
+  const [editLeader, setEditLeader] = useState<LeaderRow | null>(null);
   const rows = useMemo(() => {
     const all = q.data?.rows ?? [];
     const s = search.trim().toLowerCase();
@@ -211,9 +212,7 @@ function LeadersTab({ q }: { q: UseQueryResult<{ ok: true; rows: LeaderRow[] }> 
 
   return (
     <>
-      <div className="mb-3 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800 ring-1 ring-inset ring-sky-200">
-        Leader details (phone, email, birthday) come from each person's Hub profile — update them in <strong>My Team</strong>, not here.
-      </div>
+      {editLeader && <EditLeaderModal leader={editLeader} onClose={() => setEditLeader(null)} />}
       <input
         value={search}
         onChange={(e) => setSearch(e.target.value)}
@@ -237,7 +236,7 @@ function LeadersTab({ q }: { q: UseQueryResult<{ ok: true; rows: LeaderRow[] }> 
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {rows.map((r) => <LeaderRowView key={r.id} r={r} />)}
+                {rows.map((r) => <LeaderRowView key={r.id} r={r} canEdit={canEdit} onEdit={() => setEditLeader(r)} />)}
               </tbody>
             </table>
           </div>
@@ -247,11 +246,20 @@ function LeadersTab({ q }: { q: UseQueryResult<{ ok: true; rows: LeaderRow[] }> 
   );
 }
 
-function LeaderRowView({ r }: { r: LeaderRow }) {
+function LeaderRowView({ r, canEdit, onEdit }: { r: LeaderRow; canEdit: boolean; onEdit: () => void }) {
   const tone = r.role === "rvp" ? "bg-accent-100 text-accent-700" : r.role === "sdo" ? "bg-sky-50 text-sky-700" : "bg-zinc-100 text-zinc-600";
   return (
     <tr className="align-top">
-      <td className="px-4 py-2.5 font-semibold text-midnight">{r.name ?? "—"}</td>
+      <td className="px-4 py-2.5">
+        <div className="flex items-center gap-1.5">
+          <span className="font-semibold text-midnight">{r.name ?? "—"}</span>
+          {canEdit && (
+            <button type="button" onClick={onEdit} title="Edit leader — name, phone, email, birthday" className="text-zinc-300 hover:text-accent">
+              <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
+            </button>
+          )}
+        </div>
+      </td>
       <td className="px-4 py-2.5">
         <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", tone)}>{ROLE_LABEL[r.role]}</span>
       </td>
@@ -280,6 +288,68 @@ function LeaderRowView({ r }: { r: LeaderRow }) {
       </td>
       <td className="px-4 py-2.5 text-xs text-zinc-600">{r.birthday ? `🎂 ${fmtDate(r.birthday)}` : <span className="text-zinc-400">—</span>}</td>
     </tr>
+  );
+}
+
+function EditLeaderModal({ leader, onClose }: { leader: LeaderRow; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const init = {
+    name: leader.name ?? "",
+    phone: leader.phone ?? "",
+    email: leader.email ?? "",
+    birthday: leader.birthday ?? "",
+  };
+  const [name, setName] = useState(init.name);
+  const [phone, setPhone] = useState(init.phone);
+  const [email, setEmail] = useState(init.email);
+  const [birthday, setBirthday] = useState(init.birthday);
+
+  const dirty =
+    name.trim() !== init.name.trim() ||
+    phone.trim() !== init.phone.trim() ||
+    email.trim() !== init.email.trim() ||
+    birthday !== init.birthday;
+
+  const save = useMutation({
+    mutationFn: () => {
+      const input: UpdateUserInput = { user_id: leader.id };
+      if (name.trim() !== init.name.trim()) input.full_name = name.trim() || null;
+      if (phone.trim() !== init.phone.trim()) input.phone = phone.trim() || null;
+      if (email.trim() !== init.email.trim()) input.email = email.trim();
+      if (birthday !== init.birthday) input.birthday = birthday || null;
+      return updateUser(input);
+    },
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["gm-leaders"] });
+      toast.push(r.email_reissued ? `Saved — new invite sent to ${r.email_reissued}.` : "Leader saved.", "success");
+      onClose();
+    },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't save.", "error"),
+  });
+
+  const cls = "w-full rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-accent focus:outline-none";
+  return (
+    <Modal open onClose={onClose} title={`Edit ${ROLE_LABEL[leader.role]} — ${leader.name ?? "leader"}`}
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>{save.isPending ? "Saving…" : "Save"}</Button>
+        </>
+      }>
+      <p className="mb-3 text-xs text-zinc-500">Edits this person's Hub profile. Changes apply everywhere in the Hub.</p>
+      <div className="space-y-3">
+        <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Full name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} className={cls} /></label>
+        <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Email (login)</span>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={cls} /></label>
+        <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Cell phone</span>
+          <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 123-4567" className={cls} /></label>
+        <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Birthday</span>
+          <input type="date" value={birthday} onChange={(e) => setBirthday(e.target.value)} className={cls} /></label>
+      </div>
+      <p className="mt-3 text-[11px] text-zinc-400">Changing the email updates their login and re-sends an invite if they haven't activated yet.</p>
+    </Modal>
   );
 }
 
