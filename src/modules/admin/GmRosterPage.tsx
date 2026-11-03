@@ -7,7 +7,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Ban, Cake, Check, Download, HelpCircle, History, Mail, Pencil, Phone, Upload, UserX } from "lucide-react";
+import { AlertTriangle, Ban, Cake, Check, Download, HelpCircle, History, Mail, Pencil, Phone, RefreshCw, Upload, UserX } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -15,7 +15,7 @@ import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fetchGmLeaders, fetchGmRoster, fetchGmRosterHistory, importGmRoster, setGmRosterDetails, setGmRosterName, type GmRosterHistoryEntry, type GmRosterRow, type LeaderRow, type ReconcileStatus } from "./gmRosterApi";
+import { fetchGmLeaders, fetchGmRoster, fetchGmRosterHistory, importGmRoster, previewBirthdaySheet, setGmRosterDetails, setGmRosterName, syncFromSheet, writeToSheet, type BirthdaySyncPreview, type BirthdaySyncResult, type GmRosterHistoryEntry, type GmRosterRow, type LeaderRow, type ReconcileStatus } from "./gmRosterApi";
 import { updateUser, type UpdateUserInput } from "@/modules/team/api";
 import { TraitChip } from "@/modules/culture-index/TraitChip";
 import type { UseQueryResult } from "@tanstack/react-query";
@@ -38,6 +38,7 @@ const STATUS_META: Record<ReconcileStatus, { label: string; cls: string; icon: t
 export function GmRosterPage() {
   const [tab, setTab] = useState<"gms" | "leaders">("gms");
   const [bdayOpen, setBdayOpen] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [importOpen, setImportOpen] = useState(false);
@@ -96,6 +97,9 @@ export function GmRosterPage() {
             <Button variant="secondary" size="sm" onClick={() => setBdayOpen(true)}>
               <Cake className="mr-1 h-3.5 w-3.5" /> Birthdays
             </Button>
+            <Button variant="secondary" size="sm" onClick={() => setSyncOpen(true)}>
+              <RefreshCw className="mr-1 h-3.5 w-3.5" /> Sync Sheet
+            </Button>
             {tab === "gms" && (
               <Button variant="secondary" size="sm" onClick={exportCsv} disabled={rows.length === 0}>
                 <Download className="mr-1 h-3.5 w-3.5" /> Download
@@ -114,6 +118,7 @@ export function GmRosterPage() {
       {historyRow && <HistoryModal row={historyRow} onClose={() => setHistoryRow(null)} />}
       {editRow && <EditGmModal row={editRow} onClose={() => setEditRow(null)} />}
       {acctRow?.account && <EditAccountModal row={acctRow} onClose={() => setAcctRow(null)} />}
+      {syncOpen && <BirthdaySyncModal onClose={() => { setSyncOpen(false); leadersQ.refetch(); }} />}
       {bdayOpen && <BirthdayModal gmRows={q.data?.rows ?? []} leaders={leadersQ.data?.rows ?? []} onClose={() => setBdayOpen(false)} />}
 
       <div className="mb-4 flex gap-1 border-b border-zinc-200">
@@ -758,6 +763,165 @@ function HistoryEntry({ e }: { e: GmRosterHistoryEntry }) {
         <span>{e.changed_by_name ?? "—"} · {when}</span>
       </div>
     </li>
+  );
+}
+
+// ── Birthday sheet sync modal ────────────────────────────────────────────────
+function BirthdaySyncModal({ onClose }: { onClose: () => void }) {
+  const toast = useToast();
+  const [step, setStep] = useState<"preview" | "result">("preview");
+  const [result, setResult] = useState<BirthdaySyncResult | null>(null);
+
+  const previewQ = useQuery<BirthdaySyncPreview>({
+    queryKey: ["birthday-sync-preview"],
+    queryFn: previewBirthdaySheet,
+    staleTime: 0,
+  });
+
+  const syncMut = useMutation({
+    mutationFn: syncFromSheet,
+    onSuccess: (r) => { setResult(r); setStep("result"); },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Sync failed.", "error"),
+  });
+
+  const writeMut = useMutation({
+    mutationFn: writeToSheet,
+    onSuccess: (r) => {
+      toast.push(r.updated ? `Wrote ${r.updated} birthday${r.updated === 1 ? "" : "s"} back to the sheet.` : "Sheet is already up to date.", "success");
+    },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Write-back failed.", "error"),
+  });
+
+  const preview = previewQ.data;
+  const colsOk = preview && preview.cols.nameCol >= 0 && preview.cols.bdayCol >= 0;
+  const rowsWithBday = preview?.rows.filter((r) => r.birthday).length ?? 0;
+
+  return (
+    <Modal open onClose={onClose} title="Birthday Sync — Google Sheet" maxWidth="max-w-2xl"
+      footer={
+        step === "preview" ? (
+          <>
+            <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
+            {colsOk && (
+              <Button variant="secondary" size="sm" onClick={() => writeMut.mutate()} disabled={writeMut.isPending}>
+                {writeMut.isPending ? "Writing…" : "Hub → Sheet"}
+              </Button>
+            )}
+            <Button size="sm" onClick={() => syncMut.mutate()} disabled={!colsOk || syncMut.isPending || previewQ.isLoading}>
+              {syncMut.isPending ? "Syncing…" : "Sheet → Hub"}
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button variant="secondary" size="sm" onClick={() => { setStep("preview"); setResult(null); }}>Back</Button>
+            <Button size="sm" onClick={onClose}>Done</Button>
+          </>
+        )
+      }>
+
+      {step === "preview" && (
+        <>
+          <p className="mb-3 text-xs text-zinc-500">
+            Reads the birthday spreadsheet and matches rows to Hub profiles by name.
+            <strong> Sheet → Hub</strong> updates Hub profiles from the sheet.
+            <strong> Hub → Sheet</strong> writes Hub birthday values back to the sheet.
+          </p>
+          {previewQ.isLoading ? (
+            <div className="py-8 text-center text-sm text-zinc-500">Reading sheet…</div>
+          ) : previewQ.isError ? (
+            <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-inset ring-red-200">
+              {(previewQ.error as Error)?.message ?? "Couldn't read the sheet."}
+            </div>
+          ) : !colsOk ? (
+            <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-200">
+              Couldn't auto-detect Name and Birthday columns. Headers found:{" "}
+              <span className="font-mono">{preview?.headers.join(", ") || "none"}</span>
+            </div>
+          ) : (
+            <>
+              <div className="mb-3 flex gap-4 text-xs text-zinc-500">
+                <span>Name column: <strong className="text-midnight">{preview.headers[preview.cols.nameCol]}</strong></span>
+                <span>Birthday column: <strong className="text-midnight">{preview.headers[preview.cols.bdayCol]}</strong></span>
+                <span><strong className="text-midnight">{rowsWithBday}</strong> rows with a birthday</span>
+              </div>
+              <div className="max-h-64 overflow-y-auto rounded-lg ring-1 ring-inset ring-zinc-200">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-zinc-50">
+                    <tr className="border-b border-zinc-200 text-left text-[10px] uppercase tracking-wide text-zinc-400">
+                      <th className="px-3 py-2">Name</th>
+                      <th className="px-3 py-2">Birthday in sheet</th>
+                      {preview.cols.roleCol >= 0 && <th className="px-3 py-2">Role</th>}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {preview.rows.slice(0, 50).map((r) => (
+                      <tr key={r.rowIndex}>
+                        <td className="px-3 py-1.5 font-medium text-midnight">{r.name}</td>
+                        <td className="px-3 py-1.5 text-zinc-600">{r.birthday ? fmtDate(r.birthday) : <span className="text-zinc-300">—</span>}</td>
+                        {preview.cols.roleCol >= 0 && <td className="px-3 py-1.5 text-zinc-500">{r.role || "—"}</td>}
+                      </tr>
+                    ))}
+                    {preview.rows.length > 50 && (
+                      <tr><td colSpan={3} className="px-3 py-2 text-center text-zinc-400">…and {preview.rows.length - 50} more rows</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {step === "result" && result && (
+        <>
+          <div className="mb-4 flex gap-6 text-center">
+            <div className="flex-1 rounded-lg bg-emerald-50 py-3 ring-1 ring-inset ring-emerald-200">
+              <div className="text-2xl font-bold text-emerald-700">{result.updated}</div>
+              <div className="text-xs text-emerald-600">Profiles updated</div>
+            </div>
+            {result.no_match != null && (
+              <div className="flex-1 rounded-lg bg-amber-50 py-3 ring-1 ring-inset ring-amber-200">
+                <div className="text-2xl font-bold text-amber-700">{result.no_match}</div>
+                <div className="text-xs text-amber-600">No match found</div>
+              </div>
+            )}
+          </div>
+          {result.results && result.results.length > 0 && (
+            <div className="max-h-64 overflow-y-auto rounded-lg ring-1 ring-inset ring-zinc-200">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-zinc-50">
+                  <tr className="border-b border-zinc-200 text-left text-[10px] uppercase tracking-wide text-zinc-400">
+                    <th className="px-3 py-2">Name</th>
+                    <th className="px-3 py-2">Birthday</th>
+                    <th className="px-3 py-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {result.results.map((r, i) => (
+                    <tr key={i}>
+                      <td className="px-3 py-1.5 font-medium text-midnight">{r.name}</td>
+                      <td className="px-3 py-1.5 text-zinc-600">{r.birthday ? fmtDate(r.birthday) : "—"}</td>
+                      <td className="px-3 py-1.5">
+                        <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                          r.status === "updated" ? "bg-emerald-50 text-emerald-700" :
+                          r.status === "no_match" ? "bg-amber-50 text-amber-700" :
+                          r.status === "already_current" ? "bg-zinc-100 text-zinc-500" :
+                          "bg-red-50 text-red-700")}>
+                          {r.status === "updated" ? "Updated" :
+                           r.status === "no_match" ? "No match" :
+                           r.status === "already_current" ? "No change" :
+                           r.error ?? "Error"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </Modal>
   );
 }
 

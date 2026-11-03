@@ -156,6 +156,56 @@ export function importGmRoster(rows: GmRosterImportRow[]): Promise<{ ok: true; u
   return req(`${FN}?action=import`, { method: "POST", body: JSON.stringify({ rows }) });
 }
 
+// ── Birthday sheet sync ──────────────────────────────────────────────────────
+const BSYNC_FN = "/.netlify/functions/birthday-sync";
+
+export interface BirthdaySheetRow {
+  rowIndex: number;
+  name: string;
+  birthday: string | null;
+  role: string;
+  rawBirthday: string;
+}
+
+export interface BirthdaySyncPreview {
+  headers: string[];
+  cols: { nameCol: number; bdayCol: number; roleCol: number };
+  rows: BirthdaySheetRow[];
+}
+
+export interface BirthdaySyncResult {
+  ok: true;
+  updated: number;
+  no_match?: number;
+  message?: string;
+  results?: { name: string; birthday: string | null; status: string; error?: string }[];
+}
+
+async function bsyncReq<T>(path: string, method: "GET" | "POST" = "GET"): Promise<T> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Not signed in");
+  const res = await fetch(path, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((body as { message?: string })?.message || `Request failed (${res.status})`);
+  return body as T;
+}
+
+export function previewBirthdaySheet(): Promise<BirthdaySyncPreview> {
+  return bsyncReq(`${BSYNC_FN}?action=preview`);
+}
+
+export function syncFromSheet(): Promise<BirthdaySyncResult> {
+  return bsyncReq(`${BSYNC_FN}?action=sync-from-sheet`, "POST");
+}
+
+export function writeToSheet(): Promise<BirthdaySyncResult> {
+  return bsyncReq(`${BSYNC_FN}?action=write-to-sheet`, "POST");
+}
+
 // Parse a paste of the ops roster sheet (tab-separated) into import rows.
 // Expected column order (matches the sheet):
 //   0 Store# · 1 Store Name · 2 DO · 3 SDO · 4 RVP · 5 GM (Full Name) ·
