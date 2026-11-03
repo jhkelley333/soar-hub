@@ -486,9 +486,10 @@ export async function runRankingNow(supa, user, opts = {}) {
     const list = overGoalGaps.slice(0, 10).map((s) => `#${s.store}`).join(", ");
     issues.push({ level: "warn", msg: `${overGoalGaps.length} store(s) have an Ending $ but no $ Over Goal (excess $) in the IX file: ${list}${overGoalGaps.length > 10 ? " …" : ""} — their DO / region $ Over Goal totals are summed over the remaining stores and understate the true figure. Add the excess-$ for these stores and re-upload IX to complete it.` });
   }
-  const entityMissing = stores.filter((s) => s.entity === "Unassigned").length;
-  if (entityMissing) {
-    issues.push({ level: "warn", msg: `${entityMissing} store(s) have no legal entity on My Stores (soar_company_name) — grouped as "Unassigned" on the Entities tab.` });
+  const entityMissingStores = stores.filter((s) => s.entity === "Unassigned");
+  if (entityMissingStores.length) {
+    const list = entityMissingStores.slice(0, 10).map((s) => `#${s.store}`).join(", ");
+    issues.push({ level: "warn", msg: `${entityMissingStores.length} store(s) have no legal entity on My Stores (soar_company_name): ${list}${entityMissingStores.length > 10 ? " …" : ""} — grouped as "Unassigned" on the Entities tab. Fix: edit each store in My Stores and fill in Soar Company Name.` });
   }
 
   const out = engine.runRanking({
