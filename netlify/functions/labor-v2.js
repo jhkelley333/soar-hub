@@ -2058,6 +2058,7 @@ async function teamView(supa, user, params) {
       note: review?.note ?? null,
       root_cause: review?.root_cause ?? null,
       credits: creditsFor([r.store_number]),
+      floor_hrs: r._floor ? round1(r._floor.floor - r._floor.allowedWas) : null,
     };
   }).sort((a, b) => (b.day.variance_pts ?? -999) - (a.day.variance_pts ?? -999));
 
@@ -2127,10 +2128,15 @@ function dollarsOverForNode(rows, prefix, net) {
 
 function liteBand(rows, prefix) {
   const b = teamBand(rows, prefix);
+  // Floor hours added: only meaningful for the daily band; zero when no store hit the floor.
+  const floorHrs = prefix === ""
+    ? (rows.reduce((a, r) => a + (r._floor ? r._floor.floor - r._floor.allowedWas : 0), 0) || null)
+    : null;
   return {
     labor_pct: b.labor_pct, target_pct: b.target_pct, variance_pts: b.variance_pts,
     dollars_over: dollarsOverForNode(rows, prefix, b.dollars_over_chart),
     hours_over: b.hours_over_chart, act_vs_sched: b.act_vs_sched,
+    floor_hrs: floorHrs != null ? round1(floorHrs) : null,
   };
 }
 
@@ -2190,9 +2196,12 @@ async function laborSharePayload(supa, { scopeKind, regionName, label, numbers: 
   ]);
   const mergedCredits = new Map();
   for (const src of [tcMap, ptoMap, noGmMap, gmSupMap, corpMap]) for (const [sn, arr] of src) mergedCredits.set(sn, (mergedCredits.get(sn) || []).concat(arr));
+  const minDailyHours = await getMinDailyHours(supa);
   applyCreditsToRows(daily || [], mergedCredits);
+  applyMinHoursFloor(daily || [], minDailyHours);
   // Credit last week's rows the same way, so the WoW comparison is like-for-like.
   applyCreditsToRows(lastWk || [], mergedCredits);
+  applyMinHoursFloor(lastWk || [], minDailyHours);
   const dailyByStore = new Map((daily || []).map((r) => [String(r.store_number), r]));
   const lastWkByStore = new Map((lastWk || []).map((r) => [String(r.store_number), r]));
 
@@ -2545,6 +2554,64 @@ async function revokeLaborShare(supa, user, body) {
   return { ok: true };
 }
 
+// Preview which stores today's floor is currently affecting, and which are
+// "near" the floor (within NEAR_THRESHOLD allowed hours above it).
+const FLOOR_NEAR_THRESHOLD = 5;
+async function floorPreview(supa, user) {
+  if (!TEAM_ROLES.has(roleOf(user))) return { error: "not authorized", status: 403 };
+  const minDailyHours = await getMinDailyHours(supa);
+  const empty = { min_daily_hours: minDailyHours, date: null, affected: [], near_floor: [] };
+  if (!minDailyHours) return empty;
+
+  const visible = await resolveVisibleStoreRows(supa, user);
+  const numbers = [...new Set(visible.map((s) => String(s.number)))].filter((n) => !CORPORATE_STORE_NUMBERS.has(n));
+  if (!numbers.length) return empty;
+
+  const anchor = await latestBusinessDate(supa);
+  if (!anchor) return { ...empty, date: null };
+
+  const [{ data: rows }, orgMap] = await Promise.all([
+    supa.from("labor_v2_daily")
+      .select("store_number, net_sales, labor_cost, labor_hours, target_labor_pct")
+      .eq("business_date", anchor).in("store_number", numbers),
+    resolveOrg(supa, numbers),
+  ]);
+  applyCreditsToRows(rows || [], await loadLaborCredits(supa, numbers));
+
+  const nameByNumber = new Map(visible.map((s) => [String(s.number), s.name]));
+  const affected = [], near_floor = [];
+
+  for (const r of rows || []) {
+    const sn = String(r.store_number);
+    const sales = numv(r.net_sales);
+    const cost  = numv(r.labor_cost);
+    const hours = numv(r.labor_hours);
+    const target = numv(r.target_labor_pct);
+    if (!sales || !cost || !hours || !target) continue;
+    const avgWage = cost / hours;
+    const allowedHours = (sales * target) / avgWage;
+    const org = orgMap.get(sn);
+    const row = {
+      store_number: sn,
+      store_name: nameByNumber.get(sn) ?? null,
+      district: org?.district ?? null,
+      do_name: org?.doName ?? null,
+      actual_hours: round1(hours),
+      allowed_hours: round1(allowedHours),
+      floor_added: round1(Math.max(0, minDailyHours - allowedHours)),
+    };
+    if (allowedHours < minDailyHours) {
+      affected.push(row);
+    } else if (allowedHours < minDailyHours + FLOOR_NEAR_THRESHOLD) {
+      near_floor.push(row);
+    }
+  }
+
+  affected.sort((a, b) => a.allowed_hours - b.allowed_hours);
+  near_floor.sort((a, b) => a.allowed_hours - b.allowed_hours);
+  return { min_daily_hours: minDailyHours, date: anchor, affected, near_floor };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let supa;
@@ -2632,6 +2699,7 @@ export const handler = async (event) => {
       const [hrs_weekly_rate, min_daily_hours] = await Promise.all([getLaborHrsWeekly(supa), getMinDailyHours(supa)]);
       return respond(200, { ok: true, hrs_weekly_rate, min_daily_hours });
     }
+    if (action === "floor-preview") return unwrap(await floorPreview(supa, user));
     if (action === "labor-file") return unwrap(await laborFile(supa, user));
     if (action === "labor-file-week") return unwrap(await laborFileWeek(supa, user, params));
     if (action === "rvp-scorecard") return unwrap(await rvpScorecard(supa, user, params));

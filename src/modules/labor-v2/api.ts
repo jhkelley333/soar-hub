@@ -368,6 +368,7 @@ export interface ShareBand {
   dollars_over: number | null;
   hours_over: number | null;
   act_vs_sched: number | null;
+  floor_hrs?: number | null;
 }
 export interface HoursTrend {
   this_wtd: number | null;
@@ -539,4 +540,24 @@ export function setLaborSettings(hrs_weekly_rate: boolean): Promise<{ ok: true; 
 }
 export function setMinDailyHours(min_daily_hours: number | null): Promise<{ ok: true; min_daily_hours: number | null }> {
   return req(`${FN}?action=set-min-daily-hours`, { method: "POST", body: JSON.stringify({ min_daily_hours }) });
+}
+
+export interface FloorPreviewRow {
+  store_number: string;
+  store_name: string | null;
+  district: string | null;
+  do_name: string | null;
+  actual_hours: number;
+  allowed_hours: number;
+  floor_added: number;
+}
+export interface FloorPreviewResponse {
+  ok: true;
+  min_daily_hours: number | null;
+  date: string | null;
+  affected: FloorPreviewRow[];
+  near_floor: FloorPreviewRow[];
+}
+export function fetchFloorPreview(): Promise<FloorPreviewResponse> {
+  return req(`${FN}?action=floor-preview`);
 }
