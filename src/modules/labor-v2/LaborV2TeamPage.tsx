@@ -59,6 +59,17 @@ function CreditsInline({ credits }: { credits?: LaborCredits }) {
   );
 }
 
+// Inline badge shown when the min-hours floor raised this store's daily target.
+function FloorInline({ hrs }: { hrs?: number | null }) {
+  if (!hrs) return null;
+  return (
+    <span className="ml-1.5 inline-flex items-center gap-0.5 rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300"
+      title={`Min Hours floor added ${hrs.toFixed(1)} hrs to this store's daily target`}>
+      ⌊ +{hrs.toFixed(1)} h floor
+    </span>
+  );
+}
+
 // TeamBand → ShareBand, so the shared Table view / Week Trend modals can render
 // the hub's already-loaded store rows without a second fetch.
 const bandToShare = (b: TeamBand): ShareBand => ({
@@ -714,6 +725,7 @@ function StoreRow({ s, period }: { s: TeamStore; period: LaborPeriod }) {
           <div className="truncate text-xs text-zinc-500">
             {[s.gm_name ? `GM ${s.gm_name}` : null, s.do_name ? `DO ${s.do_name}` : null].filter(Boolean).join(" · ") || "—"}
             <CreditsInline credits={s.credits} />
+            <FloorInline hrs={s.floor_hrs} />
           </div>
         </div>
         <BandCells r={s} period={period} />

@@ -109,6 +109,7 @@ export interface TeamStore {
   /** Structured miss reason filed with the note (poor_projections | scheduled_above_chart | …). */
   root_cause: string | null;
   credits?: LaborCredits;
+  floor_hrs?: number | null;
 }
 
 export interface TeamLaborResponse {

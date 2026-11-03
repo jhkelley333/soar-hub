@@ -5,7 +5,7 @@
 
 import type { ShareBand, ShareNode, SharedLaborResponse } from "./api";
 
-type Fmt = "text" | "pct" | "var" | "over" | "hrs" | "avs" | "money";
+type Fmt = "text" | "pct" | "var" | "over" | "hrs" | "avs" | "money" | "floor";
 interface Col { group: string; header: string; band?: "daily" | "wtd" | "ptd"; key?: keyof ShareBand; fmt: Fmt; credit?: "no_gm" | "pto" | "training" | "gm_support" | "training_class"; field?: "name" | "parent" }
 
 const WINDOW = (band: "daily" | "wtd" | "ptd", group: string): Col[] => [
@@ -30,6 +30,7 @@ const COLS: Col[] = [
   { group: "Credits (PTD)", header: "Training", fmt: "money", credit: "training" },
   { group: "Credits (PTD)", header: "Training Class", fmt: "money", credit: "training_class" },
   { group: "Credits (PTD)", header: "GM Support", fmt: "money", credit: "gm_support" },
+  { group: "Floor (Daily)", header: "Hrs Added", band: "daily", key: "floor_hrs", fmt: "floor" },
 ];
 
 const NAVY = "FF1F4E79";
@@ -61,7 +62,7 @@ function writeCell(cell: any, r: Row, c: Col) {
   if (c.fmt === "pct" || c.fmt === "var") { cell.value = v / 100; cell.numFmt = "0.00%"; }
   else {
     cell.value = v;
-    cell.numFmt = c.fmt === "over" ? '"$"#,##0' : c.fmt === "hrs" ? "0.0" : c.fmt === "avs" ? "0" : '"$"#,##0';
+    cell.numFmt = c.fmt === "over" ? '"$"#,##0' : c.fmt === "hrs" ? "0.0" : c.fmt === "avs" ? "0" : c.fmt === "floor" ? "0.0" : '"$"#,##0';
   }
   // Over chart = red, under = green (variance / $ over / hrs over / AvS). Uses
   // the original percent-point / dollar value for the threshold.

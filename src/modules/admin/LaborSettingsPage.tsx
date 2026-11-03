@@ -4,7 +4,7 @@ import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { useToast } from "@/shared/ui/Toaster";
 import { Skeleton } from "@/shared/ui/Skeleton";
-import { fetchLaborSettings, setLaborSettings, setMinDailyHours } from "@/modules/labor-v2/api";
+import { fetchLaborSettings, setLaborSettings, setMinDailyHours, fetchFloorPreview, type FloorPreviewRow } from "@/modules/labor-v2/api";
 
 export function LaborSettingsPage() {
   const qc = useQueryClient();
@@ -162,6 +162,80 @@ export function LaborSettingsPage() {
           )}
         </CardBody>
       </Card>
+
+      <FloorPreviewPanel />
     </>
+  );
+}
+
+function FloorPreviewTable({ rows, label }: { rows: FloorPreviewRow[]; label: string }) {
+  if (!rows.length) return null;
+  return (
+    <div className="mt-4">
+      <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-muted">{label}</p>
+      <div className="overflow-x-auto rounded-lg border border-ink-subtle">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="bg-surface-subtle">
+              <th className="px-3 py-2 text-left font-medium text-ink-muted">Store</th>
+              <th className="px-3 py-2 text-left font-medium text-ink-muted">DO</th>
+              <th className="px-3 py-2 text-right font-medium text-ink-muted">Allowed Hrs</th>
+              <th className="px-3 py-2 text-right font-medium text-ink-muted">Floor Added</th>
+              <th className="px-3 py-2 text-right font-medium text-ink-muted">Actual Hrs</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-ink-subtle">
+            {rows.map((r) => (
+              <tr key={r.store_number} className="hover:bg-surface-subtle">
+                <td className="px-3 py-2 font-medium text-heading">#{r.store_number}{r.store_name ? ` · ${r.store_name}` : ""}</td>
+                <td className="px-3 py-2 text-ink-muted">{r.do_name ?? "—"}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-ink-muted">{r.allowed_hours.toFixed(1)}</td>
+                <td className="px-3 py-2 text-right tabular-nums font-semibold text-violet-700">+{r.floor_added.toFixed(1)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-heading">{r.actual_hours.toFixed(1)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function FloorPreviewPanel() {
+  const pq = useQuery({ queryKey: ["floor-preview"], queryFn: fetchFloorPreview, staleTime: 60_000 });
+  const data = pq.data;
+  if (!data?.min_daily_hours) return null;
+  return (
+    <Card className="mt-4 max-w-4xl">
+      <CardHeader
+        title="Today's floor impact"
+        description={`Stores whose sales-based allowed hours fall below the ${data.min_daily_hours}-hr floor as of ${data.date ?? "today"}.`}
+      />
+      <CardBody>
+        {pq.isLoading ? (
+          <Skeleton className="h-32 w-full" />
+        ) : pq.isError ? (
+          <p className="text-sm text-red-500">Couldn&apos;t load preview.</p>
+        ) : (
+          <>
+            <div className="flex gap-4 text-sm">
+              <div className="rounded-lg bg-violet-50 px-4 py-3 dark:bg-violet-950">
+                <div className="text-xl font-bold text-violet-700 dark:text-violet-300">{data.affected.length}</div>
+                <div className="text-xs text-violet-600 dark:text-violet-400">Floor active today</div>
+              </div>
+              <div className="rounded-lg bg-amber-50 px-4 py-3 dark:bg-amber-950">
+                <div className="text-xl font-bold text-amber-700 dark:text-amber-300">{data.near_floor.length}</div>
+                <div className="text-xs text-amber-600 dark:text-amber-400">Near floor (within 5 hrs)</div>
+              </div>
+            </div>
+            {!data.affected.length && !data.near_floor.length && (
+              <p className="mt-4 text-sm text-ink-muted">No stores are at or near the floor today.</p>
+            )}
+            <FloorPreviewTable rows={data.affected} label="Floor active — target raised today" />
+            <FloorPreviewTable rows={data.near_floor} label="Near floor — within 5 hrs of triggering" />
+          </>
+        )}
+      </CardBody>
+    </Card>
   );
 }
