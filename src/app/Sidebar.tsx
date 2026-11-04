@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthProvider";
 import { useCompanyAccess } from "@/modules/coo-map/useCompanyAccess";
 import { RollerGame } from "@/auth/RollerGame";
-import { groupedNav, visibleNav } from "@/app/nav";
+import { applyHiddenNav, groupedNav, visibleNav } from "@/app/nav";
 import { fetchResolvedFlags } from "@/lib/flags";
 import { useOverrides } from "@/lib/roleAccess";
 import { useRegionAccess, regionVisible } from "@/lib/regionAccess";
@@ -111,8 +111,13 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { overrides } = useOverrides();
   const { overrides: regionOverrides, myRegionIds } = useRegionAccess();
   const { multiCompany } = useCompanyAccess();
-  const navItems = visibleNav(effectiveRole, flagsQ.data?.flags, overrides).filter(
-    (item) => effectiveRole === "admin" || regionVisible(item.to, myRegionIds, regionOverrides),
+  const navItems = applyHiddenNav(
+    visibleNav(effectiveRole, flagsQ.data?.flags, overrides).filter(
+      (item) => effectiveRole === "admin" || regionVisible(item.to, myRegionIds, regionOverrides),
+    ),
+    // The user's own hidden modules — skipped during View As so the target's
+    // sidebar shows exactly as they'd see it.
+    viewAs ? null : profile?.hidden_nav,
   );
   // Cross-brand COO map — shown only to users granted more than one company.
   if (multiCompany && !navItems.some((n) => n.to === "/coo-map")) {
