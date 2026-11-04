@@ -59,6 +59,9 @@ export interface Profile {
   // to true. Only GMs get a UI toggle; everyone else is forced to true
   // in app code (DO/SDO/RVP/Payroll/Admin don't get to hide).
   show_birthday: boolean;
+  // Migration 0327 — NAV `to` paths this user hid from their own sidebar
+  // (COO Command Center → My Settings). Optional so older rows/types still fit.
+  hidden_nav?: string[] | null;
   shirt_size: string | null;
   // Migration 0201 — "mens" | "womens" | null.
   shirt_cut: string | null;
