@@ -6,12 +6,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { Search } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Segmented } from "@/shared/ui/Segmented";
 import { StatusPill } from "@/shared/ui/StatusPill";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
+import { Input } from "@/shared/ui/Input";
 import { useAuth } from "@/auth/AuthProvider";
 import { thisWeekRange } from "@/modules/my-stores/dateRange";
 import { listEmployeeActions } from "./api";
@@ -240,6 +242,7 @@ function HistoryList({
 }) {
   const [selected, setSelected] = useState<Selection>(null);
   const [range, setRange] = useState<HistoryRange>("week");
+  const [search, setSearch] = useState("");
   const query = useQuery({ queryKey: ["ea-list"], queryFn: listEmployeeActions });
 
   // Auto-open the deep-linked request once the list loads.
@@ -297,8 +300,13 @@ function HistoryList({
   const ptoMatches = (r: PtoRow, w: Window) =>
     overlaps(r.pto_start_date, r.pto_end_date, r.created_at, w);
   const win = rangeWindow(range);
-  const visibleTraining = trainingCredits.filter((r) => trainingMatches(r, win));
-  const visiblePto = ptoRequests.filter((r) => ptoMatches(r, win));
+  const q = search.trim().toLowerCase();
+  const visibleTraining = trainingCredits.filter(
+    (r) => trainingMatches(r, win) && (!q || r.employee_name.toLowerCase().includes(q)),
+  );
+  const visiblePto = ptoRequests.filter(
+    (r) => ptoMatches(r, win) && (!q || r.employee_name.toLowerCase().includes(q)),
+  );
   const total = visibleTraining.length + visiblePto.length;
 
   if (trainingCredits.length + ptoRequests.length === 0) {
@@ -314,8 +322,7 @@ function HistoryList({
 
   return (
     <div className="space-y-4">
-      {/* Time-window chips — mirrors the Segmented filter Approvals uses.
-          Defaults to "This week" so leadership sees the running week first. */}
+      {/* Time-window chips + employee name search */}
       <div className="flex flex-wrap items-center gap-2">
         <Segmented<HistoryRange>
           value={range}
@@ -327,13 +334,23 @@ function HistoryList({
             { value: "all",   label: "All",         count: counts.all },
           ]}
         />
+        <div className="relative ml-auto">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" strokeWidth={1.75} />
+          <Input
+            type="search"
+            placeholder="Search by name…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-52 pl-8 py-1.5 text-sm"
+          />
+        </div>
       </div>
 
       {total === 0 && (
         <Card>
           <EmptyState
-            title="No requests in this window"
-            description="Widen the range to see older requests."
+            title="No requests found"
+            description={q ? `No results for "${search}" in this window. Try a different name or widen the range.` : "Widen the range to see older requests."}
           />
         </Card>
       )}
