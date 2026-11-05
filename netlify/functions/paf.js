@@ -2250,7 +2250,7 @@ async function markProcessed(supa, user, body) {
 
   const { data: existing, error: fetchErr } = await supa
     .from("paf_submissions")
-    .select("id, status, employee_name, drive_in, submitter_email, resubmitted_by_email, estimated_cost")
+    .select("id, status, category, employee_name, drive_in, submitter_email, resubmitted_by_email, estimated_cost")
     .eq("id", id)
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
@@ -2296,7 +2296,45 @@ async function markProcessed(supa, user, body) {
     },
   });
 
-  return { ok: true };
+  // When a Termination PAF is processed, auto-cancel any upcoming PTO
+  // requests for that employee at that store so the location isn't left
+  // carrying a credit for PTO the terminated employee will never take.
+  let cancelledPto = 0;
+  if (existing.category === "Termination" && existing.drive_in && existing.employee_name) {
+    const today = new Date().toISOString().slice(0, 10);
+    const PTO_TERMINAL = new Set(["Completed", "Closed", "Withdrawn", "Rejected"]);
+    const { data: openPto } = await supa
+      .from("pto_requests")
+      .select("id, status, pto_start_date, pto_end_date")
+      .eq("store_number", String(existing.drive_in))
+      .ilike("employee_name", existing.employee_name)
+      .gte("pto_end_date", today);
+    const toCancel = (openPto || []).filter((r) => !PTO_TERMINAL.has(r.status));
+    for (const pto of toCancel) {
+      const { error: cancelErr } = await supa
+        .from("pto_requests")
+        .update({ status: "Withdrawn", withdrawn_reason: `Employee terminated — auto-cancelled when PAF processed (PAF ID: ${id})` })
+        .eq("id", pto.id);
+      if (!cancelErr) {
+        cancelledPto++;
+        try {
+          const { error: auditErr } = await supa.from("employee_action_audit_log").insert({
+            request_type: "pto",
+            request_id: pto.id,
+            actor_id: user.id,
+            actor_email: user.email,
+            action: "auto-cancel-termination",
+            detail: { from_status: pto.status, paf_id: id, employee_name: existing.employee_name },
+          });
+          if (auditErr) console.warn("[paf] pto auto-cancel audit failed", auditErr);
+        } catch (e) { console.warn("[paf] pto auto-cancel audit threw", e); }
+      } else {
+        console.warn("[paf] pto auto-cancel failed", cancelErr);
+      }
+    }
+  }
+
+  return { ok: true, cancelledPto };
 }
 
 // ----------------------------------------------------------------------------
