@@ -334,14 +334,14 @@ function HistoryList({
             { value: "all",   label: "All",         count: counts.all },
           ]}
         />
-        <div className="relative ml-auto">
+        <div className="relative ml-auto w-52 shrink-0">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" strokeWidth={1.75} />
           <Input
             type="search"
             placeholder="Search by name…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-52 pl-8 py-1.5 text-sm"
+            className="pl-8 py-1.5 text-sm"
           />
         </div>
       </div>
