@@ -622,6 +622,28 @@ export function fetchRankingRisk(): Promise<{
   return req(`${FN}?action=risk`);
 }
 
+// ── Labor drift check ─────────────────────────────────────────────────
+export interface LaborDriftRow {
+  store: string;
+  location: string | null;
+  labor_at_run: number | null;
+  labor_now: number | null;
+  delta: number | null;
+  changed: boolean;
+}
+export interface LaborDriftResult {
+  ok: true;
+  run: { id: string; week_ending: string; period: number; week: number; completed_at: string };
+  rows: LaborDriftRow[];
+  changed_count: number;
+  total: number;
+}
+export function fetchLaborDrift(runId?: string): Promise<LaborDriftResult> {
+  const p = new URLSearchParams({ action: "labor-drift" });
+  if (runId) p.set("run_id", runId);
+  return req(`${FN}?${p.toString()}`);
+}
+
 // ── Comms Board editable meta fields ────────────────────────────────────────
 export type CommMetaField =
   | "employee_of_month"

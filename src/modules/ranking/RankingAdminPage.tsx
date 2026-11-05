@@ -17,7 +17,7 @@ import { RankingEveningView } from "./RankingEveningView";
 import { RankingAwardsView } from "./RankingAwardsView";
 import { RankingP110ExportView } from "./RankingP110ExportView";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Copy, ExternalLink, Eye, EyeOff, HelpCircle, KeyRound, PauseCircle, Pencil, Plus, Save, Trash2, Users } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Copy, ExternalLink, Eye, EyeOff, HelpCircle, KeyRound, PauseCircle, Pencil, Plus, RefreshCw, Save, Trash2, Users } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -27,11 +27,11 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
 import {
-  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestOttRows, ingestPtdRankingRows, ingestShopRows, ingestTotzoneRows, ingestVogRows, setFcTargetEfficiency, setLaborPad,
+  addRankingConfig, backfillRankingFields, fetchLaborDrift, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestOttRows, ingestPtdRankingRows, ingestShopRows, ingestTotzoneRows, ingestVogRows, setFcTargetEfficiency, setLaborPad,
   fetchRankerCredentials, upsertRankerCredential, deleteRankerCredential,
   fetchRankerAccess, fetchRankerDelegations, grantRankerDelegation, revokeRankerDelegation,
   fetchRankingRuns,
-  type RankingConfigRow, type RankingStoreRow, type RankerCredential, type RankerDelegation, type RvpOption,
+  type LaborDriftRow, type LaborDriftResult, type RankingConfigRow, type RankingStoreRow, type RankerCredential, type RankerDelegation, type RvpOption,
 } from "./api";
 
 const inputCls =
@@ -592,6 +592,8 @@ function SettingsView({ delegatedOnly = false }: { delegatedOnly?: boolean }) {
             </p>
           </div>
         </div>
+
+        <LaborDriftPanel />
 
         <ConfigPanel rows={config} />
         <LaborPadPanel stores={stores} search={padSearch} onSearch={setPadSearch}
@@ -1452,6 +1454,124 @@ function BackfillPanel() {
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Labor drift check ─────────────────────────────────────────────────
+// Compares stored run-time credit-adjusted labor% against current labor_v2_daily
+// for the same week_ending date. Surfaces which stores had clockouts resolve
+// (or any other data change) after the run was computed.
+function LaborDriftPanel() {
+  const toast = useToast();
+  const [result, setResult] = useState<LaborDriftResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+
+  async function check() {
+    setLoading(true);
+    try {
+      const r = await fetchLaborDrift();
+      setResult(r);
+      if (r.changed_count === 0) toast.push("No labor changes detected since the run.", "success");
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : "Check failed.", "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const pct = (v: number | null) => v == null ? "—" : `${(v * 100).toFixed(2)}%`;
+  const deltaCls = (row: LaborDriftRow) => {
+    if (row.delta == null || Math.abs(row.delta) < 0.001) return "text-zinc-400";
+    return row.delta > 0 ? "text-red-600 font-semibold" : "text-green-600 font-semibold";
+  };
+  const deltaLabel = (d: number | null) => {
+    if (d == null) return "—";
+    const sign = d > 0 ? "+" : "";
+    return `${sign}${(d * 100).toFixed(2)}pp`;
+  };
+
+  const rows = result?.rows ?? [];
+  const changed = rows.filter((r) => r.changed);
+  const unchanged = rows.filter((r) => !r.changed);
+  const shown = showAll ? rows : [...changed, ...unchanged.slice(0, Math.max(0, 5 - changed.length))];
+
+  return (
+    <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 px-4 py-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-500" />
+            <div className="text-sm font-semibold text-midnight">Labor drift check</div>
+          </div>
+          <p className="text-xs text-zinc-500">
+            Compares each store's credit-adjusted labor% captured at run time against current data for the same week.
+            Detects if unresolved clockouts (or any data change) have shifted labor since the run.
+          </p>
+          {result && (
+            <p className="mt-1 text-xs text-zinc-500">
+              Run: P{result.run.period} W{result.run.week} · week ending {result.run.week_ending} ·
+              computed {new Date(result.run.completed_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} ·{" "}
+              <span className={result.changed_count > 0 ? "font-semibold text-red-600" : "font-semibold text-green-700"}>
+                {result.changed_count} of {result.total} store{result.total !== 1 ? "s" : ""} changed
+              </span>
+            </p>
+          )}
+        </div>
+        <Button size="sm" variant="secondary" onClick={check} disabled={loading}>
+          <RefreshCw className={cn("mr-1 h-3.5 w-3.5", loading && "animate-spin")} />
+          {loading ? "Checking…" : result ? "Re-check" : "Check now"}
+        </Button>
+      </div>
+
+      {result && (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-100 text-left text-[11px] uppercase tracking-wide text-zinc-400">
+                  <th className="px-4 py-2">Store</th>
+                  <th className="px-4 py-2">Location</th>
+                  <th className="px-4 py-2 text-right">At run</th>
+                  <th className="px-4 py-2 text-right">Now</th>
+                  <th className="px-4 py-2 text-right">Δ</th>
+                  <th className="px-4 py-2 text-center">Changed?</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-50">
+                {shown.map((row) => (
+                  <tr key={row.store} className={cn("hover:bg-zinc-50/60", row.changed && "bg-red-50/40")}>
+                    <td className="px-4 py-2 font-mono text-xs font-semibold text-midnight">#{row.store}</td>
+                    <td className="px-4 py-2 text-xs text-zinc-600">{row.location ?? "—"}</td>
+                    <td className="px-4 py-2 text-right font-mono text-xs text-zinc-600">{pct(row.labor_at_run)}</td>
+                    <td className="px-4 py-2 text-right font-mono text-xs text-zinc-600">{pct(row.labor_now)}</td>
+                    <td className={cn("px-4 py-2 text-right font-mono text-xs", deltaCls(row))}>{deltaLabel(row.delta)}</td>
+                    <td className="px-4 py-2 text-center">
+                      {row.changed
+                        ? <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">Yes</span>
+                        : <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700">No</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {rows.length > shown.length && (
+            <div className="border-t border-zinc-100 px-4 py-2">
+              <button onClick={() => setShowAll(true)}
+                className="text-xs text-accent hover:underline">
+                Show all {rows.length} stores ({unchanged.length} unchanged)
+              </button>
+            </div>
+          )}
+          {showAll && rows.length > 10 && (
+            <div className="border-t border-zinc-100 px-4 py-2">
+              <button onClick={() => setShowAll(false)} className="text-xs text-zinc-400 hover:underline">Collapse</button>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

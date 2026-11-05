@@ -15,6 +15,7 @@ import { backfillLaborWindow } from "./_lib/kpiBackfill.js";
 import { parseIxCsv } from "./_lib/ranking/ixParse.js";
 import { importLegacyWeeks, trendsData, unifiedWeeks, legacyWeekStores } from "./_lib/ranking/legacy.js";
 import { riskData } from "./_lib/ranking/risk.js";
+import { loadLaborCredits, applyCreditsToRows } from "./_lib/trainingCredit.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -753,6 +754,95 @@ async function ingestPtdRanking(supa, user, body) {
   return { period, stores: rows.length, leaders };
 }
 
+// Compare per-store labor% captured at run time against current labor_v2_daily
+// for the same week_ending date, re-applying the same credit pipeline.
+// Returns sorted by biggest absolute delta so changed stores bubble to the top.
+async function laborDrift(supa, params) {
+  // 1. Identify the target run (latest complete, or specific run_id).
+  let run;
+  if (params?.run_id) {
+    const { data, error } = await supa.from("ranking_runs")
+      .select("id, week_ending, period, week, completed_at")
+      .eq("id", params.run_id).eq("status", "complete").single();
+    if (error || !data) return { error: "Run not found or not complete.", status: 404 };
+    run = data;
+  } else {
+    const { data, error } = await supa.from("ranking_runs")
+      .select("id, week_ending, period, week, completed_at")
+      .eq("status", "complete")
+      .order("completed_at", { ascending: false }).limit(1);
+    if (error) return { error: error.message, status: 500 };
+    run = data?.[0];
+    if (!run) return { error: "No completed run found.", status: 404 };
+  }
+
+  // 2. Fetch PTD store rows from that run — entity_key IS the store number for tier=store.
+  const { data: runRows, error: rrErr } = await supa
+    .from("ranking_rows")
+    .select("entity_key, metrics")
+    .eq("run_id", run.id).eq("scope", "ptd").eq("tier", "store")
+    .limit(500);
+  if (rrErr) return { error: rrErr.message, status: 500 };
+  if (!runRows?.length) return { error: "No PTD store rows found for this run.", status: 404 };
+
+  // 3. Build run-time snapshot: store_number → { laborPct, location }.
+  const storedByStore = new Map();
+  for (const r of runRows) {
+    storedByStore.set(String(r.entity_key), {
+      laborPct: r.metrics?.laborPct ?? null,
+      location: r.metrics?.location ?? null,
+    });
+  }
+  const storeNumbers = [...storedByStore.keys()];
+
+  // 4. Fetch current labor_v2_daily for the same business_date = run.week_ending.
+  const { data: currentRows, error: curErr } = await supa
+    .from("labor_v2_daily")
+    .select("store_number, business_date, ptd_labor_pct, ptd_labor_cost, ptd_labor_hours, ptd_net_sales")
+    .eq("business_date", run.week_ending)
+    .in("store_number", storeNumbers);
+  if (curErr) return { error: curErr.message, status: 500 };
+
+  // 5. Re-apply the same credit pipeline to get credit-adjusted current labor%.
+  const creditMap = await loadLaborCredits(supa, storeNumbers);
+  applyCreditsToRows(currentRows || [], creditMap);
+
+  const currentByStore = new Map();
+  for (const r of currentRows || []) {
+    currentByStore.set(String(r.store_number), typeof r.ptd_labor_pct === "number" ? r.ptd_labor_pct : null);
+  }
+
+  // 6. Compare each store and sort by biggest absolute delta.
+  const rows = storeNumbers.map((sn) => {
+    const stored = storedByStore.get(sn);
+    const current = currentByStore.get(sn) ?? null;
+    const stored_pct = stored.laborPct;
+    const delta = stored_pct != null && current != null ? current - stored_pct : null;
+    return {
+      store: sn,
+      location: stored.location,
+      labor_at_run: stored_pct,
+      labor_now: current,
+      delta,
+      changed: delta != null && Math.abs(delta) >= 0.001,
+    };
+  });
+  rows.sort((a, b) => Math.abs(b.delta ?? 0) - Math.abs(a.delta ?? 0));
+
+  return {
+    run: {
+      id: run.id,
+      week_ending: run.week_ending,
+      period: run.period,
+      week: run.week,
+      completed_at: run.completed_at,
+    },
+    rows,
+    changed_count: rows.filter((r) => r.changed).length,
+    total: rows.length,
+  };
+}
+
 export const handler = async (event) => {
   let supa;
   try { supa = admin(); } catch (e) { return respond(500, { error: e.message }); }
@@ -817,6 +907,11 @@ export const handler = async (event) => {
     if (action === "overview") {
       if (role !== "admin") return respond(403, { error: "System settings are admin-only." });
       return unwrap(await overview(supa));
+    }
+    // Labor drift check — compares stored run labor% against current data, admin only.
+    if (action === "labor-drift") {
+      if (role !== "admin") return respond(403, { error: "Admins only." });
+      return unwrap(await laborDrift(supa, params));
     }
     // Scope every board/analytics read to what the caller manages (null = the
     // org-wide roles payroll/admin/vp/coo, who see the whole company).
