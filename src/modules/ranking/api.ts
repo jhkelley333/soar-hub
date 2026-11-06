@@ -253,9 +253,12 @@ export interface SevenUpResponse {
   tier?: "store" | "do";
   source?: "official" | "run";
   rows: SevenUpRow[];
+  available_periods?: number[];
 }
-export function fetchSevenUp(scope: RankScope, limit = 7, tier: "store" | "do" = "store"): Promise<SevenUpResponse> {
-  return req(`${FN}?action=sevenup&scope=${scope}&limit=${limit}&tier=${tier}`);
+export function fetchSevenUp(scope: RankScope, limit = 7, tier: "store" | "do" = "store", period?: number): Promise<SevenUpResponse> {
+  const p = new URLSearchParams({ action: "sevenup", scope, limit: String(limit), tier });
+  if (period != null) p.set("period", String(period));
+  return req(`${FN}?${p.toString()}`);
 }
 
 // Evening-daypart sales growth vs last year (period-to-date), top stores.
@@ -267,9 +270,12 @@ export interface EveningResponse {
   daypart: string;
   source?: string;
   rows: SevenUpRow[];
+  available_periods?: number[];
 }
-export function fetchEveningGrowth(limit = 10): Promise<EveningResponse> {
-  return req(`${FN}?action=evening-growth&limit=${limit}`);
+export function fetchEveningGrowth(limit = 10, period?: number): Promise<EveningResponse> {
+  const p = new URLSearchParams({ action: "evening-growth", limit: String(limit) });
+  if (period != null) p.set("period", String(period));
+  return req(`${FN}?${p.toString()}`);
 }
 
 // "Movers & Shakers" — biggest climbers in period rank vs the prior period.
@@ -291,9 +297,12 @@ export interface PeriodMoversResponse {
   tier?: MoverTier;
   source?: "official" | "run";
   rows: PeriodMoverRow[];
+  available_periods?: number[];
 }
-export function fetchPeriodMovers(limit = 11, tier: MoverTier = "store"): Promise<PeriodMoversResponse> {
-  return req(`${FN}?action=period-movers&limit=${limit}&tier=${tier}`);
+export function fetchPeriodMovers(limit = 11, tier: MoverTier = "store", period?: number): Promise<PeriodMoversResponse> {
+  const p = new URLSearchParams({ action: "period-movers", limit: String(limit), tier });
+  if (period != null) p.set("period", String(period));
+  return req(`${FN}?${p.toString()}`);
 }
 
 // "Top Performers" — leaderboard (by rank) for the newest period: top stores + top DOs.
@@ -317,9 +326,12 @@ export interface TopPerformersResponse {
   source?: "official" | "run" | null;
   stores: TopStoreRow[];
   dos: TopDoRow[];
+  available_periods?: number[];
 }
-export function fetchTopPerformers(storeLimit = 20, doLimit = 10): Promise<TopPerformersResponse> {
-  return req(`${FN}?action=top-performers&store_limit=${storeLimit}&do_limit=${doLimit}`);
+export function fetchTopPerformers(storeLimit = 20, doLimit = 10, period?: number): Promise<TopPerformersResponse> {
+  const p = new URLSearchParams({ action: "top-performers", store_limit: String(storeLimit), do_limit: String(doLimit) });
+  if (period != null) p.set("period", String(period));
+  return req(`${FN}?${p.toString()}`);
 }
 
 // Official "SOAR PTD RANKING" sheet upload — archives the store tier's exact

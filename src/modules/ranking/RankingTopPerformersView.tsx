@@ -30,12 +30,14 @@ const doCols: SlideCol<TopDoRow>[] = [
 
 export function RankingTopPerformersView() {
   const [storeN, setStoreN] = useState(15);
+  const [period, setPeriod] = useState<number | null>(null);
   const [present, setPresent] = useState(false);
   const q = useQuery({
-    queryKey: ["ranking-top", storeN],
-    queryFn: () => fetchTopPerformers(storeN, 10),
+    queryKey: ["ranking-top", storeN, period],
+    queryFn: () => fetchTopPerformers(storeN, 10, period ?? undefined),
     staleTime: 5 * 60_000,
   });
+  const availPeriods: number[] = q.data?.available_periods ?? [];
   const stores: TopStoreRow[] = q.data?.stores ?? [];
   const dos: TopDoRow[] = q.data?.dos ?? [];
   const period = q.data?.period ?? null;
@@ -69,6 +71,16 @@ export function RankingTopPerformersView() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {availPeriods.length > 1 && (
+            <select
+              value={period ?? ""}
+              onChange={(e) => setPeriod(e.target.value ? Number(e.target.value) : null)}
+              className="rounded-lg bg-white/15 px-2.5 py-2 text-sm font-semibold text-white ring-1 ring-white/30 focus:outline-none"
+            >
+              <option value="">Latest</option>
+              {availPeriods.map((p) => <option key={p} value={p}>P{p}</option>)}
+            </select>
+          )}
           <Segmented<string>
             dense value={String(storeN)} onChange={(v) => setStoreN(Number(v))}
             options={[{ value: "10", label: "Top 10" }, { value: "15", label: "15" }, { value: "25", label: "25" }]}

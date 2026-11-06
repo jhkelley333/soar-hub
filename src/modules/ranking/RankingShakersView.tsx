@@ -14,17 +14,19 @@ const deltaCell = (r: PeriodMoverRow) => (r.delta == null ? "—" : `+${r.delta}
 
 export function RankingShakersView() {
   const [limit, setLimit] = useState(11);
+  const [period, setPeriod] = useState<number | null>(null);
   const [present, setPresent] = useState(false);
   const storeQ = useQuery({
-    queryKey: ["ranking-shakers", "store", limit],
-    queryFn: () => fetchPeriodMovers(limit, "store"),
+    queryKey: ["ranking-shakers", "store", limit, period],
+    queryFn: () => fetchPeriodMovers(limit, "store", period ?? undefined),
     staleTime: 5 * 60_000,
   });
   const doQ = useQuery({
-    queryKey: ["ranking-shakers", "do", limit],
-    queryFn: () => fetchPeriodMovers(limit, "do"),
+    queryKey: ["ranking-shakers", "do", limit, period],
+    queryFn: () => fetchPeriodMovers(limit, "do", period ?? undefined),
     staleTime: 5 * 60_000,
   });
+  const availPeriods: number[] = storeQ.data?.available_periods ?? doQ.data?.available_periods ?? [];
 
   const storeRows: PeriodMoverRow[] = storeQ.data?.rows ?? [];
   const doRows: PeriodMoverRow[] = doQ.data?.rows ?? [];
@@ -81,6 +83,16 @@ export function RankingShakersView() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {availPeriods.length > 1 && (
+            <select
+              value={period ?? ""}
+              onChange={(e) => setPeriod(e.target.value ? Number(e.target.value) : null)}
+              className="rounded-lg bg-white/15 px-2.5 py-2 text-sm font-semibold text-white ring-1 ring-white/30 focus:outline-none"
+            >
+              <option value="">Latest</option>
+              {availPeriods.map((p) => <option key={p} value={p}>P{p}</option>)}
+            </select>
+          )}
           <Segmented<string>
             dense value={String(limit)} onChange={(v) => setLimit(Number(v))}
             options={[{ value: "11", label: "Top 11" }, { value: "25", label: "25" }, { value: "50", label: "All" }]}
