@@ -72,6 +72,7 @@ const GROUPS: Group[] = [
   {
     title: "Beta Test",
     tools: [
+      { title: "Ask Tot", desc: "AI assistant — ask about stores, ranking, promos and more in plain language.", icon: Sparkles, roles: ["admin", "coo", "vp", "rvp"], to: "/admin/ask-tot" },
       { title: "KPI Dashboard", desc: "Execution KPI dashboard (in beta).", icon: BarChart3, roles: ["admin"], to: "/admin/kpi" },
       { title: "Metrics Board", desc: "Execution metrics board (in beta).", icon: LayoutGrid, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"], to: "/admin/metrics-board" },
       { title: "Store Visit", desc: "Mobile-first store walk + Top-3 gaps (in beta).", icon: ClipboardCheck, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"], to: "/visit" },

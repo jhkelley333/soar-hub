@@ -21,6 +21,7 @@ import { OpsToolsPage } from "@/modules/ops-tools/OpsToolsPage";
 import { ChangeoverListPage } from "@/modules/changeover/ChangeoverListPage";
 import { ChangeoverDetailPage } from "@/modules/changeover/ChangeoverDetailPage";
 import { SystemSettingsPage } from "@/modules/system-settings/SystemSettingsPage";
+import { AskTotPage } from "@/modules/system-settings/AskTotPage";
 import { QrCodesPage } from "@/modules/qr-codes/QrCodesPage";
 import { NsoPlannerPage } from "@/modules/nso/NsoPlannerPage";
 import { SiteAuditPage } from "@/modules/site-audit/SiteAuditPage";
@@ -273,6 +274,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin", "payroll", "accounting", "rvp", "vp", "coo"]}>
             <DataHealthPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/ask-tot",
+        element: (
+          <ProtectedRoute requireRoles={["admin", "coo", "vp", "rvp"]}>
+            <AskTotPage />
           </ProtectedRoute>
         ),
       },

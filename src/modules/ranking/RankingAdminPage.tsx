@@ -16,7 +16,6 @@ import { RankingTopPerformersView } from "./RankingTopPerformersView";
 import { RankingEveningView } from "./RankingEveningView";
 import { RankingAwardsView } from "./RankingAwardsView";
 import { RankingP110ExportView } from "./RankingP110ExportView";
-import { RankingAskTotView } from "./RankingAskTotView";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ChevronDown, ChevronRight, Copy, ExternalLink, Eye, EyeOff, HelpCircle, KeyRound, PauseCircle, Pencil, Plus, RefreshCw, Save, Trash2, Users } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -541,22 +540,19 @@ function SettingsView({ delegatedOnly = false }: { delegatedOnly?: boolean }) {
 
   return (
     <>
+      {q.isLoading ? (
+        <Skeleton className="h-64 w-full" />
+      ) : q.isError ? (
+        <EmptyState title="Couldn't load settings" description={(q.error as Error)?.message ?? "Try again."} />
+      ) : (
+        <>
+          <div className="mb-4 flex justify-end">
+            <Button size="sm" onClick={() => setAddOpen(true)}>
+              <Plus className="mr-1 h-3.5 w-3.5" /> Add config change
+            </Button>
+          </div>
+
       <div className="space-y-6">
-        {/* Ask Tot always renders for admins — independent of the overview query */}
-        <RankingAskTotView />
-
-        {q.isLoading ? (
-          <Skeleton className="h-64 w-full" />
-        ) : q.isError ? (
-          <EmptyState title="Couldn't load settings" description={(q.error as Error)?.message ?? "Try again."} />
-        ) : (
-          <>
-            <div className="flex justify-end">
-              <Button size="sm" onClick={() => setAddOpen(true)}>
-                <Plus className="mr-1 h-3.5 w-3.5" /> Add config change
-              </Button>
-            </div>
-
         {/* Avg wage note — no longer a setting */}
         <div className="rounded-xl bg-white p-4 text-xs text-zinc-500 ring-1 ring-zinc-200">
           <b className="text-midnight">Average wage</b> is no longer a setting — each run computes the live company
@@ -604,9 +600,9 @@ function SettingsView({ delegatedOnly = false }: { delegatedOnly?: boolean }) {
         <ConfigPanel rows={config} />
         <LaborPadPanel stores={stores} search={padSearch} onSearch={setPadSearch}
           onSaved={() => qc.invalidateQueries({ queryKey: ["ranking-admin"] })} />
-          </>
-        )}
       </div>
+        </>
+      )}
 
       <AddConfigModal open={addOpen} onClose={() => setAddOpen(false)} existingKeys={[...new Set(config.map((c) => c.key))]}
         onSaved={() => { setAddOpen(false); qc.invalidateQueries({ queryKey: ["ranking-admin"] }); toast.push("Config change added.", "success"); }} />
