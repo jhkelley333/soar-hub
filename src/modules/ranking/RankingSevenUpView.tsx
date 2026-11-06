@@ -48,10 +48,12 @@ export function RankingSevenUpView() {
     queryFn: () => fetchSevenUp("ptd", limit, "do", period ?? undefined),
     staleTime: 5 * 60_000,
   });
-  const availPeriods: number[] = q.data?.available_periods ?? doQ.data?.available_periods ?? [];
   const rows: SevenUpRow[] = q.data?.rows ?? [];
   const doRows: SevenUpRow[] = doQ.data?.rows ?? [];
   const run = q.data?.run ?? null;
+  const curPeriodNum: number | null = run?.period ?? null;
+  const rawPeriods = q.data?.available_periods ?? doQ.data?.available_periods ?? [];
+  const availPeriods: number[] = rawPeriods.length ? rawPeriods : curPeriodNum ? [curPeriodNum] : [];
   const official = q.data?.source === "official";
   const pLabel = run ? `P${run.period}${scope === "wtd" && run.week ? ` W${run.week}` : ""}` : "";
   const slideRows: SevenUpSlideRow[] = rows.map((r, i) => ({ ...r, pos: i + 1 }));
@@ -87,7 +89,7 @@ export function RankingSevenUpView() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {availPeriods.length > 1 && (
+          {availPeriods.length > 0 && (
             <select
               value={period ?? ""}
               onChange={(e) => setPeriod(e.target.value ? Number(e.target.value) : null)}
