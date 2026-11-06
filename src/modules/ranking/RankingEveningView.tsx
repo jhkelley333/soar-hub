@@ -66,8 +66,8 @@ export function RankingEveningView() {
               onChange={(e) => setSelPeriod(e.target.value ? Number(e.target.value) : null)}
               className="rounded-lg bg-white/15 px-2.5 py-2 text-sm font-semibold text-white ring-1 ring-white/30 focus:outline-none"
             >
-              <option value="">Latest</option>
-              {availPeriods.map((p) => <option key={p} value={p}>P{p}</option>)}
+              <option value="" style={{ background: "#1e293b", color: "#fff" }}>Latest</option>
+              {availPeriods.map((p) => <option key={p} value={p} style={{ background: "#1e293b", color: "#fff" }}>P{p}</option>)}
             </select>
           )}
           <Segmented<string>
