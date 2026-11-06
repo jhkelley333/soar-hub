@@ -369,7 +369,7 @@ function DelegationPanel() {
   );
 }
 
-type AdminView = "ranking" | "top" | "sevenup" | "evening" | "shakers" | "drill" | "watchlist" | "comms" | "awards" | "export" | "asktot" | "settings";
+type AdminView = "ranking" | "top" | "sevenup" | "evening" | "shakers" | "drill" | "watchlist" | "comms" | "awards" | "export" | "settings";
 
 export function RankingAdminPage() {
   const { profile } = useAuth();
@@ -462,7 +462,6 @@ export function RankingAdminPage() {
     { value: "watchlist", label: "Watchlist" },
     ...(isAdmin ? [{ value: "awards" as AdminView, label: "Awards" }] : []),
     ...(isAdmin ? [{ value: "export" as AdminView, label: "Export" }] : []),
-    { value: "asktot" as AdminView, label: "Ask Tot β" },
     ...(canSettings ? [{ value: "settings" as AdminView, label: isAdmin ? "System settings" : "Ranker uploads" }] : []),
   ];
   const active = view === "settings" && !canSettings ? "ranking" : view;
@@ -503,7 +502,6 @@ export function RankingAdminPage() {
         : active === "comms" ? <RankingCommsBoardView />
         : active === "awards" ? <RankingAwardsView />
         : active === "export" ? <RankingP110ExportView />
-        : active === "asktot" ? <RankingAskTotView />
         : <SettingsView delegatedOnly={delegated && !isAdmin} />}
     </>
   );
@@ -554,6 +552,8 @@ function SettingsView({ delegatedOnly = false }: { delegatedOnly?: boolean }) {
       </div>
 
       <div className="space-y-6">
+        <RankingAskTotView />
+
         {/* Avg wage note — no longer a setting */}
         <div className="rounded-xl bg-white p-4 text-xs text-zinc-500 ring-1 ring-zinc-200">
           <b className="text-midnight">Average wage</b> is no longer a setting — each run computes the live company
