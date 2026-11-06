@@ -2,8 +2,7 @@
 // Variant A styling: navy sidebar (#16365A), primary blue (#0B7BD6), bg #EEF3F8.
 // Only shown to admin, coo, vp, rvp roles.
 import { useEffect, useRef, useState } from "react";
-import { Bot, Send, AlertCircle, RefreshCw, MessageSquare, Sparkles } from "lucide-react";
-import { cn } from "@/lib/cn";
+import { Send, AlertCircle, RefreshCw, Sparkles } from "lucide-react";
 import { askTot } from "./api";
 
 type Msg = {
@@ -58,7 +57,7 @@ export function RankingAskTotView() {
     const history = messages
       .filter((m) => !m.error)
       .slice(-6)
-      .map((m) => ({ role: m.from === "user" ? "user" : "assistant", content: m.text }));
+      .map((m) => ({ role: (m.from === "user" ? "user" : "assistant") as "user" | "assistant", content: m.text }));
 
     try {
       const res = await askTot(q, history);
