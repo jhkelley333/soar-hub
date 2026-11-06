@@ -93,7 +93,23 @@ export function RankingAskTotView() {
   const isEmpty = messages.length === 0;
 
   return (
-    <div className="flex h-[calc(100vh-180px)] min-h-[500px] overflow-hidden rounded-2xl ring-1 ring-zinc-200 shadow-sm">
+    <div className="overflow-hidden rounded-2xl ring-1 ring-zinc-200 shadow-sm">
+      {/* Section header — always visible, identifies Ask Tot in System Settings */}
+      <div
+        className="flex items-center gap-3 px-4 py-3"
+        style={{ background: "#16365A" }}
+      >
+        <TotMark size={34} />
+        <div>
+          <div className="text-[15px] font-bold leading-tight text-white">Ask Tot</div>
+          <div className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: "#BFD6EE" }}>
+            SOAR Hub AI Assistant · Beta
+          </div>
+        </div>
+      </div>
+
+      {/* Chat shell */}
+      <div className="flex" style={{ height: "calc(100vh - 260px)", minHeight: "460px" }}>
       {/* Sidebar */}
       <div
         className="hidden w-[220px] shrink-0 flex-col gap-4 p-4 md:flex"
@@ -246,6 +262,7 @@ export function RankingAskTotView() {
           </div>
         </div>
       </div>
+      </div>{/* end chat shell */}
     </div>
   );
 }
