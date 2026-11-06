@@ -983,9 +983,10 @@ export async function sevenUpSales(supa, params, storeNums = null) {
   // DO leaderboard — DOs most up in sales vs LY for the newest period (official
   // sheet else the live run). Period-based; scope toggle doesn't apply.
   if (tier === "do") {
-    const periods = await availablePeriods(supa);
-    if (!periods.length) return { run: null, scope, tier, rows: [] };
-    const period = periods[0];
+    const allPeriods = await availablePeriods(supa);
+    if (!allPeriods.length) return { run: null, scope, tier, rows: [], available_periods: [] };
+    const reqPeriodDo = parseInt(params.period, 10) || null;
+    const period = (reqPeriodDo && allPeriods.includes(reqPeriodDo)) ? reqPeriodDo : allPeriods[0];
     const [board, vis] = await Promise.all([periodBoardLeaders(supa, period, "do"), visibleLeaderNames(supa, storeNums)]);
     const allow = vis ? new Set([...vis.dos].map(leaderKey)) : null;
     const out = board.rows
@@ -1003,15 +1004,16 @@ export async function sevenUpSales(supa, params, storeNums = null) {
       .filter((r) => (!allow || allow.has(r.store_number)) && r.pct_vs_ly != null)
       .sort((a, b) => b.pct_vs_ly - a.pct_vs_ly)
       .slice(0, limit);
-    return { run: { period, week: null, week_ending: null }, scope, tier, source: board.source, rows: out };
+    return { run: { period, week: null, week_ending: null }, scope, tier, source: board.source, rows: out, available_periods: allPeriods };
   }
 
   // Period (PTD) view: use the newest available period across both sources -
   // the official sheet for a closed period, the live run for the active one.
   if (scope === "ptd" && !params.run_id) {
-    const periods = await availablePeriods(supa);
-    if (periods.length) {
-      const period = periods[0];
+    const allPeriods = await availablePeriods(supa);
+    if (allPeriods.length) {
+      const reqPeriod = parseInt(params.period, 10) || null;
+      const period = (reqPeriod && allPeriods.includes(reqPeriod)) ? reqPeriod : allPeriods[0];
       const [board, names] = await Promise.all([periodBoard(supa, period), runStoreNameMap(supa)]);
       const allow = allowSet(storeNums);
       const out = board.rows
@@ -1031,8 +1033,8 @@ export async function sevenUpSales(supa, params, storeNums = null) {
         .filter((r) => (!allow || allow.has(r.store_number)) && r.pct_vs_ly != null)
         .sort((a, b) => b.pct_vs_ly - a.pct_vs_ly)
         .slice(0, limit);
-      if (out.length) {
-        return { run: { period, week: null, week_ending: null }, scope, source: board.source, rows: out };
+      if (out.length || reqPeriod) {
+        return { run: { period, week: null, week_ending: null }, scope, source: board.source, rows: out, available_periods: allPeriods };
       }
     }
   }
@@ -1158,8 +1160,36 @@ export async function eveningGrowth(supa, params, storeNums = null) {
   const DP = "evening";
   const limit = Math.max(1, Math.min(50, parseInt(params.limit, 10) || 10));
 
+  const allPeriods = await availablePeriods(supa);
+  const reqPeriodEg = parseInt(params.period, 10) || null;
   let anchor = null;
-  try { anchor = await periodEndSnapshot(supa); } catch { anchor = null; }
+  if (reqPeriodEg && allPeriods.includes(reqPeriodEg)) {
+    const { data: runs } = await supa.from("ranking_runs")
+      .select("week_ending").eq("period", reqPeriodEg).eq("status", "complete")
+      .order("week_ending", { ascending: false }).limit(1);
+    const we = runs?.[0]?.week_ending;
+    if (we) {
+      const fi = fiscalForDate(we);
+      if (fi) {
+        const periodEnd = fi.isPeriodEnd ? we : isoAddDaysUTC(fi.periodStart, -1);
+        const prd = fiscalForDate(periodEnd)?.period ?? null;
+        for (const offset of [1, 2, 0]) {
+          const cd = isoAddDaysUTC(periodEnd, offset);
+          const { data: snaps } = await supa.from("kpi_snapshots")
+            .select("central_date, central_hour, payload")
+            .eq("central_date", cd).order("central_hour", { ascending: false }).limit(4);
+          for (const s of snaps || []) {
+            const wc = { year: +cd.slice(0,4), month: +cd.slice(5,7), day: +cd.slice(8,10), hour: s.central_hour };
+            if (feedBusinessDate(s.payload, wc) === periodEnd) { anchor = { snap: s, periodEnd, period: prd }; break; }
+          }
+          if (anchor) break;
+        }
+        if (!anchor) anchor = { snap: null, periodEnd, period: prd };
+      }
+    }
+  } else {
+    try { anchor = await periodEndSnapshot(supa); } catch { anchor = null; }
+  }
   let snap = anchor?.snap ?? null;
   let asOf = anchor?.periodEnd ?? null;
   const period = anchor?.period ?? null;
@@ -1212,7 +1242,7 @@ export async function eveningGrowth(supa, params, storeNums = null) {
     });
   }
   out.sort((a, b) => b.pct_vs_ly - a.pct_vs_ly);
-  return { as_of: asOf, period, anchored, daypart: "Evening", source: "kpi", rows: out.slice(0, limit) };
+  return { as_of: asOf, period, anchored, daypart: "Evening", source: "kpi", rows: out.slice(0, limit), available_periods: allPeriods };
 }
 
 // "Movers & Shakers" — the stores that climbed the most in PERIOD rank from the
@@ -1226,9 +1256,13 @@ export async function periodMovers(supa, params, storeNums = null) {
 
   // Leader tiers (DO / SDO / RVP) — climbers in leader rank across the cutover.
   if (tier !== "store") {
-    const periods = await availablePeriods(supa);
-    if (periods.length >= 2) {
-      const [curPeriod, prevPeriod] = periods;
+    const allPeriods = await availablePeriods(supa);
+    if (allPeriods.length >= 2) {
+      const reqPeriodDo = parseInt(params.period, 10) || null;
+      const curIdxDo = (reqPeriodDo && allPeriods.includes(reqPeriodDo)) ? allPeriods.indexOf(reqPeriodDo) : 0;
+      const curPeriod = allPeriods[curIdxDo];
+      const prevPeriod = allPeriods[curIdxDo + 1];
+      if (!prevPeriod) return { current: { period: curPeriod, week: null, week_ending: null }, previous: null, tier, source: "run", rows: [], available_periods: allPeriods };
       const [cur, prev, vis] = await Promise.all([
         periodBoardLeaders(supa, curPeriod, tier),
         periodBoardLeaders(supa, prevPeriod, tier),
@@ -1261,16 +1295,20 @@ export async function periodMovers(supa, params, storeNums = null) {
         return {
           current: { period: curPeriod, week: null, week_ending: null },
           previous: { period: prevPeriod },
-          tier, source, rows: out,
+          tier, source, rows: out, available_periods: allPeriods,
         };
       }
     }
-    return { current: null, previous: null, tier, source: "run", rows: [] };
+    return { current: null, previous: null, tier, source: "run", rows: [], available_periods: allPeriods };
   }
 
-  const periods = await availablePeriods(supa);
-  if (periods.length >= 2) {
-    const [curPeriod, prevPeriod] = periods;
+  const allPeriods = await availablePeriods(supa);
+  if (allPeriods.length >= 2) {
+    const reqPeriod = parseInt(params.period, 10) || null;
+    const curIdx = (reqPeriod && allPeriods.includes(reqPeriod)) ? allPeriods.indexOf(reqPeriod) : 0;
+    const curPeriod = allPeriods[curIdx];
+    const prevPeriod = allPeriods[curIdx + 1];
+    if (!prevPeriod) return { current: { period: curPeriod, week: null, week_ending: null }, previous: null, source: "run", rows: [], available_periods: allPeriods };
     const [cur, prev, names] = await Promise.all([
       periodBoard(supa, curPeriod), periodBoard(supa, prevPeriod), runStoreNameMap(supa),
     ]);
@@ -1302,10 +1340,11 @@ export async function periodMovers(supa, params, storeNums = null) {
         previous: { period: prevPeriod },
         source,
         rows: out,
+        available_periods: allPeriods,
       };
     }
   }
-  return { current: null, previous: null, source: "run", rows: [] };
+  return { current: null, previous: null, source: "run", rows: [], available_periods: allPeriods };
 }
 
 // "Top Performers" — the leaderboard (not movers) for the newest available
@@ -1316,9 +1355,10 @@ export async function topPerformers(supa, params, storeNums = null) {
   const storeLimit = clamp(params.store_limit, 20);
   const doLimit = clamp(params.do_limit, 10);
 
-  const periods = await availablePeriods(supa);
-  if (!periods.length) return { period: null, source: null, stores: [], dos: [] };
-  const period = periods[0];
+  const allPeriods = await availablePeriods(supa);
+  if (!allPeriods.length) return { period: null, source: null, stores: [], dos: [], available_periods: [] };
+  const reqPeriodTp = parseInt(params.period, 10) || null;
+  const period = (reqPeriodTp && allPeriods.includes(reqPeriodTp)) ? reqPeriodTp : allPeriods[0];
   const [sboard, dboard, names, vis] = await Promise.all([
     periodBoard(supa, period),
     periodBoardLeaders(supa, period, "do"),
@@ -1351,7 +1391,7 @@ export async function topPerformers(supa, params, storeNums = null) {
     .slice(0, doLimit);
 
   const source = sboard.source || dboard.source || "run";
-  return { period, source, stores, dos };
+  return { period, source, stores, dos, available_periods: allPeriods };
 }
 
 // One run's ENTIRE board — every scope and tier, in a single response — for

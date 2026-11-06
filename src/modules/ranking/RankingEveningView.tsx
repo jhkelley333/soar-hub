@@ -29,10 +29,11 @@ const eveningCols: SlideCol<EveningSlideRow>[] = [
 
 export function RankingEveningView() {
   const [limit, setLimit] = useState(10);
+  const [selPeriod, setSelPeriod] = useState<number | null>(null);
   const [present, setPresent] = useState(false);
   const q = useQuery({
-    queryKey: ["ranking-evening", limit],
-    queryFn: () => fetchEveningGrowth(limit),
+    queryKey: ["ranking-evening", limit, selPeriod],
+    queryFn: () => fetchEveningGrowth(limit, selPeriod ?? undefined),
     staleTime: 5 * 60_000,
   });
   const rows: SevenUpRow[] = q.data?.rows ?? [];
@@ -40,6 +41,7 @@ export function RankingEveningView() {
   const period = q.data?.period ?? null;
   const anchored = q.data?.anchored ?? false;
   const pLabel = period ? `P${period}` : "";
+  const availPeriods: number[] = q.data?.available_periods ?? [];
   const slideRows: EveningSlideRow[] = rows.map((r, i) => ({ ...r, pos: i + 1 }));
 
   return (
@@ -58,6 +60,16 @@ export function RankingEveningView() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {availPeriods.length > 1 && (
+            <select
+              value={selPeriod ?? ""}
+              onChange={(e) => setSelPeriod(e.target.value ? Number(e.target.value) : null)}
+              className="rounded-lg bg-white/15 px-2.5 py-2 text-sm font-semibold text-white ring-1 ring-white/30 focus:outline-none"
+            >
+              <option value="">Latest</option>
+              {availPeriods.map((p) => <option key={p} value={p}>P{p}</option>)}
+            </select>
+          )}
           <Segmented<string>
             dense value={String(limit)} onChange={(v) => setLimit(Number(v))}
             options={[{ value: "10", label: "Top 10" }, { value: "25", label: "25" }, { value: "50", label: "All" }]}

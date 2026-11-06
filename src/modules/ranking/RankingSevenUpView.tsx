@@ -35,18 +35,20 @@ const fmtDate = (s: string | null | undefined) =>
 export function RankingSevenUpView() {
   const [scope, setScope] = useState<RankScope>("ptd");
   const [limit, setLimit] = useState(7);
+  const [period, setPeriod] = useState<number | null>(null);
   const [present, setPresent] = useState(false);
   const q = useQuery({
-    queryKey: ["ranking-sevenup", scope, limit],
-    queryFn: () => fetchSevenUp(scope, limit),
+    queryKey: ["ranking-sevenup", scope, limit, period],
+    queryFn: () => fetchSevenUp(scope, limit, "store", period ?? undefined),
     staleTime: 5 * 60_000,
   });
   // DO leaderboard — always period-based (the sheet's DO tier is PTD only).
   const doQ = useQuery({
-    queryKey: ["ranking-sevenup-do", limit],
-    queryFn: () => fetchSevenUp("ptd", limit, "do"),
+    queryKey: ["ranking-sevenup-do", limit, period],
+    queryFn: () => fetchSevenUp("ptd", limit, "do", period ?? undefined),
     staleTime: 5 * 60_000,
   });
+  const availPeriods: number[] = q.data?.available_periods ?? doQ.data?.available_periods ?? [];
   const rows: SevenUpRow[] = q.data?.rows ?? [];
   const doRows: SevenUpRow[] = doQ.data?.rows ?? [];
   const run = q.data?.run ?? null;
@@ -85,6 +87,16 @@ export function RankingSevenUpView() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {availPeriods.length > 1 && (
+            <select
+              value={period ?? ""}
+              onChange={(e) => setPeriod(e.target.value ? Number(e.target.value) : null)}
+              className="rounded-lg bg-white/15 px-2.5 py-2 text-sm font-semibold text-white ring-1 ring-white/30 focus:outline-none"
+            >
+              <option value="">Latest</option>
+              {availPeriods.map((p) => <option key={p} value={p}>P{p}</option>)}
+            </select>
+          )}
           <Segmented<RankScope>
             dense value={scope} onChange={setScope}
             options={[{ value: "ptd", label: "Period" }, { value: "wtd", label: "Week" }]}
