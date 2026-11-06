@@ -41,7 +41,8 @@ export function RankingEveningView() {
   const period = q.data?.period ?? null;
   const anchored = q.data?.anchored ?? false;
   const pLabel = period ? `P${period}` : "";
-  const availPeriods: number[] = q.data?.available_periods ?? [];
+  const rawPeriods = q.data?.available_periods ?? [];
+  const availPeriods: number[] = rawPeriods.length ? rawPeriods : period ? [period] : [];
   const slideRows: EveningSlideRow[] = rows.map((r, i) => ({ ...r, pos: i + 1 }));
 
   return (
@@ -60,7 +61,7 @@ export function RankingEveningView() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {availPeriods.length > 1 && (
+          {availPeriods.length > 0 && (
             <select
               value={selPeriod ?? ""}
               onChange={(e) => setSelPeriod(e.target.value ? Number(e.target.value) : null)}

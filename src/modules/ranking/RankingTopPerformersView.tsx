@@ -30,19 +30,21 @@ const doCols: SlideCol<TopDoRow>[] = [
 
 export function RankingTopPerformersView() {
   const [storeN, setStoreN] = useState(15);
-  const [period, setPeriod] = useState<number | null>(null);
+  const [selPeriod, setSelPeriod] = useState<number | null>(null);
   const [present, setPresent] = useState(false);
   const q = useQuery({
-    queryKey: ["ranking-top", storeN, period],
-    queryFn: () => fetchTopPerformers(storeN, 10, period ?? undefined),
+    queryKey: ["ranking-top", storeN, selPeriod],
+    queryFn: () => fetchTopPerformers(storeN, 10, selPeriod ?? undefined),
     staleTime: 5 * 60_000,
   });
-  const availPeriods: number[] = q.data?.available_periods ?? [];
+  const curPeriod: number | null = q.data?.period ?? null;
+  const availPeriods: number[] = q.data?.available_periods?.length
+    ? q.data.available_periods
+    : curPeriod ? [curPeriod] : [];
   const stores: TopStoreRow[] = q.data?.stores ?? [];
   const dos: TopDoRow[] = q.data?.dos ?? [];
-  const period = q.data?.period ?? null;
   const official = q.data?.source === "official";
-  const pLabel = period ? `P${period}` : "";
+  const pLabel = curPeriod ? `P${curPeriod}` : "";
 
   const boards = (
     <div className="grid gap-4 lg:grid-cols-3">
@@ -65,16 +67,16 @@ export function RankingTopPerformersView() {
           <div>
             <div className="text-xl font-black tracking-tight">Top Performers</div>
             <div className="text-xs font-medium text-white/80">
-              Highest SOAR rank{period ? ` · ${pLabel}` : ""}
+              Highest SOAR rank{curPeriod ? ` · ${pLabel}` : ""}
               {official && <span className="ml-2 rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 ring-white/30">Official sheet</span>}
             </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {availPeriods.length > 1 && (
+          {availPeriods.length > 0 && (
             <select
-              value={period ?? ""}
-              onChange={(e) => setPeriod(e.target.value ? Number(e.target.value) : null)}
+              value={selPeriod ?? ""}
+              onChange={(e) => setSelPeriod(e.target.value ? Number(e.target.value) : null)}
               className="rounded-lg bg-white/15 px-2.5 py-2 text-sm font-semibold text-white ring-1 ring-white/30 focus:outline-none"
             >
               <option value="" style={{ background: "#1e293b", color: "#fff" }}>Latest</option>
@@ -108,6 +110,7 @@ export function RankingTopPerformersView() {
       <PresentModal open={present} onClose={() => setPresent(false)} filename={`${pLabel || "SOAR"}-top-performers`}>
         <div className="mb-4 text-center text-2xl font-black tracking-tight text-black">
           Top Performers{pLabel ? ` · ${pLabel}` : ""}
+
         </div>
         {boards}
       </PresentModal>
