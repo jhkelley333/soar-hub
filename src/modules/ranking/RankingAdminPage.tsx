@@ -16,6 +16,7 @@ import { RankingTopPerformersView } from "./RankingTopPerformersView";
 import { RankingEveningView } from "./RankingEveningView";
 import { RankingAwardsView } from "./RankingAwardsView";
 import { RankingP110ExportView } from "./RankingP110ExportView";
+import { RankingAskTotView } from "./RankingAskTotView";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ChevronDown, ChevronRight, Copy, ExternalLink, Eye, EyeOff, HelpCircle, KeyRound, PauseCircle, Pencil, Plus, RefreshCw, Save, Trash2, Users } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -368,7 +369,7 @@ function DelegationPanel() {
   );
 }
 
-type AdminView = "ranking" | "top" | "sevenup" | "evening" | "shakers" | "drill" | "watchlist" | "comms" | "awards" | "export" | "settings";
+type AdminView = "ranking" | "top" | "sevenup" | "evening" | "shakers" | "drill" | "watchlist" | "comms" | "awards" | "export" | "asktot" | "settings";
 
 export function RankingAdminPage() {
   const { profile } = useAuth();
@@ -461,6 +462,7 @@ export function RankingAdminPage() {
     { value: "watchlist", label: "Watchlist" },
     ...(isAdmin ? [{ value: "awards" as AdminView, label: "Awards" }] : []),
     ...(isAdmin ? [{ value: "export" as AdminView, label: "Export" }] : []),
+    { value: "asktot" as AdminView, label: "Ask Tot β" },
     ...(canSettings ? [{ value: "settings" as AdminView, label: isAdmin ? "System settings" : "Ranker uploads" }] : []),
   ];
   const active = view === "settings" && !canSettings ? "ranking" : view;
@@ -501,6 +503,7 @@ export function RankingAdminPage() {
         : active === "comms" ? <RankingCommsBoardView />
         : active === "awards" ? <RankingAwardsView />
         : active === "export" ? <RankingP110ExportView />
+        : active === "asktot" ? <RankingAskTotView />
         : <SettingsView delegatedOnly={delegated && !isAdmin} />}
     </>
   );

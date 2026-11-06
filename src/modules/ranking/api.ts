@@ -819,3 +819,22 @@ export interface FullMetricsExportResponse {
 export function fetchFullMetricsExport(from = 1, to = 13): Promise<FullMetricsExportResponse> {
   return req(`${FN}?action=full-metrics-export&from=${from}&to=${to}`);
 }
+
+// ── Ask Tot ───────────────────────────────────────────────────────────────────
+const FN_TOT = "/.netlify/functions/ask-tot";
+
+export interface AskTotResponse {
+  answer: string;
+  sources: string[];
+  type: string;
+}
+
+export function askTot(
+  message: string,
+  history: { role: "user" | "assistant"; content: string }[] = [],
+): Promise<AskTotResponse> {
+  return req<AskTotResponse>(FN_TOT, {
+    method: "POST",
+    body: JSON.stringify({ message, history }),
+  });
+}
