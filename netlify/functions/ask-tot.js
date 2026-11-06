@@ -7,9 +7,9 @@ import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const MODEL = "claude-sonnet-4-6";
+const ANTHROPIC_VERSION = "2023-06-01";
 
 const ALLOWED_ROLES = new Set(["admin", "coo", "vp", "rvp"]);
 
@@ -144,38 +144,38 @@ async function retrieveContext(db, user, message) {
   return { context, sources };
 }
 
-async function callGroq(systemPrompt, history, message) {
-  if (!GROQ_API_KEY) {
-    return "Ask Tot is not fully configured yet — the AI key is missing. Contact your Hub admin to set up the GROQ_API_KEY environment variable.";
+async function callClaude(systemPrompt, history, message) {
+  if (!ANTHROPIC_API_KEY) {
+    return "Ask Tot is not fully configured yet — the ANTHROPIC_API_KEY is missing. Contact your Hub admin.";
   }
 
-  const messages = [
-    { role: "system", content: systemPrompt },
-    ...(history || []).slice(-6), // last 3 turns
-    { role: "user", content: message },
-  ];
+  // Build messages array: prior turns + the new user message.
+  // The system prompt goes in the top-level `system` field (Anthropic style).
+  const prior = (history || []).slice(-6); // last 3 turns
+  const messages = [...prior, { role: "user", content: message }];
 
-  const resp = await fetch(GROQ_URL, {
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${GROQ_API_KEY}`,
+      "x-api-key": ANTHROPIC_API_KEY,
+      "anthropic-version": ANTHROPIC_VERSION,
     },
     body: JSON.stringify({
-      model: GROQ_MODEL,
-      messages,
-      temperature: 0.1,
+      model: MODEL,
       max_tokens: 1024,
+      system: systemPrompt,
+      messages,
     }),
   });
 
   if (!resp.ok) {
     const err = await resp.text().catch(() => "");
-    throw new Error(`Groq API error ${resp.status}: ${err.slice(0, 200)}`);
+    throw new Error(`Anthropic API error ${resp.status}: ${err.slice(0, 200)}`);
   }
 
   const data = await resp.json();
-  return data.choices?.[0]?.message?.content ?? "No response from AI.";
+  return data?.content?.[0]?.text ?? "No response from AI.";
 }
 
 export const handler = async (event) => {
@@ -239,7 +239,7 @@ WHAT YOU CANNOT HELP WITH:
 CONTEXT (from SOAR Hub — use this to answer):
 ${contextBlock}`;
 
-    const answer = await callGroq(systemPrompt, history, message);
+    const answer = await callClaude(systemPrompt, history, message);
 
     // Log the Q&A turn (best-effort)
     db.from("ask_tot_log")
