@@ -15,12 +15,27 @@ import { PageHeader } from "@/shared/ui/PageHeader";
 import { cn } from "@/lib/cn";
 import type { UserRole } from "@/types/database";
 
+function TotMark({ size = 28 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 60 60" fill="none" aria-label="Tot">
+      <ellipse cx="30" cy="38" rx="20" ry="17" fill="#FFD100" />
+      <ellipse cx="30" cy="22" rx="16" ry="16" fill="#FFD100" />
+      <ellipse cx="23" cy="20" rx="4" ry="5" fill="white" />
+      <ellipse cx="37" cy="20" rx="4" ry="5" fill="white" />
+      <circle cx="23" cy="21" r="2.5" fill="#1F6FE0" />
+      <circle cx="37" cy="21" r="2.5" fill="#1F6FE0" />
+      <path d="M25 29 Q30 33 35 29" stroke="#A07820" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+    </svg>
+  );
+}
+
 interface Tool {
   title: string;
   desc: string;
   icon: LucideIcon;
   roles: UserRole[];
   to: string;
+  totCard?: boolean;
 }
 interface Group {
   title: string;
@@ -72,7 +87,7 @@ const GROUPS: Group[] = [
   {
     title: "Beta Test",
     tools: [
-      { title: "Ask Tot", desc: "AI assistant — ask about stores, ranking, promos and more in plain language.", icon: Sparkles, roles: ["admin", "coo", "vp", "rvp"], to: "/admin/ask-tot" },
+      { title: "Ask Tot", desc: "AI assistant — ask about stores, ranking, promos and more in plain language.", icon: Sparkles, roles: ["admin", "coo", "vp", "rvp"], to: "/admin/ask-tot", totCard: true },
       { title: "KPI Dashboard", desc: "Execution KPI dashboard (in beta).", icon: BarChart3, roles: ["admin"], to: "/admin/kpi" },
       { title: "Metrics Board", desc: "Execution metrics board (in beta).", icon: LayoutGrid, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"], to: "/admin/metrics-board" },
       { title: "Store Visit", desc: "Mobile-first store walk + Top-3 gaps (in beta).", icon: ClipboardCheck, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"], to: "/visit" },
@@ -136,17 +151,28 @@ export function SystemSettingsPage() {
                     to={t.to}
                     className={cn(
                       "group block rounded-2xl border p-5 text-left transition",
-                      "border-zinc-200 bg-white shadow-card hover:border-accent/60 hover:shadow-float dark:border-night-line dark:bg-night-raised",
+                      t.totCard
+                        ? "border-[#2A4D6E] bg-[#16365A] shadow-card hover:border-[#0B7BD6] hover:shadow-float dark:border-[#2A4D6E] dark:bg-[#16365A]"
+                        : "border-zinc-200 bg-white shadow-card hover:border-accent/60 hover:shadow-float dark:border-night-line dark:bg-night-raised",
                     )}
                   >
                     <div className="flex items-start justify-between">
-                      <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-accent/10 text-accent">
-                        <Icon className="h-5 w-5" strokeWidth={1.75} />
-                      </span>
-                      <ArrowRight className="h-4 w-4 text-zinc-300 transition group-hover:translate-x-0.5 group-hover:text-accent" strokeWidth={2} />
+                      {t.totCard ? (
+                        <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl" style={{ background: "rgba(255,255,255,0.10)" }}>
+                          <TotMark size={30} />
+                        </span>
+                      ) : (
+                        <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-accent/10 text-accent">
+                          <Icon className="h-5 w-5" strokeWidth={1.75} />
+                        </span>
+                      )}
+                      <ArrowRight
+                        className={cn("h-4 w-4 transition group-hover:translate-x-0.5", t.totCard ? "text-white/30 group-hover:text-[#FFD100]" : "text-zinc-300 group-hover:text-accent")}
+                        strokeWidth={2}
+                      />
                     </div>
-                    <div className="mt-4 text-base font-semibold tracking-tight text-ink dark:text-night-ink">{t.title}</div>
-                    <p className="mt-1 text-sm leading-relaxed text-ink-muted dark:text-night-muted">{t.desc}</p>
+                    <div className={cn("mt-4 text-base font-semibold tracking-tight", t.totCard ? "text-white" : "text-ink dark:text-night-ink")}>{t.title}</div>
+                    <p className={cn("mt-1 text-sm leading-relaxed", t.totCard ? "text-[#BFD6EE]" : "text-ink-muted dark:text-night-muted")}>{t.desc}</p>
                   </Link>
                 );
               })}
