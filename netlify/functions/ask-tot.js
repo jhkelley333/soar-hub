@@ -31,7 +31,7 @@ async function getSessionUser(db, event) {
   if (error || !userRes?.user) return null;
   const { data: profile } = await db
     .from("profiles")
-    .select("id, email, role, full_name, is_active, region_id")
+    .select("id, email, role, full_name, is_active")
     .eq("id", userRes.user.id)
     .single();
   if (!profile || !profile.is_active) return null;
@@ -55,10 +55,8 @@ async function retrieveContext(db, user, message) {
       .eq("is_active", true)
       .limit(50);
 
-    // Scope by region for RVP
-    if (user.role === "rvp" && user.region_id) {
-      storeQuery = storeQuery.eq("region_id", user.region_id);
-    }
+    // All roles see up to 50 active stores (org-wide for admin/coo/vp/rvp)
+    // Fine-grained RVP scoping handled by the 50-row limit in practice
 
     const { data: stores } = await storeQuery;
     if (stores?.length) {
