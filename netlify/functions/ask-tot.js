@@ -31,10 +31,10 @@ async function getSessionUser(db, event) {
   if (error || !userRes?.user) return null;
   const { data: profile } = await db
     .from("profiles")
-    .select("id, email, role, first_name, last_name, is_active, region_id")
+    .select("id, email, role, full_name, is_active, region_id")
     .eq("id", userRes.user.id)
     .single();
-  if (!profile || profile.is_active === false) return null;
+  if (!profile || !profile.is_active) return null;
   return profile;
 }
 
