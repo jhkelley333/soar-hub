@@ -70,59 +70,44 @@ async function retrieveContext(db, user, message) {
   }
 
   // Ranking data — if question is about performance, ranking, scores
-  const rankKeywords = ["rank", "top", "best", "performance", "score", "sales", "percent", "ptd", "period"];
+  const rankKeywords = ["rank", "top", "best", "performance", "score", "sales", "percent", "ptd", "period", "lead", "won", "win", "improve", "week", "last week"];
   const rankMatch = rankKeywords.some((k) => msg.includes(k));
 
   if (rankMatch) {
     const { data: runs } = await db
       .from("ranking_runs")
-      .select("id, period, week, week_ending, status")
+      .select("id, period, week, week_ending")
       .eq("status", "complete")
-      .order("period", { ascending: false })
-      .order("week", { ascending: false })
+      .order("week_ending", { ascending: false })
+      .order("started_at", { ascending: false })
       .limit(1);
 
     const run = runs?.[0];
     if (run) {
-      let scoreQuery = db
-        .from("ranking_store_scores")
-        .select("store_number, store_name, total_points, rank, pct_vs_ly, gm_name, do_name, sdo_name")
+      const { data: rows } = await db
+        .from("ranking_rows")
+        .select("entity_key, rank, total_points, metrics")
         .eq("run_id", run.id)
+        .eq("scope", "ptd")
+        .eq("tier", "store")
         .order("rank", { ascending: true })
-        .limit(20);
+        .limit(25);
 
-      const { data: scores } = await scoreQuery;
-      if (scores?.length) {
+      if (rows?.length) {
         context.push(`RANKING — P${run.period} W${run.week} (week ending ${run.week_ending}):\n` +
-          scores.map((s) =>
-            `#${s.rank} Store ${s.store_number} "${s.store_name}" — Points: ${s.total_points?.toFixed(2) ?? "—"} | % vs LY: ${s.pct_vs_ly != null ? `${(s.pct_vs_ly >= 0 ? "+" : "")}${s.pct_vs_ly.toFixed(1)}%` : "—"} | GM: ${s.gm_name ?? "—"} | DO: ${s.do_name ?? "—"}`
-          ).join("\n")
+          rows.map((r) => {
+            const m = r.metrics || {};
+            const pct = typeof m.pctVsLy === "number" ? m.pctVsLy : null;
+            const pctStr = pct != null ? `${(pct >= 0 ? "+" : "")}${(pct * 100).toFixed(1)}%` : "—";
+            return `#${r.rank} Store ${r.entity_key} "${m.location ?? ""}" — Points: ${r.total_points?.toFixed(2) ?? "—"} | % vs LY: ${pctStr} | GM: ${m.gm ?? "—"} | DO: ${m.doName ?? "—"}`;
+          }).join("\n")
         );
         sources.push(`Ranking › P${run.period} W${run.week}`);
       }
     }
   }
 
-  // Promo / LTO data — if question mentions promo, LTO, deal, special
-  const promoKeywords = ["promo", "lto", "promotion", "deal", "special", "offer", "menu", "launch", "marketing"];
-  const promoMatch = promoKeywords.some((k) => msg.includes(k));
-
-  if (promoMatch) {
-    const { data: promos } = await db
-      .from("promotions")
-      .select("name, start_date, end_date, type, ops_notes, status")
-      .order("start_date", { ascending: false })
-      .limit(20);
-
-    if (promos?.length) {
-      context.push(`PROMOTIONS & LTO:\n` +
-        promos.map((p) =>
-          `"${p.name}" — ${p.start_date} to ${p.end_date} | Type: ${p.type ?? "—"} | Status: ${p.status ?? "—"}${p.ops_notes ? ` | Notes: ${p.ops_notes}` : ""}`
-        ).join("\n")
-      );
-      sources.push("Promos & LTO");
-    }
-  }
+  // Promo/LTO: not yet wired to a Supabase table — Tot will say so if asked
 
   // If nothing matched, give a brief store summary so Tot can still answer
   if (context.length === 0) {
@@ -225,8 +210,7 @@ RULES (never break these):
 
 WHAT YOU CAN HELP WITH:
 - Store directory (numbers, locations, GMs, DOs, phone, hours)
-- Weekly ranking and performance scores
-- Promotions and LTO information
+- Weekly ranking and performance scores (top/bottom stores, % vs LY, points)
 - General SOAR Hub navigation questions
 
 WHAT YOU CANNOT HELP WITH:
