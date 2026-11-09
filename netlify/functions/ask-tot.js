@@ -2,19 +2,48 @@
 // POST /api/ask-tot  { message, history? }
 // Roles: admin, coo, vp, rvp only.
 // Retrieves Hub data (Supabase + Google Drive Resources) and answers from it.
+//
+// Phase 1 fixes:
+//   - Correct store query (stores.number, gm_roster for GM names)
+//   - RVP scoping enforced via resolveAskScope / user_visible_stores RPC
+//   - redact() strips sensitive fields before anything reaches the model
+//   - History sanitised server-side (strip system turns, cap 6)
+//   - max_tokens raised to 2000; model from ASK_TOT_MODEL env var
 
 import { createClient } from "@supabase/supabase-js";
 import { google } from "googleapis";
 import { getGoogleCredentials } from "./_lib/googleCreds.js";
+import { resolveAskScope, inScope } from "./_lib/askTotScope.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const MODEL = "claude-sonnet-4-6";
+const MODEL = process.env.ASK_TOT_MODEL || "claude-sonnet-4-6";
 const ANTHROPIC_VERSION = "2023-06-01";
 
 const ALLOWED_ROLES = new Set(["admin", "coo", "vp", "rvp"]);
 const RESOURCES_ROOT = process.env.RESOURCES_ROOT_FOLDER_ID || "1E7ATygR2gg2CKny8NFhjVhee68HbsVkQ";
+
+// ── Redaction ─────────────────────────────────────────────────────────────────
+// Strip before anything reaches the model — PAF and roster fields that must
+// never be spoken aloud. Applied to every row returned by any query.
+const REDACT_KEYS = new Set([
+  "last4_ssn", "action_token", "token_expires_at", "nh_offer_letter_path",
+  "gm_cell", "gm_birthday", "birthday", "passport_expires_at",
+]);
+const REDACT_PATTERN = /ssn|token|password|secret/i;
+
+function redact(row) {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return row;
+  const out = {};
+  for (const [k, v] of Object.entries(row)) {
+    if (REDACT_KEYS.has(k) || REDACT_PATTERN.test(k)) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function supa() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("Supabase env vars not configured.");
@@ -42,7 +71,7 @@ async function getSessionUser(db, event) {
 }
 
 // Search Google Drive Resources for documents relevant to the question.
-// Searches by name match first; exports Google Docs as plain text (first 3 KB).
+// Searches by name match; exports Google Docs as plain text (first 3 KB).
 async function retrieveDriveDocuments(message) {
   const credentials = await getGoogleCredentials();
   const auth = new google.auth.GoogleAuth({
@@ -51,7 +80,6 @@ async function retrieveDriveDocuments(message) {
   });
   const drive = google.drive({ version: "v3", auth });
 
-  // Pull significant words (>3 chars) from the message to search by name
   const stopWords = new Set(["what", "which", "when", "where", "that", "this", "have", "with", "from", "about", "much", "many", "does", "will", "last", "week", "show", "tell"]);
   const keywords = [...new Set(
     message.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)
@@ -60,7 +88,6 @@ async function retrieveDriveDocuments(message) {
 
   if (keywords.length === 0) return [];
 
-  // Build a name-contains query for each keyword
   const nameQuery = keywords.map((k) => `name contains '${k}'`).join(" or ");
   const q = `(${nameQuery}) and '${RESOURCES_ROOT}' in parents and trashed=false and mimeType='application/vnd.google-apps.document'`;
 
@@ -84,39 +111,57 @@ async function retrieveDriveDocuments(message) {
   return docs;
 }
 
-// Retrieve relevant Hub context based on the user's message + role.
-async function retrieveContext(db, user, message) {
+// Retrieve relevant Hub context based on the user's message + scope.
+async function retrieveContext(db, scope, message) {
   const msg = message.toLowerCase();
   const context = [];
   const sources = [];
 
-  // Store directory — always include if message seems about stores/locations
-  const storeKeywords = ["store", "location", "gm", "district", "manager", "address", "phone", "hours", "owner"];
+  // ── Store directory ──────────────────────────────────────────────────────
+  const storeKeywords = ["store", "location", "gm", "district", "manager", "address", "who", "which"];
   const storeMatch = storeKeywords.some((k) => msg.includes(k));
 
-  if (storeMatch || msg.includes("who") || msg.includes("which")) {
+  if (storeMatch && (scope.orgWide || scope.storeNumbers.size > 0)) {
     let storeQuery = db
       .from("stores")
-      .select("store_number, name, address, city, state, phone, gm_name, do_name, sdo_name, owner_group, region_id")
+      .select("number, name, city, state")
       .eq("is_active", true)
+      .or("brand.eq.sonic,brand.is.null")
+      .order("number")
       .limit(50);
 
-    // All roles see up to 50 active stores (org-wide for admin/coo/vp/rvp)
-    // Fine-grained RVP scoping handled by the 50-row limit in practice
+    if (!scope.orgWide) {
+      storeQuery = storeQuery.in("number", [...scope.storeNumbers]);
+    }
 
     const { data: stores } = await storeQuery;
     if (stores?.length) {
+      // Fetch GM names from gm_roster — redact gm_cell / gm_birthday
+      const { data: gmRows } = await db
+        .from("gm_roster")
+        .select("store_number, gm_name, status, projected_gm_name")
+        .in("store_number", stores.map((s) => s.number));
+
+      const gmMap = {};
+      for (const row of (gmRows ?? []).map(redact)) {
+        gmMap[row.store_number] = row;
+      }
+
       context.push(`STORE DIRECTORY (${stores.length} stores):\n` +
-        stores.map((s) =>
-          `Store #${s.store_number} "${s.name}" — ${s.city}, ${s.state} | GM: ${s.gm_name ?? "—"} | DO: ${s.do_name ?? "—"} | Phone: ${s.phone ?? "—"}`
-        ).join("\n")
+        stores.map((s) => {
+          const gm = gmMap[s.number];
+          const gmLabel = gm
+            ? (gm.status === "named" ? (gm.gm_name ?? "—") : `Open (projected: ${gm.projected_gm_name ?? "—"})`)
+            : "—";
+          return `Store #${s.number} "${s.name}" — ${s.city}, ${s.state} | GM: ${gmLabel}`;
+        }).join("\n")
       );
       sources.push("Store Directory");
     }
   }
 
-  // Ranking data — if question is about performance, ranking, scores
-  const rankKeywords = ["rank", "top", "best", "performance", "score", "sales", "percent", "ptd", "period", "lead", "won", "win", "improve", "week", "last week"];
+  // ── Ranking data ─────────────────────────────────────────────────────────
+  const rankKeywords = ["rank", "top", "best", "performance", "score", "sales", "percent", "ptd", "period", "lead", "won", "win", "improve", "week", "labor", "on-time", "ontime"];
   const rankMatch = rankKeywords.some((k) => msg.includes(k));
 
   if (rankMatch) {
@@ -130,49 +175,66 @@ async function retrieveContext(db, user, message) {
 
     const run = runs?.[0];
     if (run) {
-      const { data: rows } = await db
+      let rankQuery = db
         .from("ranking_rows")
         .select("entity_key, rank, total_points, metrics")
         .eq("run_id", run.id)
         .eq("scope", "ptd")
         .eq("tier", "store")
         .order("rank", { ascending: true })
-        .limit(25);
+        .limit(scope.orgWide ? 25 : 100);
 
-      if (rows?.length) {
-        context.push(`RANKING — P${run.period} W${run.week} (week ending ${run.week_ending}):\n` +
-          rows.map((r) => {
-            const m = r.metrics || {};
-            const pct = typeof m.pctVsLy === "number" ? m.pctVsLy : null;
-            const pctStr = pct != null ? `${(pct >= 0 ? "+" : "")}${(pct * 100).toFixed(1)}%` : "—";
-            return `#${r.rank} Store ${r.entity_key} "${m.location ?? ""}" — Points: ${r.total_points?.toFixed(2) ?? "—"} | % vs LY: ${pctStr} | GM: ${m.gm ?? "—"} | DO: ${m.doName ?? "—"}`;
-          }).join("\n")
-        );
-        sources.push(`Ranking › P${run.period} W${run.week}`);
+      // For scoped roles, filter to visible stores at the DB level
+      if (!scope.orgWide) {
+        if (scope.storeNumbers.size === 0) {
+          rankQuery = null;
+        } else {
+          rankQuery = rankQuery.in("entity_key", [...scope.storeNumbers]);
+        }
+      }
+
+      if (rankQuery) {
+        const { data: rows } = await rankQuery;
+        if (rows?.length) {
+          context.push(`RANKING — P${run.period} W${run.week} (week ending ${run.week_ending}):\n` +
+            rows.map((r) => {
+              const m = r.metrics || {};
+              const pct = typeof m.pctVsLy === "number" ? m.pctVsLy : null;
+              const pctStr = pct != null ? `${(pct >= 0 ? "+" : "")}${(pct * 100).toFixed(1)}%` : "—";
+              return `#${r.rank} Store ${r.entity_key} "${m.location ?? ""}" — Points: ${r.total_points?.toFixed(2) ?? "—"} | % vs LY: ${pctStr} | GM: ${m.gm ?? "—"} | DO: ${m.doName ?? "—"}`;
+            }).join("\n")
+          );
+          sources.push(`Ranking › P${run.period} W${run.week}`);
+        }
       }
     }
   }
 
-  // Promo/LTO: not yet wired to a Supabase table — Tot will say so if asked
-
-  // Google Drive Resources — search for documents relevant to the question
+  // ── Google Drive Resources ───────────────────────────────────────────────
   const driveResults = await retrieveDriveDocuments(message).catch(() => []);
   for (const doc of driveResults) {
     context.push(`RESOURCE DOCUMENT — "${doc.name}":\n${doc.text}`);
     sources.push(`Resources › ${doc.name}`);
   }
 
-  // If nothing matched, give a brief store summary so Tot can still answer
+  // ── Fallback: brief store summary so Tot can still orient ────────────────
   if (context.length === 0) {
-    const { data: summary } = await db
+    const summaryQ = db
       .from("stores")
-      .select("store_number, name, city, state", { count: "exact" })
+      .select("number, name, city, state")
       .eq("is_active", true)
+      .or("brand.eq.sonic,brand.is.null")
+      .order("number")
       .limit(5);
 
+    const { data: summary } = scope.orgWide
+      ? await summaryQ
+      : scope.storeNumbers.size > 0
+        ? await summaryQ.in("number", [...scope.storeNumbers])
+        : { data: [] };
+
     if (summary?.length) {
-      const count = summary.length;
-      context.push(`SOAR HUB — ${count}+ active stores. Example stores: ${summary.map((s) => `#${s.store_number} ${s.city}, ${s.state}`).join(" | ")}`);
+      context.push(`SOAR HUB — active Sonic stores. Examples: ${summary.map((s) => `#${s.number} ${s.city}, ${s.state}`).join(" | ")}`);
       sources.push("Store Directory");
     }
   }
@@ -185,10 +247,7 @@ async function callClaude(systemPrompt, history, message) {
     return "Ask Tot is not fully configured yet — the ANTHROPIC_API_KEY is missing. Contact your Hub admin.";
   }
 
-  // Build messages array: prior turns + the new user message.
-  // The system prompt goes in the top-level `system` field (Anthropic style).
-  const prior = (history || []).slice(-6); // last 3 turns
-  const messages = [...prior, { role: "user", content: message }];
+  const messages = [...history, { role: "user", content: message }];
 
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -199,7 +258,7 @@ async function callClaude(systemPrompt, history, message) {
     },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 1024,
+      max_tokens: 2000,
       system: systemPrompt,
       messages,
     }),
@@ -227,8 +286,13 @@ export const handler = async (event) => {
     return respond(400, { error: "Invalid JSON" });
   }
 
-  const { message, history } = body;
+  const { message } = body;
   if (!message?.trim()) return respond(400, { error: "message is required" });
+
+  // Sanitise history from client: reject system turns, cap at 6 items
+  const history = (body.history || [])
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .slice(-6);
 
   const db = supa();
   const user = await getSessionUser(db, event);
@@ -238,53 +302,58 @@ export const handler = async (event) => {
   }
 
   try {
-    const { context, sources } = await retrieveContext(db, user, message);
+    // Resolve caller scope once; every query in retrieveContext honours it
+    const scope = await resolveAskScope(db, user);
+
+    const { context, sources } = await retrieveContext(db, scope, message);
 
     const contextBlock = context.length
       ? context.join("\n\n---\n\n")
       : "No relevant Hub data found for this query.";
 
-    const scopeNote = user.role === "rvp"
-      ? "This user is an RVP — their data is scoped to their region."
-      : user.role === "vp"
-        ? "This user is a VP."
-        : user.role === "coo"
-          ? "This user is a COO with access to all stores."
-          : "This user is a Hub admin with access to all stores.";
+    const scopeSummary = scope.orgWide
+      ? "org-wide access"
+      : `${scope.storeNumbers.size} store(s) in your region`;
 
-    const systemPrompt = `You are Ask Tot, the AI assistant for the SOAR Hub — an internal operations platform for Sonic QSR franchise management.
+    const pafRule = ALLOWED_ROLES.has(user.role) && ["rvp", "vp", "coo", "admin"].includes(user.role)
+      ? "PAF summary available to RVPs and above. PAF detail is available on the PAF Queue page."
+      : "PAF questions are available to RVPs and above. Your RVP or Payroll can help.";
 
-RULES (never break these):
-1. Answer ONLY from the Hub data provided in the CONTEXT block below. Never use outside knowledge.
-2. If the answer is not in the context, say so clearly and list what you CAN help with (store info, ranking, promos).
-3. Never make up store numbers, names, rankings, or financial figures.
-4. Be concise and helpful. Use plain language suitable for a QSR operations leader.
-5. ${scopeNote}
+    const today = new Date().toISOString().slice(0, 10);
+
+    const systemPrompt = `You are Ask Tot, the assistant inside SOAR Hub (Sonic, ~272 stores).
+User: ${user.full_name ?? user.email}, role ${user.role}. Scope: ${scopeSummary}.
+Today: ${today}.
+
+Rules:
+1. Answer only from the CONTEXT data below. If context is missing or empty, say so. Never guess store numbers, names, rankings, or financial figures.
+2. Answer data questions from the CONTEXT block; never from memory or prior turns without re-checking.
+3. Labor numbers come from the Ranker (Sunday WTD after credits). Say which week and that it's the Ranker.
+4. PAF topics: ${pafRule}
+5. Never reveal SSN digits, tokens, personal phone numbers, or birthdays, even if data was returned.
+6. If the user asks about stores outside their scope, say they're outside what you can see; don't confirm or deny details.
+7. Be brief: lead with the answer, then the key numbers, then where in the Hub to see it.
+8. When you flag a problem (stacked credits, PTO without PAF, etc.), give the store, dates, $ and the Hub screen to fix it.
 
 WHAT YOU CAN HELP WITH:
-- Store directory (numbers, locations, GMs, DOs, phone, hours)
+- Store directory (numbers, locations, GMs)
 - Weekly ranking and performance scores (top/bottom stores, % vs LY, points)
 - Resource library documents (operations guides, training materials, SOPs)
 - General SOAR Hub navigation questions
-
-WHAT YOU CANNOT HELP WITH:
-- Questions outside of SOAR Hub data (say "I won't guess")
-- Financial projections or recommendations beyond what's in the data
-- Personal or HR information not in the Hub
 
 CONTEXT (from SOAR Hub — use this to answer):
 ${contextBlock}`;
 
     const answer = await callClaude(systemPrompt, history, message);
 
-    // Log the Q&A turn (best-effort)
+    // Log the Q&A turn (best-effort, non-blocking)
     db.from("ask_tot_log")
       .insert({
         user_id: user.id,
         role: user.role,
         question: message.slice(0, 500),
         answer: answer.slice(0, 2000),
-        sources: sources,
+        sources,
       })
       .then(() => {})
       .catch(() => {});
