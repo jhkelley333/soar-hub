@@ -58,6 +58,7 @@ import { RankingAdminPage } from "@/modules/ranking/RankingAdminPage";
 import { CommsBoardPage } from "@/modules/ranking/CommsBoardPage";
 import { BottomPerformersPage } from "@/modules/ranking/BottomPerformersPage";
 import { PullLogPage } from "@/modules/labor-v2/PullLogPage";
+import { ManualCorrectionPage } from "@/modules/labor-v2/ManualCorrectionPage";
 import { UserActivityPage } from "@/modules/admin/UserActivityPage";
 import { MyHubPage } from "@/modules/myhub/MyHubPage";
 import { LaborV2Entry } from "@/modules/labor-v2/LaborV2Entry";
@@ -351,6 +352,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <PullLogPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/labor-correction",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <ManualCorrectionPage />
           </ProtectedRoute>
         ),
       },

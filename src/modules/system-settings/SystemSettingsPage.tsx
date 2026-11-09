@@ -8,7 +8,7 @@ import {
   ArrowRight, Network, Users, MapPin, KeyRound, Globe, Flag, QrCode, Link2,
   CloudSun, BarChart3, LayoutGrid, Gauge, ScrollText, Layers, Upload,
   Settings, ClipboardCheck, ListChecks, BookMarked, Clock, AlarmClock, Star, TrendingDown, Building2,
-  Fingerprint, Send, Info, MapPinned, Sparkles, GraduationCap, Plane, Activity, type LucideIcon,
+  Fingerprint, Send, Info, MapPinned, Sparkles, GraduationCap, Plane, Activity, Wrench, type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -101,6 +101,7 @@ const GROUPS: Group[] = [
       { title: "Data Health", desc: "KPI pipeline coverage — stream dates, missing stores per day, pull log.", icon: Activity, roles: ["payroll", "accounting", "rvp", "vp", "coo", "admin"], to: "/admin/data-health" },
       { title: "Labor Rollup", desc: "Labor v2 rollup and weekly snapshots.", icon: Gauge, roles: ["admin"], to: "/admin/labor-v2" },
       { title: "Pull Log", desc: "KPI / labor feed pull history.", icon: ScrollText, roles: ["admin"], to: "/admin/labor-v2/log" },
+      { title: "Manual Data Correction", desc: "Fix a specific store/date row in labor_v2_daily when Inventory Express corrects data after the fact.", icon: Wrench, roles: ["vp", "coo", "admin"], to: "/admin/labor-correction" },
       { title: "Bulk Attributes", desc: "Bulk-edit store attributes.", icon: Layers, roles: ["admin"], to: "/admin/bulk-attributes" },
       { title: "Bulk User Import", desc: "Invite or update team members from a CSV.", icon: Upload, roles: ["admin"], to: "/admin/bulk-import" },
       { title: "Bulk Org Import", desc: "Import or update the org tree from a CSV.", icon: Upload, roles: ["admin"], to: "/admin/bulk-org-import" },
