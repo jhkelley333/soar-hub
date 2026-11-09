@@ -18,6 +18,12 @@ const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const TZ = "America/Chicago";
 
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "notifications@mysoarhub.com";
+const RESEND_FROM_NAME = process.env.RESEND_FROM_NAME || "SOAR Hub";
+// Always notified on new No-GM tags (in addition to any RVPs in scope).
+const NO_GM_NOTIFY_STATIC = ["khaled@soarqsr.com"];
+
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("labor-v2 env vars not configured");
   return createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -1630,6 +1636,51 @@ async function corpTrainingRateSet(supa, user, body) {
 const NO_GM_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 const NO_GM_REASONS = new Set(["loa", "no_gm", "in_training"]);
 
+const REASON_LABEL = { loa: "LOA", no_gm: "No GM", in_training: "In Training" };
+
+// Best-effort instant notification to Khaled + all RVPs when a No-GM tag is created.
+async function sendNoGmNotification(supa, { storeNumber, storeName, reason, startDate, endDate, note, createdByName, createdByEmail }) {
+  if (!RESEND_API_KEY) return;
+  try {
+    // Collect RVP emails from profiles.
+    const { data: rvps } = await supa.from("profiles")
+      .select("email").eq("role", "rvp").eq("is_active", true);
+    const recipients = Array.from(new Set([
+      ...NO_GM_NOTIFY_STATIC,
+      ...(rvps || []).map((p) => p.email).filter(Boolean),
+    ]));
+    if (!recipients.length) return;
+
+    const reasonLabel = REASON_LABEL[reason] || reason;
+    const storeLabel = storeName ? `${storeName} (#${storeNumber})` : `#${storeNumber}`;
+    const submitter = createdByName || createdByEmail || "Unknown";
+    const dateRange = endDate ? `${startDate} through ${endDate}` : `${startDate} (open-ended)`;
+    const noteLine = note ? `\nNote: ${note}` : "";
+
+    const subject = `No-GM Tag Added — ${storeLabel}`;
+    const text = [
+      `A No-GM labor credit tag has been added in SOAR Hub.`,
+      ``,
+      `Store:    ${storeLabel}`,
+      `Reason:   ${reasonLabel}`,
+      `Dates:    ${dateRange}`,
+      `Added by: ${submitter}`,
+      noteLine,
+      ``,
+      `This store will receive the $880/week no-GM labor credit while the tag is active.`,
+      `To end the tag: Labor → No-GM Tags → find the store → set an end date.`,
+    ].filter((l) => l !== undefined).join("\n");
+
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`, to: recipients, subject, text }),
+    });
+  } catch (err) {
+    console.warn("[labor-v2] No-GM notification failed (non-fatal):", err?.message);
+  }
+}
+
 async function noGmList(supa, user) {
   if (!NO_GM_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
   const visible = await resolveVisibleStoreRows(supa, user);
@@ -1696,6 +1747,19 @@ async function noGmAdd(supa, user, body) {
     if (/no_gm_credits/.test(error.message)) return { error: "Run migration 0236 first (no_gm_credits table is missing).", status: 500 };
     return { error: error.message, status: 500 };
   }
+
+  // Best-effort instant notification — do not await so it never blocks the response.
+  sendNoGmNotification(supa, {
+    storeNumber,
+    storeName: storeRow?.name ?? null,
+    reason,
+    startDate,
+    endDate: endDate ?? null,
+    note: note ?? null,
+    createdByName: user.full_name || user.preferred_name || null,
+    createdByEmail: user.email,
+  }).catch(() => {});
+
   return { row: data };
 }
 
