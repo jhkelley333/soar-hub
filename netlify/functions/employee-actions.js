@@ -1731,6 +1731,32 @@ async function withdrawRequest(supa, user, body) {
     detail: { reason, from_status: existing.status },
   });
 
+  // When a PTO request is withdrawn, re-evaluate over_quota for any other
+  // live requests by the same employee/position in the same quarter so the
+  // approval gate and UI banner reflect the reduced prior usage.
+  if (type === "pto" && existing.pto_start_date) {
+    try {
+      const qRange = quarterRange(existing.pto_start_date);
+      const { data: siblings } = await supa
+        .from("pto_requests")
+        .select("id, employee_name, position, pto_start_date, days_used, vacation_hours, vacation_days, status, over_quota")
+        .ilike("employee_name", existing.employee_name)
+        .eq("position", existing.position)
+        .gte("pto_start_date", qRange.start)
+        .lte("pto_start_date", qRange.end)
+        .neq("id", id);
+      for (const sibling of siblings ?? []) {
+        if (PTO_DEAD_STATUSES.has(sibling.status)) continue;
+        const quota = await ptoOverQuota(supa, sibling, sibling.id);
+        if (sibling.over_quota !== quota.over) {
+          await supa.from("pto_requests")
+            .update({ over_quota: quota.over })
+            .eq("id", sibling.id);
+        }
+      }
+    } catch { /* non-critical — withdrawal already committed */ }
+  }
+
   return { ok: true, status: "Withdrawn" };
 }
 
