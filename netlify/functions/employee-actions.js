@@ -882,8 +882,8 @@ function buildPtoFields(body) {
     const rawGmDays = Array.isArray(body?.gm_days) ? body.gm_days : [];
     const gmDays = [...new Set(rawGmDays.map((d) => sanitizeDateInput(d)).filter(Boolean))].sort();
     if (gmDays.length) {
-      if (gmDays.length > 31) {
-        return { error: "That's more than 31 PTO days — double-check the dates.", status: 400 };
+      if (gmDays.length > PTO_QUOTA_GM_DAYS) {
+        return { error: `GM PTO is limited to ${PTO_QUOTA_GM_DAYS} days per request. Please split into separate requests if needed.`, status: 400 };
       }
       return {
         fields: {
@@ -920,6 +920,9 @@ function buildPtoFields(body) {
     }
     const daysUsed = num(body?.days_used);
     if (daysUsed <= 0) return { error: "How Many Days PTO Used is required.", status: 400 };
+    if (daysUsed > PTO_QUOTA_GM_DAYS) {
+      return { error: `GM PTO is limited to ${PTO_QUOTA_GM_DAYS} days per request. Please split into separate requests if needed.`, status: 400 };
+    }
 
     return {
       fields: {
