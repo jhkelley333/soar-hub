@@ -222,19 +222,52 @@ Credit changes after a run don't show until admin clicks Refresh on that week.
 Promo and LTO data is not yet in the Hub.
 `,
   },
+  {
+    file: "paf.md",
+    title: "PAF — Payroll Adjustment Form",
+    rvpOnly: true,
+    content: `
+## Where to find it
+PAF queue: /paf (DO, Payroll, Admin). PAF Archive: /paf/archive (Payroll, Admin). RVP+ can ask Tot about PAF status.
+
+## Who can submit
+GM+. SDO/RVP required for Pay Adjustment (Salary) and New Hire (Salary Leader).
+
+## Form categories
+Backpay, Overtime, Cross Store Work, Bonus, New Hire, New Hire (Salary Leader), Pay Adjustment (Salary), Paid Sick, Training, PTO.
+
+## Status flow
+Pending → Needs Approval → Approved → Processed.
+Pending → Rejected.
+Pending SDO Approval → SDO/RVP sign-off.
+Pending VP Approval → VP/COO sign-off.
+Short-notice GM requests skip the DO step.
+
+## Key rules
+Processed does NOT stop a labor credit. Only Withdrawn or Deleted (admin) stops it.
+Ask Tot is read-only — it shows counts/status but cannot approve, reject, or process.
+Drive-in = the store being charged.
+last4_ssn is never shown by Ask Tot.
+
+## Stacked credit risk
+GM PTO credit + No-GM credit running at the same store on the same days = double-credit for one GM gap. Check Employee Actions → History for the store.
+`,
+  },
 ];
 
 /**
  * Search the help corpus for content relevant to `query`.
+ * RVP-only docs are tagged; callers may filter them.
  * Returns a string with up to 3 matching sections, or null if nothing found.
  */
-export function hubHelpSearch(query) {
+export function hubHelpSearch(query, { includeRvpOnly = false } = {}) {
   if (!query) return null;
   const terms = query.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2);
   if (!terms.length) return null;
 
   const hits = [];
   for (const doc of CORPUS) {
+    if (doc.rvpOnly && !includeRvpOnly) continue;
     const text = `${doc.title}\n${doc.content}`.toLowerCase();
     const score = terms.reduce((n, t) => n + (text.split(t).length - 1), 0);
     if (score > 0) hits.push({ doc, score });

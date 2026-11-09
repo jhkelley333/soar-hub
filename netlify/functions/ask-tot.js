@@ -3,6 +3,7 @@
 // Roles: admin, coo, vp, rvp only.
 //
 // Phase 2: Claude tool-use loop with 10 base tools.
+// Phase 3: PAF tools (paf_pending, paf_detail) gated to RVP+ only.
 // Tool calls are gated by scope (user_visible_stores RPC) on every handler.
 // Sensitive fields are stripped by redact() before data reaches the model.
 
@@ -19,6 +20,10 @@ const MODEL              = process.env.ASK_TOT_MODEL || "claude-sonnet-4-6";
 const ANTHROPIC_VERSION  = "2023-06-01";
 
 const ALLOWED_ROLES = new Set(["admin", "coo", "vp", "rvp"]);
+// Roles that can use PAF tools and see PAF help content (RVP and above)
+const PAF_ROLES    = new Set(["rvp", "vp", "coo", "admin"]);
+// Keywords that indicate a PAF question — used to log denied_topic
+const PAF_KEYWORDS = /\bpaf\b|payroll.?adj|adjustment.?form/i;
 const RESOURCES_ROOT = process.env.RESOURCES_ROOT_FOLDER_ID || "1E7ATygR2gg2CKny8NFhjVhee68HbsVkQ";
 
 // ── Redaction ─────────────────────────────────────────────────────────────────
@@ -203,6 +208,35 @@ const BASE_TOOLS = [
         query: { type: "string", description: "Search terms" },
       },
       required: ["query"],
+    },
+  },
+];
+
+// ── PAF tool definitions (RVP+ only) ─────────────────────────────────────────
+
+const PAF_TOOLS = [
+  {
+    name: "paf_pending",
+    description: "List PAF submissions (Payroll Adjustment Forms) for stores in your scope. Use for 'How many PAFs are pending?', 'Show open PAFs for store 4123', 'Any PAFs waiting on approval?', 'PAF summary this week'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        store_number: { type: "string",  description: "Filter to a specific drive-in store number" },
+        status:       { type: "string",  description: "Filter by status: Pending, Approved, Processed, Rejected, Needs Approval, Pending SDO Approval, Pending VP Approval" },
+        category:     { type: "string",  description: "Form category: Backpay, Overtime, Bonus, Training, New Hire, etc." },
+        limit:        { type: "integer", description: "Max results to return (default 20, max 50)" },
+      },
+    },
+  },
+  {
+    name: "paf_detail",
+    description: "Get full details of a specific PAF submission by its UUID. Use when the user cites a specific PAF ID.",
+    input_schema: {
+      type: "object",
+      properties: {
+        paf_id: { type: "string", description: "The PAF submission UUID (from paf_pending results)" },
+      },
+      required: ["paf_id"],
     },
   },
 ];
@@ -577,8 +611,9 @@ async function handleRosterGaps({ filter = "open" }, db, scope) {
   };
 }
 
-function handleHubHelp({ query }) {
-  const text = hubHelpSearch(query);
+function handleHubHelp({ query }, scope) {
+  const includeRvpOnly = PAF_ROLES.has(scope?.role);
+  const text = hubHelpSearch(query, { includeRvpOnly });
   if (!text) return { text: "No help content found for that query. Try asking about a specific Hub page, feature, or rule.", query };
   return { text };
 }
@@ -617,6 +652,88 @@ async function handleSearchResources({ query }) {
   return { results: docs.map((d) => ({ name: d.name, text: d.text.slice(0, 2000) })) };
 }
 
+// PAF safe columns — no SSN, no tokens, no offer letter path
+const PAF_SAFE_COLS = [
+  "id", "created_at", "updated_at",
+  "submitter_name", "submitter_email",
+  "pay_period_end", "drive_in", "employee_name",
+  "category", "status", "estimated_cost", "explanation",
+  "rejection_reason", "do_approved_at", "sdo_approved_at",
+  "market_do", "pay_basis", "job_position",
+].join(", ");
+
+async function handlePafPending({ store_number, status, category, limit = 20 }, db, scope) {
+  let q = db.from("paf_submissions")
+    .select(PAF_SAFE_COLS)
+    .eq("archived", false)
+    .order("created_at", { ascending: false })
+    .limit(Math.min(Number(limit) || 20, 50));
+
+  if (store_number) {
+    if (!inScope(scope, store_number)) return { error: "Store is outside your scope." };
+    q = q.eq("drive_in", String(store_number));
+  } else if (!scope.orgWide) {
+    if (!scope.storeNumbers.size) return { pafs: [], count: 0, note: "No stores in your scope." };
+    const inList = [...scope.storeNumbers]
+      .map((x) => `"${String(x).replace(/["(),]/g, "")}"`)
+      .join(",");
+    q = q.or(`drive_in.in.(${inList})`);
+  }
+
+  if (status)   q = q.eq("status", status);
+  if (category) q = q.ilike("category", `%${category}%`);
+
+  const { data, error } = await q;
+  if (error) return { error: error.message };
+
+  const pafs = (data ?? []).map((r) => ({
+    id:              r.id,
+    submitted:       r.created_at?.slice(0, 10),
+    store:           r.drive_in,
+    employee:        r.employee_name,
+    category:        r.category,
+    status:          r.status,
+    estimated_cost:  r.estimated_cost,
+    pay_period_end:  r.pay_period_end,
+    submitter:       r.submitter_name ?? r.submitter_email,
+    do_approved:     r.do_approved_at?.slice(0, 10) ?? null,
+    sdo_approved:    r.sdo_approved_at?.slice(0, 10) ?? null,
+    rejection_reason: r.rejection_reason ?? null,
+  }));
+
+  return { count: pafs.length, pafs };
+}
+
+async function handlePafDetail({ paf_id }, db, scope) {
+  const { data, error } = await db.from("paf_submissions")
+    .select(PAF_SAFE_COLS)
+    .eq("id", paf_id)
+    .single();
+  if (error || !data) return { error: "PAF not found." };
+  if (!scope.orgWide && !inScope(scope, data.drive_in)) {
+    return { error: "PAF is outside your scope." };
+  }
+  return {
+    id:              data.id,
+    submitted:       data.created_at?.slice(0, 10),
+    updated:         data.updated_at?.slice(0, 10),
+    store:           data.drive_in,
+    employee:        data.employee_name,
+    category:        data.category,
+    status:          data.status,
+    estimated_cost:  data.estimated_cost,
+    pay_period_end:  data.pay_period_end,
+    pay_basis:       data.pay_basis,
+    job_position:    data.job_position,
+    market_do:       data.market_do,
+    submitter:       data.submitter_name ?? data.submitter_email,
+    explanation:     data.explanation,
+    do_approved:     data.do_approved_at?.slice(0, 10) ?? null,
+    sdo_approved:    data.sdo_approved_at?.slice(0, 10) ?? null,
+    rejection_reason: data.rejection_reason ?? null,
+  };
+}
+
 // ── Tool dispatcher ───────────────────────────────────────────────────────────
 
 async function dispatchTool(name, input, db, scope) {
@@ -629,8 +746,10 @@ async function dispatchTool(name, input, db, scope) {
     case "pto_requests":      return handlePtoRequests(input, db, scope);
     case "training_credits":  return handleTrainingCredits(input, db, scope);
     case "roster_gaps":       return handleRosterGaps(input, db, scope);
-    case "hub_help":          return handleHubHelp(input);
+    case "hub_help":          return handleHubHelp(input, scope);
     case "search_resources":  return handleSearchResources(input);
+    case "paf_pending":       return handlePafPending(input, db, scope);
+    case "paf_detail":        return handlePafDetail(input, db, scope);
     default:                  return { error: `Unknown tool: ${name}` };
   }
 }
@@ -742,8 +861,30 @@ export const handler = async (event) => {
       ? "org-wide access (~272 stores)"
       : `${scope.storeNumbers.size} store(s) in your region`;
 
-    const pafRule = ["rvp", "vp", "coo", "admin"].includes(user.role)
-      ? "PAF summary available to RVPs and above. Direct PAF answers from the PAF queue at /paf."
+    const hasPafAccess = PAF_ROLES.has(user.role);
+
+    // Deny PAF to non-RVP roles and log the attempt (defensive — currently all
+    // Ask Tot users are RVP+; will matter when Phase 4 opens lower roles)
+    if (!hasPafAccess && PAF_KEYWORDS.test(message)) {
+      const denyMsg = "PAF questions are available to RVPs and above. Your RVP or Payroll can help.";
+      db.from("ask_tot_log")
+        .insert({
+          user_id:      user.id,
+          role:         user.role,
+          question:     message.slice(0, 500),
+          answer:       denyMsg,
+          sources:      [],
+          tool_count:   0,
+          latency_ms:   Date.now() - startMs,
+          model:        MODEL,
+          denied_topic: "paf",
+        })
+        .then(() => {}).catch(() => {});
+      return respond(200, { answer: denyMsg, sources: [], type: "text" });
+    }
+
+    const pafRule = hasPafAccess
+      ? "PAF tools available: paf_pending (list queue), paf_detail (single record). Read-only — no approval actions through Tot. Direct approvals to /paf."
       : "PAF questions are available to RVPs and above. Your RVP or Payroll can help.";
 
     const today = new Date().toISOString().slice(0, 10);
@@ -762,14 +903,15 @@ Rules:
 7. Be brief: lead with the answer, then the key numbers, then where in the Hub to see it.
 8. When you flag a problem (stacked credits, PTO without PAF, etc.), give the store, dates, $ and the Hub screen to fix it.
 
-Available tools: find_store, org_lookup, ranking_week, labor_store_week, labor_credits, pto_requests, training_credits, roster_gaps, hub_help, search_resources.`;
+Available tools: find_store, org_lookup, ranking_week, labor_store_week, labor_credits, pto_requests, training_credits, roster_gaps, hub_help, search_resources${hasPafAccess ? ", paf_pending, paf_detail" : ""}.`;
 
     const messages = [
       ...history,
       { role: "user", content: message },
     ];
 
-    const { answer, toolCallLog } = await runToolLoop(systemPrompt, messages, BASE_TOOLS, db, scope);
+    const tools = hasPafAccess ? [...BASE_TOOLS, ...PAF_TOOLS] : BASE_TOOLS;
+    const { answer, toolCallLog } = await runToolLoop(systemPrompt, messages, tools, db, scope);
     const latencyMs = Date.now() - startMs;
 
     // Derive sources from tool calls
@@ -785,6 +927,8 @@ Available tools: find_store, org_lookup, ranking_week, labor_store_week, labor_c
         roster_gaps:      "GM Roster",
         hub_help:         "Hub Help",
         search_resources: "Resource Library",
+        paf_pending:      "PAF Queue",
+        paf_detail:       "PAF Detail",
       };
       return labels[t.tool] ?? t.tool;
     }))];
