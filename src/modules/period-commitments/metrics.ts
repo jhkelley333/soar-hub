@@ -47,6 +47,7 @@ export const METRIC_GROUPS: MetricGroup[] = [
       { key: "onTimePct", label: "On-Time %", goal: "> 80%", unit: "%", direction: "higher" },
       { key: "voidsPct", label: "Voids / Discounts", goal: "Under 1%", unit: "%", direction: "lower" },
       { key: "vog", label: "VOG", goal: "70%", unit: "%", direction: "higher" },
+      { key: "lateSendsPct", label: "Critical Ticket", goal: "< 2%", unit: "%", direction: "lower" },
     ],
   },
   {
