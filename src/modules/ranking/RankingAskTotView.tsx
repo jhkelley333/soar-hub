@@ -17,7 +17,7 @@ const SUGGESTIONS = [
   { area: "Store Directory", prompt: "List stores in my region with their GMs" },
   { area: "Ranking", prompt: "Who are the top 5 ranked stores this period?" },
   { area: "Ranking", prompt: "Which stores improved the most vs last year?" },
-  { area: "Promos & LTO", prompt: "What promotions are currently running?" },
+  { area: "Resources", prompt: "What does the operations guide say about food safety?" },
 ];
 
 function TotMark({ size = 30 }: { size?: number }) {
@@ -138,7 +138,7 @@ export function RankingAskTotView() {
           <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider" style={{ color: "#BFD6EE" }}>
             Ask about
           </div>
-          {["Store directory", "Ranking & scores", "Promos & LTO"].map((item) => (
+          {["Store directory", "Ranking & scores", "Resource docs"].map((item) => (
             <div
               key={item}
               className="rounded-lg px-2 py-1.5 text-[13px] font-medium"

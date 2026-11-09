@@ -1,9 +1,11 @@
 // Ask Tot — SOAR Hub AI assistant (beta).
-// POST /api/ask-tot  { message, conversationId?, history? }
+// POST /api/ask-tot  { message, history? }
 // Roles: admin, coo, vp, rvp only.
-// Retrieves Hub data scoped to the caller, feeds Groq, returns structured answer.
+// Retrieves Hub data (Supabase + Google Drive Resources) and answers from it.
 
 import { createClient } from "@supabase/supabase-js";
+import { google } from "googleapis";
+import { getGoogleCredentials } from "./_lib/googleCreds.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -12,6 +14,7 @@ const MODEL = "claude-sonnet-4-6";
 const ANTHROPIC_VERSION = "2023-06-01";
 
 const ALLOWED_ROLES = new Set(["admin", "coo", "vp", "rvp"]);
+const RESOURCES_ROOT = process.env.RESOURCES_ROOT_FOLDER_ID || "1E7ATygR2gg2CKny8NFhjVhee68HbsVkQ";
 
 function supa() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("Supabase env vars not configured.");
@@ -36,6 +39,49 @@ async function getSessionUser(db, event) {
     .single();
   if (!profile || !profile.is_active) return null;
   return profile;
+}
+
+// Search Google Drive Resources for documents relevant to the question.
+// Searches by name match first; exports Google Docs as plain text (first 3 KB).
+async function retrieveDriveDocuments(message) {
+  const credentials = await getGoogleCredentials();
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ["https://www.googleapis.com/auth/drive.readonly"],
+  });
+  const drive = google.drive({ version: "v3", auth });
+
+  // Pull significant words (>3 chars) from the message to search by name
+  const stopWords = new Set(["what", "which", "when", "where", "that", "this", "have", "with", "from", "about", "much", "many", "does", "will", "last", "week", "show", "tell"]);
+  const keywords = [...new Set(
+    message.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)
+      .filter((w) => w.length > 3 && !stopWords.has(w))
+  )].slice(0, 4);
+
+  if (keywords.length === 0) return [];
+
+  // Build a name-contains query for each keyword
+  const nameQuery = keywords.map((k) => `name contains '${k}'`).join(" or ");
+  const q = `(${nameQuery}) and '${RESOURCES_ROOT}' in parents and trashed=false and mimeType='application/vnd.google-apps.document'`;
+
+  const res = await drive.files.list({
+    q,
+    fields: "files(id,name,mimeType)",
+    pageSize: 3,
+    orderBy: "modifiedTime desc",
+  });
+
+  const docs = [];
+  for (const file of (res.data.files || []).slice(0, 2)) {
+    try {
+      const exported = await drive.files.export({ fileId: file.id, mimeType: "text/plain" }, { responseType: "text" });
+      const text = String(exported.data || "").slice(0, 3000).trim();
+      if (text) docs.push({ name: file.name, text });
+    } catch {
+      // Skip files that can't be exported
+    }
+  }
+  return docs;
 }
 
 // Retrieve relevant Hub context based on the user's message + role.
@@ -108,6 +154,13 @@ async function retrieveContext(db, user, message) {
   }
 
   // Promo/LTO: not yet wired to a Supabase table — Tot will say so if asked
+
+  // Google Drive Resources — search for documents relevant to the question
+  const driveResults = await retrieveDriveDocuments(message).catch(() => []);
+  for (const doc of driveResults) {
+    context.push(`RESOURCE DOCUMENT — "${doc.name}":\n${doc.text}`);
+    sources.push(`Resources › ${doc.name}`);
+  }
 
   // If nothing matched, give a brief store summary so Tot can still answer
   if (context.length === 0) {
@@ -211,6 +264,7 @@ RULES (never break these):
 WHAT YOU CAN HELP WITH:
 - Store directory (numbers, locations, GMs, DOs, phone, hours)
 - Weekly ranking and performance scores (top/bottom stores, % vs LY, points)
+- Resource library documents (operations guides, training materials, SOPs)
 - General SOAR Hub navigation questions
 
 WHAT YOU CANNOT HELP WITH:
