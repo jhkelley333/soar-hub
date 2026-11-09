@@ -56,7 +56,7 @@ export function ManualCorrectionPage() {
     const payload: DailyRowCorrectionInput = { store_number: storeNumber, business_date: businessDate, reason };
     for (const { key } of CORRECTABLE) {
       const v = fields[key as string];
-      if (v !== undefined && v !== "") (payload as Record<string, unknown>)[key] = Number(v);
+      if (v !== undefined && v !== "") (payload as unknown as Record<string, unknown>)[key] = Number(v);
     }
     mut.mutate(payload);
   }
