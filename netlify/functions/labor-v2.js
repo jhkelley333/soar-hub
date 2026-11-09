@@ -1638,17 +1638,11 @@ const NO_GM_REASONS = new Set(["loa", "no_gm", "in_training"]);
 
 const REASON_LABEL = { loa: "LOA", no_gm: "No GM", in_training: "In Training" };
 
-// Best-effort instant notification to Khaled + all RVPs when a No-GM tag is created.
-async function sendNoGmNotification(supa, { storeNumber, storeName, reason, startDate, endDate, note, createdByName, createdByEmail }) {
+// Best-effort instant notification to Khaled when a No-GM tag is created.
+async function sendNoGmNotification(_supa, { storeNumber, storeName, reason, startDate, endDate, note, createdByName, createdByEmail }) {
   if (!RESEND_API_KEY) return;
   try {
-    // Collect RVP emails from profiles.
-    const { data: rvps } = await supa.from("profiles")
-      .select("email").eq("role", "rvp").eq("is_active", true);
-    const recipients = Array.from(new Set([
-      ...NO_GM_NOTIFY_STATIC,
-      ...(rvps || []).map((p) => p.email).filter(Boolean),
-    ]));
+    const recipients = NO_GM_NOTIFY_STATIC.filter(Boolean);
     if (!recipients.length) return;
 
     const reasonLabel = REASON_LABEL[reason] || reason;
@@ -1749,7 +1743,7 @@ async function noGmAdd(supa, user, body) {
   }
 
   // Best-effort instant notification — do not await so it never blocks the response.
-  sendNoGmNotification(supa, {
+  sendNoGmNotification(null, {
     storeNumber,
     storeName: storeRow?.name ?? null,
     reason,
