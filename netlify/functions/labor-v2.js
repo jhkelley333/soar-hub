@@ -579,6 +579,41 @@ async function pullLog(supa) {
   return { entries: data || [] };
 }
 
+// Return the current labor_v2_daily row for a store/date (VP+ only).
+async function getDailyRow(supa, user, params) {
+  if (!CORRECTION_ROLES.has(roleOf(user))) return { error: "VP and above only.", status: 403 };
+  const storeNumber = String(params?.store_number || "").trim();
+  const businessDate = String(params?.business_date || "").trim();
+  if (!storeNumber || !businessDate) return { error: "store_number and business_date are required.", status: 400 };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) return { error: "Invalid business_date.", status: 400 };
+  const { data, error } = await supa
+    .from("labor_v2_daily")
+    .select([...CORRECTABLE_FIELDS].join(", "))
+    .eq("store_number", storeNumber)
+    .eq("business_date", businessDate)
+    .maybeSingle();
+  if (error) return { error: error.message, status: 500 };
+  return { row: data ?? null };
+}
+
+// Return labor_data_revisions rows for a store/date (VP+ only).
+async function getDailyRowRevisions(supa, user, params) {
+  if (!CORRECTION_ROLES.has(roleOf(user))) return { error: "VP and above only.", status: 403 };
+  const storeNumber = String(params?.store_number || "").trim();
+  const businessDate = String(params?.business_date || "").trim();
+  if (!storeNumber || !businessDate) return { error: "store_number and business_date are required.", status: 400 };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) return { error: "Invalid business_date.", status: 400 };
+  const { data, error } = await supa
+    .from("labor_data_revisions")
+    .select("id, source, field, old_value, new_value, pull_source, detected_at")
+    .eq("store_number", storeNumber)
+    .eq("business_date", businessDate)
+    .order("detected_at", { ascending: false })
+    .limit(200);
+  if (error) return { error: error.message, status: 500 };
+  return { entries: data || [] };
+}
+
 // Recent restatements (a re-pull changed an already-captured value). Admin.
 async function dataRevisions(supa, params) {
   const bd = params?.business_date && /^\d{4}-\d{2}-\d{2}$/.test(params.business_date) ? params.business_date : null;
@@ -2862,6 +2897,8 @@ export const handler = async (event) => {
     if (action === "dates") return respond(200, await listDates(supa));
     if (action === "pull-log") return respond(200, { ok: true, ...(await pullLog(supa)) });
     if (action === "data-revisions") return unwrap(await dataRevisions(supa, params));
+    if (action === "get-daily-row") return unwrap(await getDailyRow(supa, user, params));
+    if (action === "get-daily-row-revisions") return unwrap(await getDailyRowRevisions(supa, user, params));
     if (action === "backfill-closes") return unwrap(await backfillCloses(supa));
     if (action === "summary") {
       const out = await summary(supa, params, user);

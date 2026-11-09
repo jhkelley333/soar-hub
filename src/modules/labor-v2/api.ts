@@ -113,6 +113,26 @@ export function correctDailyRow(input: DailyRowCorrectionInput): Promise<DailyRo
   return req(`${FN}?action=correct-daily-row`, { method: "POST", body: JSON.stringify(input) });
 }
 
+export type DailyRowFields = Partial<Record<keyof Omit<DailyRowCorrectionInput, "store_number" | "business_date" | "reason">, number | null>>;
+
+export function fetchDailyRow(storeNumber: string, businessDate: string): Promise<{ row: DailyRowFields | null }> {
+  return req(`${FN}?action=get-daily-row&store_number=${encodeURIComponent(storeNumber)}&business_date=${encodeURIComponent(businessDate)}`);
+}
+
+export interface DailyRowRevision {
+  id: string;
+  source: string;
+  field: string;
+  old_value: number | null;
+  new_value: number | null;
+  pull_source: string | null;
+  detected_at: string;
+}
+
+export function fetchDailyRowRevisions(storeNumber: string, businessDate: string): Promise<{ entries: DailyRowRevision[] }> {
+  return req(`${FN}?action=get-daily-row-revisions&store_number=${encodeURIComponent(storeNumber)}&business_date=${encodeURIComponent(businessDate)}`);
+}
+
 // ── Leadership "Team labor" rollup (drill Region → Market → District → Store) ─
 export function fetchLaborV2Team(date?: string): Promise<TeamLaborResponse> {
   const p = new URLSearchParams({ action: "team" });
