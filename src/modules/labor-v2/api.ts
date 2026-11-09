@@ -84,6 +84,35 @@ export function fetchDataRevisions(businessDate?: string): Promise<{ entries: Da
   return req(`${FN}?${p.toString()}`);
 }
 
+// ── Manual daily-row correction (admin/VP only) ───────────────────────────────
+export interface DailyRowCorrectionInput {
+  store_number: string;
+  business_date: string;        // YYYY-MM-DD
+  reason: string;
+  net_sales?: number;
+  labor_cost?: number;
+  labor_hours?: number;
+  labor_pct?: number;
+  target_labor_pct?: number;
+  wtd_net_sales?: number;
+  wtd_labor_cost?: number;
+  wtd_labor_hours?: number;
+  wtd_target_labor_pct?: number;
+  ptd_net_sales?: number;
+  ptd_labor_cost?: number;
+  ptd_labor_hours?: number;
+}
+export interface DailyRowCorrectionResult {
+  ok: true;
+  store_number: string;
+  business_date: string;
+  fields_corrected: string[];
+  reason: string;
+}
+export function correctDailyRow(input: DailyRowCorrectionInput): Promise<DailyRowCorrectionResult> {
+  return req(`${FN}?action=correct-daily-row`, { method: "POST", body: JSON.stringify(input) });
+}
+
 // ── Leadership "Team labor" rollup (drill Region → Market → District → Store) ─
 export function fetchLaborV2Team(date?: string): Promise<TeamLaborResponse> {
   const p = new URLSearchParams({ action: "team" });

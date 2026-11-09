@@ -344,6 +344,93 @@ async function listDates(supa) {
   return { dates };
 }
 
+// Admin manual correction of a single store/date row in labor_v2_daily.
+// Accepts any subset of the correctable numeric fields plus a required reason.
+// Writes revisions to labor_data_revisions and logs to kpi_pull_log so the
+// change shows up in the Pull Log page alongside feed-driven restatements.
+const CORRECTION_ROLES = new Set(["vp", "coo", "admin"]);
+const CORRECTABLE_FIELDS = new Set([
+  "net_sales", "labor_cost", "labor_hours", "labor_pct", "target_labor_pct",
+  "wtd_net_sales", "wtd_labor_cost", "wtd_labor_hours", "wtd_target_labor_pct",
+  "ptd_net_sales", "ptd_labor_cost", "ptd_labor_hours",
+]);
+
+async function correctDailyRow(supa, user, body) {
+  if (!CORRECTION_ROLES.has(roleOf(user))) return { error: "VP and above only.", status: 403 };
+  const storeNumber = String(body?.store_number || "").trim();
+  const businessDate = String(body?.business_date || "").trim();
+  const reason = String(body?.reason || "").trim().slice(0, 500);
+  if (!storeNumber) return { error: "store_number is required.", status: 400 };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) return { error: "business_date must be YYYY-MM-DD.", status: 400 };
+  if (!reason) return { error: "reason is required — describe why this correction is needed.", status: 400 };
+
+  // Build the patch from only correctable numeric fields that were provided.
+  const patch = {};
+  for (const field of CORRECTABLE_FIELDS) {
+    if (body?.[field] !== undefined && body[field] !== null && body[field] !== "") {
+      const v = Number(body[field]);
+      if (!isFinite(v)) return { error: `${field} must be a number.`, status: 400 };
+      patch[field] = v;
+    }
+  }
+  if (!Object.keys(patch).length) {
+    return { error: `Provide at least one correctable field: ${[...CORRECTABLE_FIELDS].join(", ")}.`, status: 400 };
+  }
+
+  // Confirm the row exists.
+  const { data: existing } = await supa.from("labor_v2_daily")
+    .select("*").eq("store_number", storeNumber).eq("business_date", businessDate).maybeSingle();
+  if (!existing) {
+    return { error: `No row found for store ${storeNumber} on ${businessDate}. Only existing rows can be corrected.`, status: 404 };
+  }
+
+  // Record field-level revisions before the update.
+  const revisions = [];
+  for (const [field, newVal] of Object.entries(patch)) {
+    const oldVal = existing[field];
+    if (oldVal !== undefined && oldVal !== null) {
+      revisions.push({
+        source: "labor",
+        store_number: storeNumber,
+        business_date: businessDate,
+        field,
+        old_value: Number(oldVal),
+        new_value: newVal,
+        pull_source: "manual-correction",
+        detected_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Apply the correction.
+  const { error: updateErr } = await supa.from("labor_v2_daily")
+    .update({ ...patch, captured_at: new Date().toISOString() })
+    .eq("store_number", storeNumber)
+    .eq("business_date", businessDate);
+  if (updateErr) return { error: updateErr.message, status: 500 };
+
+  // Write revision audit entries.
+  if (revisions.length) {
+    await supa.from("labor_data_revisions").insert(revisions).catch((e) => {
+      console.warn("[labor-v2] correction revision log failed:", e?.message);
+    });
+  }
+
+  // Log to kpi_pull_log so it appears in the Pull Log admin page.
+  await supa.from("kpi_pull_log").insert({
+    source: "manual-correction",
+    ok: true,
+    business_date: businessDate,
+    store_rows: 1,
+    triggered_by: user.email,
+    error: null,
+  }).catch((e) => {
+    console.warn("[labor-v2] correction pull-log entry failed:", e?.message);
+  });
+
+  return { ok: true, store_number: storeNumber, business_date: businessDate, fields_corrected: Object.keys(patch), reason };
+}
+
 // Pull the feed now and upsert into labor_v2_daily; returns the business date.
 // ctx = { source, triggeredBy } for the pull log.
 // Compare the incoming rows against what's already stored for this business
@@ -2747,6 +2834,7 @@ export const handler = async (event) => {
       if (action === "corp-training-apply") return unwrap(await corpTrainingApply(supa, user, body));
       if (action === "corp-training-delete") return unwrap(await corpTrainingDelete(supa, user, body));
       if (action === "corp-training-rate-set") return unwrap(await corpTrainingRateSet(supa, user, body));
+      if (action === "correct-daily-row") return unwrap(await correctDailyRow(supa, user, body));
       return respond(400, { error: `Unknown action: ${action}` });
     }
 
