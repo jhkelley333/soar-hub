@@ -1176,15 +1176,30 @@ async function submitPto(supa, user, body) {
     ? `SHORT NOTICE: the first day out (${shortNotice.first}) is ${shortNotice.lead < 0 ? "in the past" : `only ${shortNotice.lead} day${shortNotice.lead === 1 ? "" : "s"} away`} — inside the ${PTO_ADVANCE_DAYS}-day window. This needs SDO or RVP approval.\n\n`
     : "";
   const flags = [quota.over ? "OVER ALLOWANCE" : null, shortNotice.short ? "SHORT NOTICE" : null].filter(Boolean).join(" · ");
-  await notifyLeadership(supa, {
-    storeNumber,
-    sendCopy: built.fields.send_copy,
-    submitterEmail: user.email,
-    subject: `PTO Request — ${built.meta.employeeName} (Store ${storeNumber})${flags ? ` — ${flags}` : ""}`,
-    text:
-      `A PTO request was submitted by ${displayName(user)}.\n\n` +
-      `Store: ${storeNumber}\n${built.meta.summary}${quotaNote}${shortNote}Review it here: ${link}`,
-  });
+  const { dos, sdos, rvps } = await resolveStoreLeadership(supa, storeNumber);
+  const submitterCopy = built.fields.send_copy ? [user.email] : [];
+
+  if (shortNotice.short || insertRow.status === "DO Approved") {
+    // Short-notice: DO step was auto-skipped — notify SDO + RVP directly (they need to act).
+    const to = Array.from(new Set([...sdos, ...rvps].map((p) => p.email).filter(Boolean).concat(submitterCopy)));
+    await sendEmailViaResend({
+      to,
+      subject: `PTO Request — ${built.meta.employeeName} (Store ${storeNumber})${flags ? ` — ${flags}` : ""}`,
+      text:
+        `A PTO request was submitted by ${displayName(user)} and needs SDO/RVP approval (short notice — DO step skipped).\n\n` +
+        `Store: ${storeNumber}\n${built.meta.summary}${quotaNote}${shortNote}Review it here: ${link}`,
+    });
+  } else {
+    // Normal flow: only the DO sees it at submission; RVP is notified after the DO approves.
+    const to = Array.from(new Set(dos.map((p) => p.email).filter(Boolean).concat(submitterCopy)));
+    await sendEmailViaResend({
+      to,
+      subject: `PTO Request — ${built.meta.employeeName} (Store ${storeNumber})${flags ? ` — ${flags}` : ""}`,
+      text:
+        `A PTO request was submitted by ${displayName(user)}.\n\n` +
+        `Store: ${storeNumber}\n${built.meta.summary}${quotaNote}Review it here: ${link}`,
+    });
+  }
 
   return { ok: true, id: created.id, status: insertRow.status, over_quota: quota.over, short_notice: shortNotice.short };
 }
@@ -1253,10 +1268,12 @@ async function updatePto(supa, user, body) {
   });
 
   const link = `${appBaseUrl()}/employee-actions`;
-  await notifyLeadership(supa, {
-    storeNumber,
-    sendCopy: built.fields.send_copy,
-    submitterEmail: user.email,
+  // Resubmit always lands back at "Submitted" → only the DO needs to act.
+  const { dos: resubDos } = await resolveStoreLeadership(supa, storeNumber);
+  const resubCopy = built.fields.send_copy ? [user.email] : [];
+  const resubTo = Array.from(new Set(resubDos.map((p) => p.email).filter(Boolean).concat(resubCopy)));
+  await sendEmailViaResend({
+    to: resubTo,
     subject: `PTO Resubmitted — ${built.meta.employeeName} (Store ${storeNumber})`,
     text:
       `A PTO request was resubmitted after changes by ${displayName(user)}.\n\n` +
