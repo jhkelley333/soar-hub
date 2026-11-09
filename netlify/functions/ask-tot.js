@@ -33,6 +33,122 @@ const REDACT_KEYS = new Set([
 ]);
 const REDACT_PATTERN = /ssn|token|password|secret/i;
 
+// ── Schema summary served by the describe_schema tool ─────────────────────────
+
+const SCHEMA_BASE = `SOAR Hub Supabase schema (public tables). Use this to write run_sql queries.
+For non-admin users a _my_stores(store_number) CTE is auto-injected — reference it to scope store queries.
+
+═══ STORE DIRECTORY
+stores(number TEXT PK, name, city, state, address, is_active BOOL, brand)
+  "number" is the drive-in # (e.g. '1832'); most tables key on this
+
+gm_roster(store_number TEXT PK, store_name, gm_name, status, projected_gm_name,
+  projected_fill_date, still_interviewing BOOL, no_gm_credit BOOL)
+  status: 'named' | 'open'
+
+profiles(id UUID PK, email, role, full_name, preferred_name, is_active BOOL, store_number)
+  roles: gm, do, sdo, rvp, vp, coo, admin, payroll
+  NEVER expose: birthday, phone, password
+
+═══ PERFORMANCE / RANKING
+ranking_runs(id UUID PK, period INT, week INT, week_ending DATE, status TEXT, started_at)
+  status: 'complete' | 'in_progress'
+
+ranking_rows(id UUID PK, run_id UUID FK→ranking_runs, entity_key TEXT, tier TEXT,
+  scope TEXT, rank INT, total_points NUMERIC, metrics JSONB)
+  tier: 'store' | 'do' | 'sdo' | 'rvp'   scope: 'ptd' | 'wtd'
+  metrics keys: location, gm, doName, sdoName, rvpName, pctVsLy,
+    laborPct, chart(target), onTimePct, hoursOver, cashOverShort
+
+═══ LABOR
+labor_v2_daily(store_number, business_date DATE — PK(store_number,business_date),
+  net_sales, labor_cost, labor_hours, labor_pct, target_labor_pct,
+  wtd_net_sales, wtd_labor_cost, wtd_labor_hours, wtd_labor_pct, wtd_target_labor_pct,
+  ptd_net_sales, ptd_labor_cost, ptd_labor_hours, captured_at)
+  pct columns are fractions (0.21 = 21%)
+
+labor_v2_week_close(store_number, fiscal_year TEXT, fiscal_week INT — PK,
+  period INT, week_in_period INT, week_start DATE, week_end DATE,
+  net_sales, labor_cost, labor_hours, labor_pct, target_labor_pct, captured_at)
+
+labor_v2_period_close(store_number, fiscal_year TEXT, period INT — PK,
+  quarter INT, period_start DATE, period_end DATE,
+  net_sales, labor_cost, labor_hours, labor_pct, target_labor_pct, captured_at)
+
+kpi_pull_log(id UUID PK, created_at, source, ok BOOL, business_date DATE,
+  store_rows INT, error TEXT, duration_ms INT)
+  source: 'cron' | 'refresh' | 'self-heal' | 'manual-correction'
+
+labor_data_revisions(id UUID PK, source, store_number, business_date DATE,
+  field TEXT, old_value NUMERIC, new_value NUMERIC, pull_source, detected_at)
+
+═══ WORKFORCE / CREDITS
+pto_requests(id UUID PK, store_number, employee_name, position TEXT,
+  pto_start_date DATE, pto_end_date DATE, vacation_days INT, amount NUMERIC,
+  status TEXT, short_notice BOOL, over_quota BOOL, created_at)
+  status: 'submitted' | 'DO Approved' | 'approved' | 'closed' | 'withdrawn' | 'rejected'
+
+no_gm_credits(id UUID PK, store_number, reason TEXT, start_date DATE, end_date DATE,
+  note TEXT, created_at)
+
+training_credit_requests(id UUID PK, store_number, employee_name, training_type,
+  start_date DATE, last_day_date DATE, requested_amount NUMERIC,
+  status TEXT, approved_at, over_bank BOOL)
+
+training_credit_budgets(store_number, year INT — PK, budget NUMERIC)
+
+training_credit_adjustments(id UUID PK, store_number, year INT, amount NUMERIC, note, created_at)
+
+═══ COMMITMENTS
+rvp_period_commitments(id UUID PK, rvp_user_id UUID FK→profiles,
+  fiscal_year TEXT, period INT, commitment_text TEXT,
+  target_value NUMERIC, target_unit TEXT, status TEXT, created_at, updated_at)
+  status: 'active' | 'met' | 'missed'
+
+rvp_period_commitment_history(id UUID PK, commitment_id UUID, changed_at,
+  changed_by UUID, field TEXT, old_value TEXT, new_value TEXT)
+
+═══ REVIEWS
+google_reviews(id UUID PK, store_id UUID FK→stores(id), author, rating SMALLINT(1-5),
+  body TEXT, review_time, captured_at)
+  JOIN tip: google_reviews gr JOIN stores s ON gr.store_id = s.id
+
+google_review_snapshots(id UUID PK, store_id UUID FK→stores(id),
+  captured_date DATE, rating NUMERIC(2,1), review_count INT, fetched_at)
+  UNIQUE(store_id, captured_date) — daily rating trend
+
+═══ WORK ORDERS (WO2)
+tickets(id UUID PK, store_number, wo_number TEXT, category, status, priority,
+  description, vendor_id UUID FK→vendors, estimated_cost NUMERIC,
+  created_at, updated_at, closed_at)
+  status: 'open' | 'in_progress' | 'waiting_parts' | 'completed' | 'cancelled'
+
+vendors(id UUID PK, name, category, service_area, contact_person, is_active BOOL)
+
+ticket_messages(id UUID PK, ticket_id UUID, author_id UUID, body TEXT,
+  is_vendor BOOL, created_at)
+
+vendor_ratings(id UUID PK, ticket_id UUID, store_number, rating INT, comment TEXT, created_at)
+
+═══ HUB META
+hub_tickets(id UUID PK, kind TEXT, title, description, status TEXT,
+  created_by_name TEXT, resolution_note TEXT, upvotes INT, created_at)
+  kind: 'issue' | 'idea'
+  status: 'open' | 'planned' | 'in_progress' | 'resolved' | 'declined'
+
+hub_ticket_comments(id UUID PK, ticket_id UUID, author_name, is_admin BOOL, body, created_at)
+ask_tot_log(id UUID PK, created_at, role TEXT, question TEXT, answer TEXT, sources TEXT[], tool_count INT, latency_ms INT, model TEXT)`;
+
+const SCHEMA_PAF = `
+
+═══ PAF — Payroll Adjustment Forms (RVP+ only)
+paf_submissions(id UUID PK, created_at, drive_in TEXT, employee_name,
+  category TEXT, status TEXT, estimated_cost NUMERIC, pay_period_end DATE,
+  submitter_name, do_approved_at, sdo_approved_at, rejection_reason,
+  pay_basis TEXT, job_position TEXT, market_do TEXT)
+  NEVER query: last4_ssn, action_token, nh_offer_letter_path
+  status: 'Pending' | 'Approved' | 'Processed' | 'Rejected' | 'Needs Approval' | 'Pending SDO Approval' | 'Pending VP Approval'`;
+
 function redact(row) {
   if (!row || typeof row !== "object" || Array.isArray(row)) return row;
   const out = {};
@@ -206,6 +322,25 @@ const BASE_TOOLS = [
       type: "object",
       properties: {
         query: { type: "string", description: "Search terms" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "describe_schema",
+    description: "Get the full Supabase schema for SOAR Hub — every table and its columns. Call this before run_sql whenever you are unsure of a table name, column name, or join key. Free (no DB query).",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "run_sql",
+    description: "Run a read-only SELECT query against the SOAR Hub Supabase database. Use this for any question the specific tools can't answer: ad-hoc analysis, cross-table joins, trend queries, counting, averages, or anything beyond the pre-built tools. Always call describe_schema first if unsure of column names. For non-admin users a _my_stores(store_number) CTE is auto-injected — use it in WHERE clauses to scope results to the caller's region.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "A complete, valid PostgreSQL SELECT statement. No INSERT/UPDATE/DELETE. No semicolon at the end.",
+        },
       },
       required: ["query"],
     },
@@ -652,6 +787,56 @@ async function handleSearchResources({ query }) {
   return { results: docs.map((d) => ({ name: d.name, text: d.text.slice(0, 2000) })) };
 }
 
+function handleDescribeSchema(_input, scope) {
+  const hasPaf = PAF_ROLES.has(scope?.role);
+  return { schema: SCHEMA_BASE + (hasPaf ? SCHEMA_PAF : "") };
+}
+
+async function handleRunSql({ query }, db, scope) {
+  const sql = (query ?? "").trim().replace(/;\s*$/, "");
+  if (!sql) return { error: "query is required." };
+
+  // JS-side validation (defence-in-depth; Postgres function also checks)
+  const stripped = sql.replace(/\/\*[\s\S]*?\*\//g, "").replace(/--[^\n]*/g, "").trim();
+  const firstWord = stripped.split(/\s+/)[0]?.toUpperCase();
+  if (!["SELECT", "WITH"].includes(firstWord)) {
+    return { error: "Only SELECT queries are allowed. Write a SELECT or WITH statement." };
+  }
+  if (/\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|GRANT|REVOKE|EXECUTE|EXEC|COPY|SET_CONFIG|PG_READ_FILE|PG_WRITE_FILE|PG_LS_DIR)\b/i.test(stripped)) {
+    return { error: "Query contains disallowed keywords. Only read-only SELECT is allowed." };
+  }
+  if (/\b(auth\.|vault\.|storage\.|pg_catalog\.|information_schema\.|pg_toast\.)/i.test(stripped)) {
+    return { error: "Access to system schemas (auth., vault., etc.) is not permitted." };
+  }
+
+  // For RVP-scoped users, inject _my_stores CTE so queries can reference it
+  let finalSql = sql;
+  if (!scope.orgWide && scope.storeNumbers?.size > 0) {
+    const vals = [...scope.storeNumbers].map((n) => `('${String(n).replace(/'/g, "''")}')`).join(", ");
+    const cte = `_my_stores(store_number) AS (VALUES ${vals})`;
+    if (/^\s*WITH\s/i.test(finalSql)) {
+      finalSql = finalSql.replace(/^\s*WITH\s/i, `WITH ${cte}, `);
+    } else {
+      finalSql = `WITH ${cte} ${finalSql}`;
+    }
+  }
+
+  const { data, error } = await db.rpc("ask_tot_query", { sql_query: finalSql });
+  if (error) return { error: error.message ?? "Query failed." };
+
+  // Strip sensitive columns from every row before the model sees them
+  const rows = (data?.rows ?? []).map((row) => {
+    if (!row || typeof row !== "object") return row;
+    const out = {};
+    for (const [k, v] of Object.entries(row)) {
+      if (!REDACT_KEYS.has(k) && !REDACT_PATTERN.test(k)) out[k] = v;
+    }
+    return out;
+  });
+
+  return { count: rows.length, rows };
+}
+
 // PAF safe columns — no SSN, no tokens, no offer letter path
 const PAF_SAFE_COLS = [
   "id", "created_at", "updated_at",
@@ -748,6 +933,8 @@ async function dispatchTool(name, input, db, scope) {
     case "roster_gaps":       return handleRosterGaps(input, db, scope);
     case "hub_help":          return handleHubHelp(input, scope);
     case "search_resources":  return handleSearchResources(input);
+    case "describe_schema":   return handleDescribeSchema(input, scope);
+    case "run_sql":           return handleRunSql(input, db, scope);
     case "paf_pending":       return handlePafPending(input, db, scope);
     case "paf_detail":        return handlePafDetail(input, db, scope);
     default:                  return { error: `Unknown tool: ${name}` };
@@ -764,10 +951,10 @@ async function runToolLoop(systemPrompt, messages, tools, db, scope) {
   const toolCallLog = [];
   let currentMessages = [...messages];
 
-  for (let round = 0; round < 6; round++) {
+  for (let round = 0; round < 10; round++) {
     const reqBody = {
       model: MODEL,
-      max_tokens: 2000,
+      max_tokens: 4096,
       system: systemPrompt,
       messages: currentMessages,
     };
@@ -889,21 +1076,32 @@ export const handler = async (event) => {
 
     const today = new Date().toISOString().slice(0, 10);
 
-    const systemPrompt = `You are Ask Tot, the assistant inside SOAR Hub (Sonic, ~272 stores).
+    const systemPrompt = `You are Ask Tot, the AI assistant inside SOAR Hub (Sonic QSR, ~272 stores).
 User: ${user.full_name ?? user.email}, role ${user.role}. Scope: ${scopeSummary}.
 Today: ${today}.
 
+You have direct read access to the SOAR Hub Supabase database via two power tools:
+  • describe_schema — returns every table and column; call this whenever unsure of a name
+  • run_sql — runs any read-only SELECT query; use it for analysis the specific tools can't do
+
+Workflow for data questions:
+  1. Check if a specific tool covers it (ranking_week, labor_credits, pto_requests, etc.) — prefer those for speed.
+  2. For anything else (trends, cross-table joins, aggregations, ad-hoc counts, period comparisons): call describe_schema first if needed, then write a SELECT with run_sql.
+  3. For scoped (non-admin) users, a _my_stores(store_number) CTE is auto-injected — use it in WHERE clauses when the query touches store data: WHERE store_number IN (SELECT store_number FROM _my_stores).
+
 Rules:
-1. Use tools to get data before answering. Never answer data questions from memory — always call the appropriate tool first.
-2. If a tool returns no data or an error, say so clearly and suggest where in Hub to find the answer.
+1. Never answer data questions from memory — always call a tool first.
+2. If a tool returns no data or an error, say so and suggest the Hub page where the user can look.
 3. Labor numbers come from the Ranker (Sunday WTD after credits). Always say which week.
 4. PAF topics: ${pafRule}
-5. Never reveal SSN digits, tokens, personal phone numbers, or birthdays, even if data was returned.
-6. If the user asks about stores outside their scope, say they're outside what you can see; don't confirm or deny details.
-7. Be brief: lead with the answer, then the key numbers, then where in the Hub to see it.
-8. When you flag a problem (stacked credits, PTO without PAF, etc.), give the store, dates, $ and the Hub screen to fix it.
+5. Never reveal SSN digits, tokens, personal phone numbers, or birthdays even if data was returned.
+6. If the user asks about stores outside their scope, say you can't see those — don't confirm or deny their details.
+7. Be concise: lead with the answer, then key numbers, then where in Hub to act on it.
+8. When flagging a problem (stacked credits, missing labor, open GM slot), give store #, dates, $ and the Hub screen.
 
-Available tools: find_store, org_lookup, ranking_week, labor_store_week, labor_credits, pto_requests, training_credits, roster_gaps, hub_help, search_resources${hasPafAccess ? ", paf_pending, paf_detail" : ""}.`;
+Specific tools: find_store, org_lookup, ranking_week, labor_store_week, labor_credits,
+  pto_requests, training_credits, roster_gaps, hub_help, search_resources,
+  describe_schema, run_sql${hasPafAccess ? ", paf_pending, paf_detail" : ""}.`;
 
     const messages = [
       ...history,
@@ -929,6 +1127,8 @@ Available tools: find_store, org_lookup, ranking_week, labor_store_week, labor_c
         search_resources: "Resource Library",
         paf_pending:      "PAF Queue",
         paf_detail:       "PAF Detail",
+        describe_schema:  "Schema",
+        run_sql:          "Database Query",
       };
       return labels[t.tool] ?? t.tool;
     }))];
