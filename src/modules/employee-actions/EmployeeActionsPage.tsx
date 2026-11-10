@@ -301,11 +301,16 @@ function HistoryList({
     overlaps(r.pto_start_date, r.pto_end_date, r.created_at, w);
   const win = rangeWindow(range);
   const q = search.trim().toLowerCase();
+  const matchesQ = (name: string, storeNumber: string, storeName: string | null | undefined) =>
+    !q ||
+    name.toLowerCase().includes(q) ||
+    storeNumber.toLowerCase().includes(q) ||
+    (storeName ?? "").toLowerCase().includes(q);
   const visibleTraining = trainingCredits.filter(
-    (r) => trainingMatches(r, win) && (!q || r.employee_name.toLowerCase().includes(q)),
+    (r) => trainingMatches(r, win) && matchesQ(r.employee_name, r.store_number, r.store_name),
   );
   const visiblePto = ptoRequests.filter(
-    (r) => ptoMatches(r, win) && (!q || r.employee_name.toLowerCase().includes(q)),
+    (r) => ptoMatches(r, win) && matchesQ(r.employee_name, r.store_number, r.store_name),
   );
   const total = visibleTraining.length + visiblePto.length;
 
@@ -338,7 +343,7 @@ function HistoryList({
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" strokeWidth={1.75} />
           <Input
             type="search"
-            placeholder="Search by name…"
+            placeholder="Name or store #…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-8 py-1.5 text-sm"
@@ -350,7 +355,7 @@ function HistoryList({
         <Card>
           <EmptyState
             title="No requests found"
-            description={q ? `No results for "${search}" in this window. Try a different name or widen the range.` : "Widen the range to see older requests."}
+            description={q ? `No results for "${search}" in this window. Try a different name, store #, or widen the range.` : "Widen the range to see older requests."}
           />
         </Card>
       )}
