@@ -41,6 +41,7 @@ interface Props {
 }
 
 const MAX_PHOTOS = 5;
+const MAX_PHOTO_BYTES = 4 * 1024 * 1024; // 4 MB — Netlify function limit is ~6 MB; base64 overhead ~33%
 
 // Form-side cost row (strings while editing). Converted to LineItem on
 // submit; rows missing a label or a parseable amount are dropped.
@@ -107,6 +108,7 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
   // instead of requiring the store to pick a vendor.
   const [needsVendorHelp, setNeedsVendorHelp] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  const [photoError, setPhotoError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Optional cost breakdown. Inputs stay as strings; converted to the
   // LineItem shape (amount_cents) on submit. Backend derives the total.
@@ -320,8 +322,17 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
   const totalVisibleVendors = (allVendorsQ.data?.vendors ?? []).length;
 
   function handleFiles(input: HTMLInputElement) {
-    const arr = Array.from(input.files ?? []).slice(0, MAX_PHOTOS);
-    setFiles(arr);
+    const accepted: File[] = [];
+    const rejected: string[] = [];
+    for (const f of Array.from(input.files ?? []).slice(0, MAX_PHOTOS)) {
+      if (f.size > MAX_PHOTO_BYTES) {
+        rejected.push(`${f.name} is too large (${(f.size / 1024 / 1024).toFixed(1)} MB — max 4 MB)`);
+      } else {
+        accepted.push(f);
+      }
+    }
+    if (accepted.length) setFiles(accepted);
+    setPhotoError(rejected.length ? rejected.join("; ") : null);
   }
 
   const submit = useMutation({
@@ -1020,6 +1031,9 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
               <div className="mt-2 text-[11px] text-zinc-500">
                 {files.map((f) => f.name).join(", ")}
               </div>
+            )}
+            {photoError && (
+              <p className="mt-1.5 text-[11px] text-red-600">{photoError}</p>
             )}
           </div>
         </div>
