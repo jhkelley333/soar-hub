@@ -5,6 +5,9 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Info, RefreshCw, X } from "lucide-react";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, Cell,
+} from "recharts";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -87,12 +90,80 @@ function InfoModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+// Colors matched to step pills — same hue family, chart-safe hex values
+const STEP_COLORS: Record<number, string> = {
+  1: "#a1a1aa", // zinc-400 — No Shift Started
+  2: "#f59e0b", // amber-400 — Draft
+  3: "#38bdf8", // sky-400 — Submitted
+  4: "#34d399", // emerald-400 — Approved
+  5: "#059669", // emerald-600 — Published (deeper so it reads distinct from Approved)
+};
+
+function HistoryChart({ days }: { days: SchedHistoryDay[] }) {
+  const chartData = days.map((d) => ({
+    date: new Date(`${d.checked_date}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }),
+    "No Shift Started": d.stepCounts[1],
+    "Draft": d.stepCounts[2],
+    "Submitted": d.stepCounts[3],
+    "Approved": d.stepCounts[4],
+    "Published": d.stepCounts[5],
+  }));
+
+  const steps = [
+    { key: "No Shift Started", color: STEP_COLORS[1] },
+    { key: "Draft",            color: STEP_COLORS[2] },
+    { key: "Submitted",        color: STEP_COLORS[3] },
+    { key: "Approved",         color: STEP_COLORS[4] },
+    { key: "Published",        color: STEP_COLORS[5] },
+  ];
+
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <BarChart data={chartData} margin={{ top: 4, right: 8, left: -16, bottom: 0 }} barCategoryGap="28%">
+        <XAxis
+          dataKey="date"
+          tick={{ fontSize: 11, fill: "currentColor" }}
+          axisLine={false}
+          tickLine={false}
+        />
+        <YAxis
+          tick={{ fontSize: 11, fill: "currentColor" }}
+          axisLine={false}
+          tickLine={false}
+          allowDecimals={false}
+        />
+        <Tooltip
+          contentStyle={{
+            fontSize: 12,
+            borderRadius: 8,
+            border: "1px solid #e4e4e7",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+          }}
+          cursor={{ fill: "rgba(0,0,0,0.04)" }}
+        />
+        <Legend
+          iconType="circle"
+          iconSize={8}
+          wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+        />
+        {steps.map((s) => (
+          <Bar key={s.key} dataKey={s.key} stackId="a" fill={s.color} radius={s.key === "Published" ? [3, 3, 0, 0] : undefined} />
+        ))}
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
 function HistoryView({ days }: { days: SchedHistoryDay[] }) {
   if (!days.length) {
     return (
-      <div className="py-10 text-center text-sm text-zinc-400">
-        No history yet — check back after the next morning update.
-      </div>
+      <Card>
+        <CardBody>
+          <div className="py-10 text-center text-sm text-zinc-400">
+            No history yet — check back after the next morning update.
+          </div>
+        </CardBody>
+      </Card>
     );
   }
   const fmtDay = (s: string) =>
@@ -102,51 +173,59 @@ function HistoryView({ days }: { days: SchedHistoryDay[] }) {
   const hCls = "px-3 pb-2 text-right text-xs font-medium text-zinc-500 uppercase tracking-wide";
 
   return (
-    <Card>
-      <CardBody>
-        <div className="overflow-x-auto">
-          <table className="w-full table-fixed min-w-[520px]">
-            <colgroup>
-              <col className="w-32" />
-              <col className="w-28" />
-              <col className="w-20" />
-              <col className="w-24" />
-              <col className="w-20" />
-              <col className="w-24" />
-            </colgroup>
-            <thead>
-              <tr className="border-b border-zinc-200 dark:border-zinc-700">
-                <th className="pb-2 pr-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wide">Date</th>
-                <th className={hCls}>No Shift Started</th>
-                <th className={hCls}>Draft</th>
-                <th className={hCls}>Submitted</th>
-                <th className={hCls}>Approved</th>
-                <th className={hCls}>Published</th>
-              </tr>
-            </thead>
-            <tbody>
-              {days.map((d) => {
-                const done = d.stepCounts[4] + d.stepCounts[5];
-                const pct = d.total ? Math.round((done / d.total) * 100) : 0;
-                return (
-                  <tr key={d.checked_date} className="border-b border-zinc-100 dark:border-zinc-800">
-                    <td className="py-2 pr-3 text-sm font-medium">
-                      {fmtDay(d.checked_date)}
-                      <span className="ml-2 text-xs text-zinc-400">{pct}%</span>
-                    </td>
-                    <td className={cn(colCls, d.stepCounts[1] > 0 ? "text-zinc-500" : "text-zinc-300 dark:text-zinc-600")}>{d.stepCounts[1]}</td>
-                    <td className={cn(colCls, d.stepCounts[2] > 0 ? "text-amber-600 dark:text-amber-400" : "text-zinc-300 dark:text-zinc-600")}>{d.stepCounts[2]}</td>
-                    <td className={cn(colCls, d.stepCounts[3] > 0 ? "text-sky-600 dark:text-sky-400" : "text-zinc-300 dark:text-zinc-600")}>{d.stepCounts[3]}</td>
-                    <td className={cn(colCls, d.stepCounts[4] > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-zinc-300 dark:text-zinc-600")}>{d.stepCounts[4]}</td>
-                    <td className={cn(colCls, d.stepCounts[5] > 0 ? "text-emerald-700 dark:text-emerald-300 font-medium" : "text-zinc-300 dark:text-zinc-600")}>{d.stepCounts[5]}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </CardBody>
-    </Card>
+    <div className="space-y-4">
+      <Card>
+        <CardBody>
+          <HistoryChart days={days} />
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardBody>
+          <div className="overflow-x-auto">
+            <table className="w-full table-fixed min-w-[520px]">
+              <colgroup>
+                <col className="w-36" />
+                <col className="w-28" />
+                <col className="w-20" />
+                <col className="w-24" />
+                <col className="w-20" />
+                <col className="w-24" />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-zinc-200 dark:border-zinc-700">
+                  <th className="pb-2 pr-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wide">Date</th>
+                  <th className={hCls}>No Shift Started</th>
+                  <th className={hCls}>Draft</th>
+                  <th className={hCls}>Submitted</th>
+                  <th className={hCls}>Approved</th>
+                  <th className={hCls}>Published</th>
+                </tr>
+              </thead>
+              <tbody>
+                {days.map((d) => {
+                  const done = d.stepCounts[4] + d.stepCounts[5];
+                  const pct = d.total ? Math.round((done / d.total) * 100) : 0;
+                  return (
+                    <tr key={d.checked_date} className="border-b border-zinc-100 dark:border-zinc-800">
+                      <td className="py-2 pr-3 text-sm font-medium">
+                        {fmtDay(d.checked_date)}
+                        <span className="ml-2 text-xs text-zinc-400">{pct}%</span>
+                      </td>
+                      <td className={cn(colCls, d.stepCounts[1] > 0 ? "text-zinc-500" : "text-zinc-300 dark:text-zinc-600")}>{d.stepCounts[1]}</td>
+                      <td className={cn(colCls, d.stepCounts[2] > 0 ? "text-amber-600 dark:text-amber-400" : "text-zinc-300 dark:text-zinc-600")}>{d.stepCounts[2]}</td>
+                      <td className={cn(colCls, d.stepCounts[3] > 0 ? "text-sky-600 dark:text-sky-400" : "text-zinc-300 dark:text-zinc-600")}>{d.stepCounts[3]}</td>
+                      <td className={cn(colCls, d.stepCounts[4] > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-zinc-300 dark:text-zinc-600")}>{d.stepCounts[4]}</td>
+                      <td className={cn(colCls, d.stepCounts[5] > 0 ? "text-emerald-700 dark:text-emerald-300 font-medium" : "text-zinc-300 dark:text-zinc-600")}>{d.stepCounts[5]}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </CardBody>
+      </Card>
+    </div>
   );
 }
 
