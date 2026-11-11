@@ -134,9 +134,8 @@ async function getWeeks(supa, numbers) {
   const { data } = await supa
     .from("ew_schedule_status")
     .select("week_start")
-    .in("store_number", numbers)
     .order("week_start", { ascending: false })
-    .limit(52);
+    .limit(10000); // date strings only; dedup below collapses to distinct weeks
   const unique = [...new Set((data ?? []).map((r) => r.week_start))].sort((a, b) => (a > b ? -1 : 1));
   return unique;
 }
