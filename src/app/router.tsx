@@ -137,6 +137,7 @@ import { ManualSearchPage } from "@/modules/manuals/ManualSearchPage";
 import { ManualAdminPage } from "@/modules/manuals/ManualAdminPage";
 import { WeatherPage } from "@/modules/weather/WeatherPage";
 import { WeatherSyncPage } from "@/modules/weather/WeatherSyncPage";
+import { ScheduleStatusPage } from "@/modules/schedule-status/ScheduleStatusPage";
 import { DataHealthPage } from "@/modules/data-health/DataHealthPage";
 import ObsessionPage from "@/modules/obsession/ObsessionPage";
 
@@ -405,6 +406,14 @@ export const router = createBrowserRouter([
       },
       { path: "contacts", element: <ContactsPage /> },
       { path: "manuals", element: <ManualSearchPage /> },
+      {
+        path: "schedule-status",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ScheduleStatusPage />
+          </ProtectedRoute>
+        ),
+      },
       {
         path: "weather",
         element: (

@@ -25,6 +25,7 @@ import {
   Target,
   ListChecks,
   Clock,
+  ClipboardList,
   Fingerprint,
   LifeBuoy,
   Activity,
@@ -158,6 +159,7 @@ export const NAV: NavItem[] = [
   // tree in-app (a GM sees only their own store). Pilot flag removed.
   { to: "/team-pipeline", label: "Team Pipeline", icon: GitBranch, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/schedule",    label: "Calendar",    icon: CalendarDays,    roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/schedule-status", label: "Sched Status", icon: ClipboardList, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/contacts",    label: "Contacts",    icon: BookUser,        roles: null },
   // Manual Search + Manuals Admin removed from the sidebar for everyone. Routes
   // (/manuals, /admin/manuals) stay live for deep links / System Settings.
@@ -295,6 +297,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/count": "OPERATIONS",
   "/weather": "OPERATIONS",
   "/schedule": "OPERATIONS",
+  "/schedule-status": "OPERATIONS",
   "/my-walks": "OPERATIONS",
   "/walkthroughs": "OPERATIONS",
   "/paf": "PEOPLE",
