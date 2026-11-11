@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import type { SchedSummaryResp, SchedWeeksResp } from "./types";
 
-async function authHeader() {
+async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   return token ? { Authorization: `Bearer ${token}` } : {};
