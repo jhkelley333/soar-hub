@@ -4,7 +4,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
+import { Info, RefreshCw, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -17,6 +17,78 @@ import type { SchedStatusRow, StepCounts } from "./types";
 const fmtPct = (v: number | null) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
 const fmtDate = (s: string) =>
   new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+const fmtDateTime = (s: string) =>
+  new Date(s).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+function InfoModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+      onClick={onClose}
+    >
+      <div
+        className="relative bg-white dark:bg-zinc-900 rounded-xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+        >
+          <X className="w-5 h-5" />
+        </button>
+
+        <h2 className="text-lg font-semibold mb-4">How Schedule Status works</h2>
+
+        <div className="space-y-4 text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">
+          <p>
+            Every morning at <strong>7:00 AM</strong>, your Mac logs into ExpressWay and checks where every store stands on
+            next week's schedule: not started, draft, submitted, approved, published, or edited. That covers all 272 stores.
+          </p>
+          <p>It sends that to SOAR Hub, which keeps two things:</p>
+          <ol className="list-decimal pl-5 space-y-2">
+            <li>
+              <strong>The current picture.</strong> One line per store per week, always showing the latest status. Each
+              morning's check replaces the day before. This is what the Schedule Status screen shows.
+            </li>
+            <li>
+              <strong>The diary.</strong> A copy of every morning's check that's never changed or deleted. This lets you
+              look back and see how a week came together: on Wednesday 110 stores hadn't started, by Friday it was 12, and
+              so on. Over time it shows which DOs and RVPs build schedules early and which wait until the last minute.
+            </li>
+          </ol>
+          <p>
+            When a new week starts, it moves forward on its own. Through Sunday, Nov 15, "next week" means Nov 16–22, so
+            that week gets checked every morning. Starting Monday, Nov 16, "next week" becomes Nov 23–29, and the daily
+            check switches to it.
+          </p>
+          <p>
+            That means each week is followed for the whole week before it starts. Its last check is Sunday morning, and
+            after that its record is frozen.
+          </p>
+          <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3">
+            <p className="font-medium text-amber-800 dark:text-amber-400 mb-1">One gap to know about</p>
+            <p className="text-amber-700 dark:text-amber-300">
+              Once a week has started, nobody checks it anymore. If a manager changes a published schedule mid-week, it
+              would show as "Edited after publish", but the system wouldn't record that because it's only watching next
+              week. If that matters to you, a second daily check of the current week would cover it — it's a small change.
+            </p>
+          </div>
+          <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 p-3">
+            <p className="font-medium mb-1">What it needs from you</p>
+            <p>
+              Nothing, as long as your Mac is on and awake at 7:00 AM. If it's asleep, the check runs as soon as it
+              wakes. If a check fails, you get a notification on the Mac, and{" "}
+              <code className="rounded bg-zinc-200 dark:bg-zinc-700 px-1 py-0.5 text-xs font-mono">
+                scrapekit schedule status
+              </code>{" "}
+              shows the last result.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Step pill styling
 const STEP_STYLE: Record<number, string> = {
@@ -127,6 +199,7 @@ export function ScheduleStatusPage() {
   const [week, setWeek] = useState("");
   const [rvpFilter, setRvpFilter] = useState("all");
   const [showDone, setShowDone] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
 
   const weeksQ = useQuery({
     queryKey: ["sched-status-weeks"],
@@ -179,12 +252,31 @@ export function ScheduleStatusPage() {
     ? Math.round(((data.stepCounts[1] + data.stepCounts[2] + data.stepCounts[3]) / (data.total || 1)) * 100)
     : null;
 
+  const lastUpdated = useMemo(() => {
+    if (!data?.rows?.length) return null;
+    const max = data.rows.reduce((best, r) => (r.pulled_at && r.pulled_at > best ? r.pulled_at : best), "");
+    return max ? fmtDateTime(max) : null;
+  }, [data]);
+
   return (
     <>
-      <PageHeader
-        title="Schedule Status"
-        description="ExpressWay schedule workflow progress by store."
-      />
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <PageHeader
+          title="Schedule Status"
+          description="ExpressWay schedule workflow progress by store."
+        />
+        <button
+          onClick={() => setShowInfo(true)}
+          className="mt-1 flex-shrink-0 rounded-full p-1.5 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 dark:hover:text-zinc-200 dark:hover:bg-zinc-800 transition-colors"
+          title="How this works"
+        >
+          <Info className="w-4 h-4" />
+        </button>
+      </div>
+      {lastUpdated && (
+        <p className="text-xs text-zinc-400 dark:text-zinc-500 -mt-3 mb-4">Last updated {lastUpdated}</p>
+      )}
+      {showInfo && <InfoModal onClose={() => setShowInfo(false)} />}
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3 mb-5">
