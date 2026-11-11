@@ -67,16 +67,16 @@ function StoreRow({ row }: { row: SchedStatusRow }) {
   const done = (row.status_step ?? 0) >= 4;
   return (
     <tr className={cn("border-b border-zinc-100 dark:border-zinc-800", done && "opacity-50")}>
-      <td className="py-2 pr-4 text-sm font-medium tabular-nums">{row.store_number}</td>
-      <td className="py-2 pr-4 text-sm text-zinc-600 dark:text-zinc-400 max-w-[180px] truncate">{row.store_name ?? "—"}</td>
-      <td className="py-2 pr-4">
+      <td className="py-2 pr-3 text-sm font-medium tabular-nums w-14">{row.store_number}</td>
+      <td className="py-2 pr-3 text-sm text-zinc-600 dark:text-zinc-400 truncate">{row.store_name ?? "—"}</td>
+      <td className="py-2 pr-3 w-44">
         <StepPill step={row.status_step} label={row.status_label} />
       </td>
-      <td className="py-2 pr-4 text-sm tabular-nums text-right">
+      <td className="py-2 pr-3 text-sm tabular-nums text-right w-28">
         {row.adjusted_forecast != null ? `$${Math.round(row.adjusted_forecast).toLocaleString()}` : row.forecast != null ? `$${Math.round(row.forecast).toLocaleString()}` : "—"}
       </td>
-      <td className="py-2 pr-4 text-sm tabular-nums text-right">{fmtPct(row.scheduled_labor_pct)}</td>
-      <td className="py-2 text-sm tabular-nums text-right">{fmtPct(row.target_labor_pct)}</td>
+      <td className="py-2 pr-3 text-sm tabular-nums text-right w-20">{fmtPct(row.scheduled_labor_pct)}</td>
+      <td className="py-2 text-sm tabular-nums text-right w-20">{fmtPct(row.target_labor_pct)}</td>
     </tr>
   );
 }
@@ -92,14 +92,22 @@ function DoGroup({ doName, rows, showDone }: { doName: string; rows: SchedStatus
         <span className="text-xs text-zinc-500">{pct}% complete · {rows.length} stores</span>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[500px]">
+        <table className="w-full table-fixed min-w-[560px]">
+          <colgroup>
+            <col className="w-14" />    {/* Store # */}
+            <col />                      {/* Name — takes remaining space */}
+            <col className="w-44" />    {/* Status pill */}
+            <col className="w-28" />    {/* Adj Forecast */}
+            <col className="w-20" />    {/* Sched % */}
+            <col className="w-20" />    {/* Target % */}
+          </colgroup>
           <thead>
             <tr className="text-xs text-zinc-500 uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">
-              <th className="pb-1 pr-4 text-left font-medium">Store</th>
-              <th className="pb-1 pr-4 text-left font-medium">Name</th>
-              <th className="pb-1 pr-4 text-left font-medium">Status</th>
-              <th className="pb-1 pr-4 text-right font-medium">Adj Forecast</th>
-              <th className="pb-1 pr-4 text-right font-medium">Sched %</th>
+              <th className="pb-1 pr-3 text-left font-medium">Store</th>
+              <th className="pb-1 pr-3 text-left font-medium">Name</th>
+              <th className="pb-1 pr-3 text-left font-medium">Status</th>
+              <th className="pb-1 pr-3 text-right font-medium">Adj Forecast</th>
+              <th className="pb-1 pr-3 text-right font-medium">Sched %</th>
               <th className="pb-1 text-right font-medium">Target %</th>
             </tr>
           </thead>
