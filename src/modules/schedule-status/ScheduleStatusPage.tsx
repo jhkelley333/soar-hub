@@ -10,9 +10,9 @@ import { Card, CardBody } from "@/shared/ui/Card";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { cn } from "@/lib/cn";
-import { fetchSchedWeeks, fetchSchedSummary } from "./api";
+import { fetchSchedWeeks, fetchSchedSummary, fetchSchedHistory } from "./api";
 import { STEP_LABELS } from "./types";
-import type { SchedStatusRow, StepCounts } from "./types";
+import type { SchedStatusRow, SchedHistoryDay, StepCounts } from "./types";
 
 const fmtPct = (v: number | null) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
 const fmtDate = (s: string) =>
@@ -27,7 +27,7 @@ function InfoModal({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <div
-        className="relative bg-white dark:bg-zinc-900 rounded-xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6"
+        className="relative bg-white dark:bg-zinc-900 rounded-xl shadow-2xl max-w-xl w-full max-h-[85vh] overflow-y-auto p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -37,56 +37,116 @@ function InfoModal({ onClose }: { onClose: () => void }) {
           <X className="w-5 h-5" />
         </button>
 
-        <h2 className="text-lg font-semibold mb-4">How Schedule Status works</h2>
+        <h2 className="text-lg font-semibold mb-1">About Schedule Status</h2>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">Updated daily · all 272 stores</p>
 
         <div className="space-y-4 text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">
           <p>
-            Every morning at <strong>7:00 AM</strong>, your Mac logs into ExpressWay and checks where every store stands on
-            next week's schedule: not started, draft, submitted, approved, published, or edited. That covers all 272 stores.
+            This screen shows where every store stands on building their schedule for the coming week in ExpressWay.
+            Status is refreshed each morning so you always have an up-to-date picture across your entire organization.
           </p>
-          <p>It sends that to SOAR Hub, which keeps two things:</p>
-          <ol className="list-decimal pl-5 space-y-2">
-            <li>
-              <strong>The current picture.</strong> One line per store per week, always showing the latest status. Each
-              morning's check replaces the day before. This is what the Schedule Status screen shows.
-            </li>
-            <li>
-              <strong>The diary.</strong> A copy of every morning's check that's never changed or deleted. This lets you
-              look back and see how a week came together: on Wednesday 110 stores hadn't started, by Friday it was 12, and
-              so on. Over time it shows which DOs and RVPs build schedules early and which wait until the last minute.
-            </li>
-          </ol>
-          <p>
-            When a new week starts, it moves forward on its own. Through Sunday, Nov 15, "next week" means Nov 16–22, so
-            that week gets checked every morning. Starting Monday, Nov 16, "next week" becomes Nov 23–29, and the daily
-            check switches to it.
-          </p>
-          <p>
-            That means each week is followed for the whole week before it starts. Its last check is Sunday morning, and
-            after that its record is frozen.
-          </p>
-          <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3">
-            <p className="font-medium text-amber-800 dark:text-amber-400 mb-1">One gap to know about</p>
-            <p className="text-amber-700 dark:text-amber-300">
-              Once a week has started, nobody checks it anymore. If a manager changes a published schedule mid-week, it
-              would show as "Edited after publish", but the system wouldn't record that because it's only watching next
-              week. If that matters to you, a second daily check of the current week would cover it — it's a small change.
+
+          <div>
+            <p className="font-medium mb-2">Schedules move through five stages:</p>
+            <ol className="space-y-1.5">
+              {([
+                ["No Shift Started", "No scheduling work has begun yet."],
+                ["Draft", "A schedule is being built but hasn't been submitted."],
+                ["Submitted", "The GM has submitted the schedule for the DO's review."],
+                ["Approved", "The DO has reviewed and approved the schedule."],
+                ["Published", "The schedule is live — employees can see their shifts."],
+              ] as [string, string][]).map(([label, desc], i) => (
+                <li key={i} className="flex gap-2">
+                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 text-xs font-bold flex items-center justify-center mt-0.5">{i + 1}</span>
+                  <span><strong>{label}</strong> — {desc}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          <div>
+            <p className="font-medium mb-1">What the History tab shows</p>
+            <p>
+              A day-by-day breakdown of how the week came together — how many stores were at each stage on Monday,
+              Tuesday, and so on. Over time this shows which districts build schedules early and which tend to wait
+              until the last minute.
             </p>
           </div>
+
           <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 p-3">
-            <p className="font-medium mb-1">What it needs from you</p>
+            <p className="font-medium mb-1">What's tracked and when</p>
             <p>
-              Nothing, as long as your Mac is on and awake at 7:00 AM. If it's asleep, the check runs as soon as it
-              wakes. If a check fails, you get a notification on the Mac, and{" "}
-              <code className="rounded bg-zinc-200 dark:bg-zinc-700 px-1 py-0.5 text-xs font-mono">
-                scrapekit schedule status
-              </code>{" "}
-              shows the last result.
+              Status is captured once each morning for the upcoming week. Each week's record is complete by the
+              Sunday before it starts. Once a week is underway, its snapshot is frozen — mid-week edits to a
+              published schedule are not reflected here.
             </p>
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function HistoryView({ days }: { days: SchedHistoryDay[] }) {
+  if (!days.length) {
+    return (
+      <div className="py-10 text-center text-sm text-zinc-400">
+        No history yet — check back after the next morning update.
+      </div>
+    );
+  }
+  const fmtDay = (s: string) =>
+    new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+
+  const colCls = "px-3 py-2 text-right tabular-nums text-sm";
+  const hCls = "px-3 pb-2 text-right text-xs font-medium text-zinc-500 uppercase tracking-wide";
+
+  return (
+    <Card>
+      <CardBody>
+        <div className="overflow-x-auto">
+          <table className="w-full table-fixed min-w-[520px]">
+            <colgroup>
+              <col className="w-32" />
+              <col className="w-28" />
+              <col className="w-20" />
+              <col className="w-24" />
+              <col className="w-20" />
+              <col className="w-24" />
+            </colgroup>
+            <thead>
+              <tr className="border-b border-zinc-200 dark:border-zinc-700">
+                <th className="pb-2 pr-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wide">Date</th>
+                <th className={hCls}>No Shift Started</th>
+                <th className={hCls}>Draft</th>
+                <th className={hCls}>Submitted</th>
+                <th className={hCls}>Approved</th>
+                <th className={hCls}>Published</th>
+              </tr>
+            </thead>
+            <tbody>
+              {days.map((d) => {
+                const done = d.stepCounts[4] + d.stepCounts[5];
+                const pct = d.total ? Math.round((done / d.total) * 100) : 0;
+                return (
+                  <tr key={d.checked_date} className="border-b border-zinc-100 dark:border-zinc-800">
+                    <td className="py-2 pr-3 text-sm font-medium">
+                      {fmtDay(d.checked_date)}
+                      <span className="ml-2 text-xs text-zinc-400">{pct}%</span>
+                    </td>
+                    <td className={cn(colCls, d.stepCounts[1] > 0 ? "text-zinc-500" : "text-zinc-300 dark:text-zinc-600")}>{d.stepCounts[1]}</td>
+                    <td className={cn(colCls, d.stepCounts[2] > 0 ? "text-amber-600 dark:text-amber-400" : "text-zinc-300 dark:text-zinc-600")}>{d.stepCounts[2]}</td>
+                    <td className={cn(colCls, d.stepCounts[3] > 0 ? "text-sky-600 dark:text-sky-400" : "text-zinc-300 dark:text-zinc-600")}>{d.stepCounts[3]}</td>
+                    <td className={cn(colCls, d.stepCounts[4] > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-zinc-300 dark:text-zinc-600")}>{d.stepCounts[4]}</td>
+                    <td className={cn(colCls, d.stepCounts[5] > 0 ? "text-emerald-700 dark:text-emerald-300 font-medium" : "text-zinc-300 dark:text-zinc-600")}>{d.stepCounts[5]}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </CardBody>
+    </Card>
   );
 }
 
@@ -200,6 +260,7 @@ export function ScheduleStatusPage() {
   const [rvpFilter, setRvpFilter] = useState("all");
   const [showDone, setShowDone] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
+  const [tab, setTab] = useState<"stores" | "history">("stores");
 
   const weeksQ = useQuery({
     queryKey: ["sched-status-weeks"],
@@ -213,6 +274,13 @@ export function ScheduleStatusPage() {
     queryKey: ["sched-status-summary", availableWeek],
     queryFn: () => fetchSchedSummary(availableWeek),
     enabled: !!availableWeek,
+    staleTime: 5 * 60_000,
+  });
+
+  const historyQ = useQuery({
+    queryKey: ["sched-status-history", availableWeek],
+    queryFn: () => fetchSchedHistory(availableWeek),
+    enabled: !!availableWeek && tab === "history",
     staleTime: 5 * 60_000,
   });
 
@@ -311,7 +379,7 @@ export function ScheduleStatusPage() {
           </div>
         )}
 
-        {!isPastWeek && (
+        {!isPastWeek && tab === "stores" && (
           <label className="flex items-center gap-2 text-sm cursor-pointer ml-auto">
             <input
               type="checkbox"
@@ -323,9 +391,27 @@ export function ScheduleStatusPage() {
           </label>
         )}
 
-        {summaryQ.isFetching && (
-          <RefreshCw className="w-4 h-4 text-zinc-400 animate-spin" />
+        {(summaryQ.isFetching || historyQ.isFetching) && (
+          <RefreshCw className="w-4 h-4 text-zinc-400 animate-spin ml-auto" />
         )}
+      </div>
+
+      {/* Tab switcher */}
+      <div className="flex gap-1 mb-5 border-b border-zinc-200 dark:border-zinc-700">
+        {(["stores", "history"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={cn(
+              "px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors",
+              tab === t
+                ? "border-emerald-500 text-emerald-600 dark:text-emerald-400"
+                : "border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+            )}
+          >
+            {t === "stores" ? "By Store" : "History"}
+          </button>
+        ))}
       </div>
 
       {/* Step counts */}
@@ -360,12 +446,12 @@ export function ScheduleStatusPage() {
       {!isLoading && !isError && data && data.total === 0 && (
         <EmptyState
           title="No data for this week"
-          description="Run 'ew sched-status --load' on the MacBook to populate schedule data."
+          description="Schedule data is refreshed each morning. Check back after the next update."
         />
       )}
 
-      {/* Grouped by DO */}
-      {!isLoading && byDo.length > 0 && (
+      {/* By Store tab */}
+      {tab === "stores" && !isLoading && byDo.length > 0 && (
         <div>
           {byDo.map(([doName, rows]) => (
             <Card key={doName} className="mb-4">
@@ -375,6 +461,13 @@ export function ScheduleStatusPage() {
             </Card>
           ))}
         </div>
+      )}
+
+      {/* History tab */}
+      {tab === "history" && (
+        historyQ.isLoading
+          ? <Card><CardBody><Skeleton className="h-40 w-full" /></CardBody></Card>
+          : <HistoryView days={historyQ.data?.days ?? []} />
       )}
     </>
   );

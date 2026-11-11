@@ -140,6 +140,44 @@ async function getWeeks(supa, numbers) {
   return unique;
 }
 
+async function getHistory(supa, numbers, week) {
+  if (!numbers.length || !week) return [];
+  const raw = [];
+  for (let i = 0; i < numbers.length; i += IN_CHUNK) {
+    const chunk = numbers.slice(i, i + IN_CHUNK);
+    let from = 0;
+    for (;;) {
+      const { data, error } = await supa
+        .from("ew_schedule_status_log")
+        .select("checked_date, status_step")
+        .in("store_number", chunk)
+        .eq("week_start", week)
+        .order("checked_date", { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      raw.push(...(data ?? []));
+      if ((data ?? []).length < PAGE) break;
+      from += PAGE;
+    }
+  }
+  // aggregate by checked_date
+  const byDate = new Map();
+  for (const r of raw) {
+    if (!byDate.has(r.checked_date)) byDate.set(r.checked_date, { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, unknown: 0 });
+    const c = byDate.get(r.checked_date);
+    const s = r.status_step;
+    if (s >= 1 && s <= 5) c[s]++;
+    else c.unknown++;
+  }
+  return [...byDate.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([date, stepCounts]) => ({
+      checked_date: date,
+      stepCounts,
+      total: Object.values(stepCounts).reduce((s, v) => s + v, 0),
+    }));
+}
+
 async function getSummary(supa, numbers, week) {
   if (!numbers.length || !week) return [];
   const rows = [];
@@ -208,6 +246,13 @@ export const handler = async (event) => {
       }
 
       return respond(200, { ok: true, week, rows: decorated, stepCounts, total: decorated.length });
+    }
+
+    if (action === "history") {
+      const week = params.week;
+      if (!week) return respond(400, { error: "week param required" });
+      const days = await getHistory(supa, numbers, week);
+      return respond(200, { ok: true, week, days });
     }
 
     return respond(400, { error: `Unknown action: ${action}` });
