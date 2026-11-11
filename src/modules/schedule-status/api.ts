@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import type { SchedSummaryResp, SchedWeeksResp } from "./types";
+import type { SchedSummaryResp, SchedWeeksResp, SchedHistoryResp } from "./types";
 
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -22,4 +22,8 @@ export async function fetchSchedWeeks(): Promise<SchedWeeksResp> {
 
 export async function fetchSchedSummary(week: string): Promise<SchedSummaryResp> {
   return apiFetch<SchedSummaryResp>({ action: "summary", week });
+}
+
+export async function fetchSchedHistory(week: string): Promise<SchedHistoryResp> {
+  return apiFetch<SchedHistoryResp>({ action: "history", week });
 }

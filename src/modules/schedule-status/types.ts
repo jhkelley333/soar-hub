@@ -37,6 +37,18 @@ export interface SchedWeeksResp {
   weeks: string[];
 }
 
+export interface SchedHistoryDay {
+  checked_date: string;
+  stepCounts: StepCounts;
+  total: number;
+}
+
+export interface SchedHistoryResp {
+  ok: boolean;
+  week: string;
+  days: SchedHistoryDay[];
+}
+
 // Step 4 = Approved, Step 5 = Published. Steps 1–3 are "not done".
 export const STEP_LABELS: Record<number, string> = {
   1: "No Shift Started",
