@@ -252,6 +252,9 @@ export function ScheduleStatusPage() {
     ? Math.round(((data.stepCounts[1] + data.stepCounts[2] + data.stepCounts[3]) / (data.total || 1)) * 100)
     : null;
 
+  // Past weeks (already started) always show all stores — the toggle only helps for the upcoming week
+  const isPastWeek = !!availableWeek && availableWeek <= new Date().toISOString().slice(0, 10);
+
   const lastUpdated = useMemo(() => {
     if (!data?.rows?.length) return null;
     const max = data.rows.reduce((best, r) => (r.pulled_at && r.pulled_at > best ? r.pulled_at : best), "");
@@ -308,15 +311,17 @@ export function ScheduleStatusPage() {
           </div>
         )}
 
-        <label className="flex items-center gap-2 text-sm cursor-pointer ml-auto">
-          <input
-            type="checkbox"
-            className="accent-emerald-600"
-            checked={showDone}
-            onChange={(e) => setShowDone(e.target.checked)}
-          />
-          Show Approved/Published stores
-        </label>
+        {!isPastWeek && (
+          <label className="flex items-center gap-2 text-sm cursor-pointer ml-auto">
+            <input
+              type="checkbox"
+              className="accent-emerald-600"
+              checked={showDone}
+              onChange={(e) => setShowDone(e.target.checked)}
+            />
+            Show Approved/Published stores
+          </label>
+        )}
 
         {summaryQ.isFetching && (
           <RefreshCw className="w-4 h-4 text-zinc-400 animate-spin" />
@@ -365,7 +370,7 @@ export function ScheduleStatusPage() {
           {byDo.map(([doName, rows]) => (
             <Card key={doName} className="mb-4">
               <CardBody>
-                <DoGroup doName={doName} rows={rows} showDone={showDone} />
+                <DoGroup doName={doName} rows={rows} showDone={isPastWeek || showDone} />
               </CardBody>
             </Card>
           ))}
