@@ -86,16 +86,31 @@ async function resolveOrg(supa, numbers) {
   const areaMap = new Map(areas.map((a) => [a.id, a]));
   const regionMap = new Map(regions.map((r) => [r.id, r]));
 
-  // DO names from profiles
-  const doProfiles = await selectAllIn(supa, "profiles", "id, full_name, email", "role", ["do"]);
-  const profileById = new Map(doProfiles.map((p) => [p.id, p]));
-
-  // district leaders
-  const districtLeaders = await selectAllIn(supa, "user_scopes", "user_id, district_id", "district_id", districtIds);
+  // user_scopes is polymorphic: scope_type + scope_id (no district_id column).
+  // Fetch district-scoped rows, then look up each user's profile.
   const doByDistrict = new Map();
-  for (const dl of districtLeaders) {
-    const p = profileById.get(dl.user_id);
-    if (p && !doByDistrict.has(dl.district_id)) doByDistrict.set(dl.district_id, p.full_name || p.email);
+  if (districtIds.length) {
+    for (let i = 0; i < districtIds.length; i += IN_CHUNK) {
+      const chunk = districtIds.slice(i, i + IN_CHUNK);
+      const { data: scopeRows } = await supa
+        .from("user_scopes")
+        .select("user_id, scope_id")
+        .eq("scope_type", "district")
+        .in("scope_id", chunk);
+      const userIds = [...new Set((scopeRows ?? []).map((r) => r.user_id).filter(Boolean))];
+      if (!userIds.length) continue;
+      const { data: profileRows } = await supa
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("id", userIds);
+      const profileById = new Map((profileRows ?? []).map((p) => [p.id, p]));
+      for (const sr of scopeRows ?? []) {
+        if (!doByDistrict.has(sr.scope_id)) {
+          const p = profileById.get(sr.user_id);
+          if (p) doByDistrict.set(sr.scope_id, p.full_name || p.email);
+        }
+      }
+    }
   }
 
   const org = new Map();
