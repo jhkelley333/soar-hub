@@ -76,7 +76,8 @@ function StoreRow({ row }: { row: SchedStatusRow }) {
         {row.adjusted_forecast != null ? `$${Math.round(row.adjusted_forecast).toLocaleString()}` : row.forecast != null ? `$${Math.round(row.forecast).toLocaleString()}` : "—"}
       </td>
       <td className="py-2 pr-3 text-sm tabular-nums text-right w-20">{fmtPct(row.scheduled_labor_pct)}</td>
-      <td className="py-2 text-sm tabular-nums text-right w-20">{fmtPct(row.target_labor_pct)}</td>
+      <td className="py-2 pr-3 text-sm tabular-nums text-right w-20">{fmtPct(row.target_labor_pct)}</td>
+      <td className="py-2 text-sm tabular-nums text-right w-20">{fmtPct(row.budget_usage)}</td>
     </tr>
   );
 }
@@ -100,6 +101,7 @@ function DoGroup({ doName, rows, showDone }: { doName: string; rows: SchedStatus
             <col className="w-28" />    {/* Adj Forecast */}
             <col className="w-20" />    {/* Sched % */}
             <col className="w-20" />    {/* Target % */}
+            <col className="w-20" />    {/* Budget Usage */}
           </colgroup>
           <thead>
             <tr className="text-xs text-zinc-500 uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">
@@ -108,7 +110,8 @@ function DoGroup({ doName, rows, showDone }: { doName: string; rows: SchedStatus
               <th className="pb-1 pr-3 text-left font-medium">Status</th>
               <th className="pb-1 pr-3 text-right font-medium">Adj Forecast</th>
               <th className="pb-1 pr-3 text-right font-medium">Sched %</th>
-              <th className="pb-1 text-right font-medium">Target %</th>
+              <th className="pb-1 pr-3 text-right font-medium">Target %</th>
+              <th className="pb-1 text-right font-medium">Budget</th>
             </tr>
           </thead>
           <tbody>
