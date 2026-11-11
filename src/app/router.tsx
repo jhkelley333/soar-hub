@@ -140,6 +140,7 @@ import { WeatherSyncPage } from "@/modules/weather/WeatherSyncPage";
 import { ScheduleStatusPage } from "@/modules/schedule-status/ScheduleStatusPage";
 import { DataHealthPage } from "@/modules/data-health/DataHealthPage";
 import ObsessionPage from "@/modules/obsession/ObsessionPage";
+import { RapDataPage } from "@/modules/rap-data/RapDataPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -1146,6 +1147,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
             <NsoPlannerPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "rap-data",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <RapDataPage />
           </ProtectedRoute>
         ),
       },
