@@ -142,7 +142,6 @@ function HistoryChart({ days }: { days: SchedHistoryDay[] }) {
           cursor={{ fill: "rgba(0,0,0,0.04)" }}
         />
         <Legend
-          payload={steps.map((s) => ({ value: s.key, type: "circle" as const, color: s.color }))}
           iconType="circle"
           iconSize={8}
           wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
