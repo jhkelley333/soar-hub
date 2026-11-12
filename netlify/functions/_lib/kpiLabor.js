@@ -137,6 +137,13 @@ export function extractLaborRows(payload) {
       ptd_order_ahead_net_sales_denominator: numOrNull(p?.orderAheadNetSalesDenominator),
       ptd_delivery_net_sales: numOrNull(p?.deliveryNetSales),
       ptd_delivery_net_sales_denominator: numOrNull(p?.deliveryNetSalesDenominator),
+      // Guest feedback (migration 0334): complaints count + rate per 10k tickets.
+      complaints: numOrNull(r.complaints),
+      complaints_per_10k: numOrNull(r.complaintsPer10k),
+      wtd_complaints: numOrNull(w?.complaints),
+      wtd_complaints_per_10k: numOrNull(w?.complaintsPer10k),
+      ptd_complaints: numOrNull(p?.complaints),
+      ptd_complaints_per_10k: numOrNull(p?.complaintsPer10k),
     });
   }
   return out;
@@ -226,6 +233,26 @@ export function stripHoursCols(rows) {
   return rows.map((r) => {
     const c = { ...r };
     for (const k of HOURS_COLS_0321) delete c[k];
+    return c;
+  });
+}
+
+// Complaints columns added by migration 0334. Strip/retry fallback so
+// capture keeps landing the rest of the row until the migration is applied.
+const COMPLAINTS_COLS_0334 = [
+  "complaints", "complaints_per_10k",
+  "wtd_complaints", "wtd_complaints_per_10k",
+  "ptd_complaints", "ptd_complaints_per_10k",
+];
+
+export function isPreComplaintsError(error) {
+  return !!error && /column/i.test(String(error.message)) && /complaints/.test(String(error.message));
+}
+
+export function stripComplaintsCols(rows) {
+  return rows.map((r) => {
+    const c = { ...r };
+    for (const k of COMPLAINTS_COLS_0334) delete c[k];
     return c;
   });
 }

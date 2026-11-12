@@ -19,8 +19,8 @@
 
 import {
   extractLaborRows, feedBusinessDate,
-  isPre0238Error, isPre0272Error, isPreMixError, isPreHoursError,
-  stripMixCols, stripRankingCols, stripTicketCols, stripHoursCols,
+  isPre0238Error, isPre0272Error, isPreMixError, isPreHoursError, isPreComplaintsError,
+  stripMixCols, stripRankingCols, stripTicketCols, stripHoursCols, stripComplaintsCols,
   wallClockInTz,
 } from "./kpiLabor.js";
 import { extractCountRows, isPreCountExtrasError, stripCountExtras } from "./kpiCount.js";
@@ -130,17 +130,20 @@ export async function runKpiCapture(supa, opts = {}) {
   const laborRows = extracted.map((r) => ({ ...r, business_date: businessDate, captured_at: new Date().toISOString() }));
   if (laborRows.length) {
     let { error: lerr } = await supa.from("labor_v2_daily").upsert(laborRows, { onConflict: "store_number,business_date" });
+    if (lerr && isPreComplaintsError(lerr)) {
+      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripComplaintsCols(laborRows), { onConflict: "store_number,business_date" }));
+    }
     if (lerr && isPreHoursError(lerr)) {
-      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripHoursCols(laborRows), { onConflict: "store_number,business_date" }));
+      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripComplaintsCols(stripHoursCols(laborRows)), { onConflict: "store_number,business_date" }));
     }
     if (lerr && isPreMixError(lerr)) {
-      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripHoursCols(stripMixCols(laborRows)), { onConflict: "store_number,business_date" }));
+      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripComplaintsCols(stripHoursCols(stripMixCols(laborRows))), { onConflict: "store_number,business_date" }));
     }
     if (lerr && isPre0272Error(lerr)) {
-      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripHoursCols(stripMixCols(stripTicketCols(laborRows))), { onConflict: "store_number,business_date" }));
+      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripComplaintsCols(stripHoursCols(stripMixCols(stripTicketCols(laborRows)))), { onConflict: "store_number,business_date" }));
     }
     if (lerr && isPre0238Error(lerr)) {
-      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripHoursCols(stripMixCols(stripRankingCols(stripTicketCols(laborRows)))), { onConflict: "store_number,business_date" }));
+      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripComplaintsCols(stripHoursCols(stripMixCols(stripRankingCols(stripTicketCols(laborRows))))), { onConflict: "store_number,business_date" }));
     }
     if (lerr) console.log(`[kpi-capture:${source}] labor upsert failed: ${lerr.message}`);
     else laborStored = laborRows.length;
