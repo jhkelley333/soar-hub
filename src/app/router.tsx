@@ -77,6 +77,7 @@ import { moduleKeyForPath } from "@/app/nav";
 import { useOverrides } from "@/lib/roleAccess";
 import { RankerPage } from "@/modules/ranker/RankerPage";
 import { CooMapPage } from "@/modules/coo-map/CooMapPage";
+import { CooCommandCenterPage } from "@/modules/coo/CooCommandCenterPage";
 import { TerritoryMapPage } from "@/modules/territory-map/TerritoryMapPage";
 import { SharedTerritoryMapPage } from "@/modules/territory-map/SharedTerritoryMapPage";
 import { SharedLaborPage } from "@/modules/labor-v2/SharedLaborPage";
@@ -175,6 +176,16 @@ export const router = createBrowserRouter([
     element: <RootRoute />,
     children: [
       { index: true, element: <DashboardPage /> },
+      {
+        // COO Command Center — KPI board, Ranker, Labor, P&L, PAF responses +
+        // archive, reporting and personal sidebar settings on one page.
+        path: "coo",
+        element: (
+          <ProtectedRoute requireRoles={["coo", "admin"]}>
+            <CooCommandCenterPage />
+          </ProtectedRoute>
+        ),
+      },
       { path: "work-orders", element: <WorkOrdersPage /> },
       {
         path: "paf",
@@ -195,7 +206,7 @@ export const router = createBrowserRouter([
       {
         path: "paf/archive",
         element: (
-          <ProtectedRoute requireRoles={["payroll", "admin"]}>
+          <ProtectedRoute requireRoles={["payroll", "coo", "admin"]}>
             <PafArchivePage />
           </ProtectedRoute>
         ),

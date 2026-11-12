@@ -30,6 +30,7 @@ import {
   LifeBuoy,
   Activity,
   Flame,
+  Compass,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -53,6 +54,10 @@ export interface NavItem {
 // is the PAF queue. Hiding everything else keeps that focus and avoids
 // confusion with org-tree or work-order modules they don't operate.
 export const NAV: NavItem[] = [
+  // COO Command Center — one page for the COO: KPI board with market drill,
+  // Ranker, Labor, P&L, PAF responses + archive, reporting and personal
+  // sidebar settings. Built so the COO can hide the day-to-day modules.
+  { to: "/coo",         label: "Command Center", icon: Compass, roles: ["coo", "admin"] },
   { to: "/",            label: "Dashboard",   icon: LayoutDashboard, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Obsession Metric — company-wide single metric chase, all roles.
   { to: "/obsession",   label: "Obsession Metric", icon: Flame, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
@@ -145,7 +150,7 @@ export const NAV: NavItem[] = [
   { to: "/paf",         label: "PAF",         icon: FileSpreadsheet, roles: ["do", "payroll", "admin"] },
   // PAF Archive — the full searchable/printable record + CSV database export.
   // Payroll/admin only (it is org-wide and includes archived submissions).
-  { to: "/paf/archive", label: "PAF Archive", icon: Archive,         roles: ["payroll", "admin"] },
+  { to: "/paf/archive", label: "PAF Archive", icon: Archive,         roles: ["payroll", "coo", "admin"] },
   // Employee Actions — Training Credit + PTO request forms. GM and up;
   // submitting notifies the store's DO + RVP. Approvals/tracking land later.
   { to: "/employee-actions", label: "Employee Actions", icon: ClipboardCheck, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
@@ -261,6 +266,7 @@ export function moduleKeyForPath(pathname: string): string | null {
 // (which they don't see anyway) and lands on the PAF queue.
 export function defaultLandingPath(role: UserRole | undefined): string {
   if (role === "payroll") return "/paf/queue";
+  if (role === "coo") return "/coo";
   return "/";
 }
 
@@ -280,6 +286,7 @@ export const NAV_GROUP_LABELS: Record<NavGroup, string> = {
 
 const GROUP_OF: Record<string, NavGroup> = {
   "/": "MAIN",
+  "/coo": "MAIN",
   "/admin/work-orders-v2": "MAIN",
   "/chat": "MAIN",
   "/operations": "OPERATIONS",
@@ -341,4 +348,15 @@ export function groupedNav(
     label: NAV_GROUP_LABELS[group],
     items: items.filter((it) => (GROUP_OF[it.to] ?? "ADMIN") === group),
   })).filter((section) => section.items.length > 0);
+}
+
+// Sidebar modules a user may hide from their OWN sidebar (profiles.hidden_nav,
+// edited in COO Command Center → My Settings). Hiding never changes access:
+// the route still opens from a link. Command Center, Account and System
+// Settings are deliberately not hideable so nobody can lose their way back.
+export const NOT_HIDEABLE = new Set<string>(["/coo", "/account", "/admin/system-settings"]);
+export function applyHiddenNav(items: NavItem[], hidden: readonly string[] | null | undefined): NavItem[] {
+  if (!hidden || hidden.length === 0) return items;
+  const h = new Set(hidden);
+  return items.filter((it) => NOT_HIDEABLE.has(it.to) || !h.has(it.to));
 }

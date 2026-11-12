@@ -798,9 +798,13 @@ async function listPafs(supa, user) {
 const ARCHIVE_PAGE = 1000; // PostgREST per-request ceiling
 const ARCHIVE_MAX = 50000; // safety cap on total rows pulled into memory
 
+// Read-only archive access: Payroll/Admin plus the COO (Command Center → PAF).
+// The archive is a view — processing stays PROCESS_ROLES-only everywhere else.
+const ARCHIVE_READ_ROLES = new Set([...PROCESS_ROLES, "coo"]);
+
 async function archivePafs(supa, user) {
-  if (!PROCESS_ROLES.has(user.role)) {
-    return { error: "Payroll/Admin only.", status: 403 };
+  if (!ARCHIVE_READ_ROLES.has(user.role)) {
+    return { error: "Payroll/Admin/COO only.", status: 403 };
   }
 
   const all = [];
