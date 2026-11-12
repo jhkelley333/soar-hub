@@ -52,6 +52,7 @@ const GROUPS: Group[] = [
       { title: "Hours of Operation", desc: "Standard + special hours, Google compare, and discrepancy reconciliation.", icon: Clock, roles: ["sdo", "rvp", "vp", "coo", "admin"], to: "/admin/hours-of-operation" },
       { title: "Close-Time Watch", desc: "Stores whose last clock-out was before their scheduled close — daily, weekly, monthly.", icon: AlarmClock, roles: ["sdo", "rvp", "vp", "coo", "admin"], to: "/admin/close-time-watch" },
       { title: "Google Reviews", desc: "Ratings, worst locations, keyword issues, and recent reviews across your stores.", icon: Star, roles: ["sdo", "rvp", "vp", "coo", "admin"], to: "/admin/google-reviews" },
+      { title: "Customer RAP Data", desc: "LTR, OSAT, and platform stars (Doordash / Google / Grubhub / UberEats) per store with review feed. Admin beta.", icon: Star, roles: ["admin"], to: "/rap-data" },
       { title: "Territory Map", desc: "Every store plotted on the map, pin color keyed to its DO.", icon: MapPinned, roles: ["vp", "coo", "admin"], to: "/territory-map" },
       { title: "Org Alignment", desc: "Stage a market realignment — new regions/areas/districts + store moves — and schedule it to go live on a date.", icon: Network, roles: ["admin"], to: "/admin/org-alignment" },
     ],
