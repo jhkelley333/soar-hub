@@ -12,7 +12,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { PageHeader } from "@/shared/ui/PageHeader";
-import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
+import { Card, CardBody } from "@/shared/ui/Card";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Drawer } from "@/shared/ui/Drawer";
@@ -96,12 +96,7 @@ function HistoryChart({ data }: { data: RapHistoryPoint[] }) {
         <XAxis dataKey="month" tick={{ fontSize: 10 }} />
         <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
         <Tooltip />
-        <Legend
-          payload={[
-            { value: "LTR", type: "line", color: "#3b82f6" },
-            { value: "OSAT", type: "line", color: "#f59e0b" },
-          ]}
-        />
+        <Legend />
         <Line type="monotone" dataKey="LTR" stroke="#3b82f6" dot={false} strokeWidth={2} />
         <Line type="monotone" dataKey="OSAT" stroke="#f59e0b" dot={false} strokeWidth={2} />
       </LineChart>
