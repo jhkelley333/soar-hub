@@ -54,13 +54,8 @@ export interface NavItem {
 // is the PAF queue. Hiding everything else keeps that focus and avoids
 // confusion with org-tree or work-order modules they don't operate.
 export const NAV: NavItem[] = [
-  // COO Command Center — one page for the COO: KPI board with market drill,
-  // Ranker, Labor, P&L, PAF responses + archive, reporting and personal
-  // sidebar settings. Built so the COO can hide the day-to-day modules.
-  { to: "/coo",         label: "Command Center", icon: Compass, roles: ["coo", "admin"] },
+  // Command Center (/coo), Obsession Metric (/obsession) → moved to System Settings › Beta Test.
   { to: "/",            label: "Dashboard",   icon: LayoutDashboard, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
-  // Obsession Metric — company-wide single metric chase, all roles.
-  { to: "/obsession",   label: "Obsession Metric", icon: Flame, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
   // Work Orders V2 — now the primary facilities ticketing flow.
   // Sits at the top right under Dashboard so it's the first
   // operational tool field roles see.
@@ -112,9 +107,7 @@ export const NAV: NavItem[] = [
   // P&L — store income statements per period (Sales / CI focus), uploaded
   // from the accounting workbook. GM sees their store; DO+ their scope.
   { to: "/pl",          label: "P&L",         icon: BarChart3,       roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc", "accounting"] },
-  // Daily Count — inventory count scores (Daily/Completion/Accuracy) from
-  // the KPI feed, captured daily for trends. Store leaders + DO+.
-  { to: "/count",       label: "Daily Count", icon: ClipboardCheck,  roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc", "accounting"] },
+  // Daily Count (/count) → moved to System Settings › Beta Test.
   // Note: design-import preview routes (e.g. /region) are deliberately
   // NOT in the sidebar — they're placeholder UIs while real scoring +
   // workflows get built out, and they'd add noise to the daily nav.
@@ -354,7 +347,7 @@ export function groupedNav(
 // edited in COO Command Center → My Settings). Hiding never changes access:
 // the route still opens from a link. Command Center, Account and System
 // Settings are deliberately not hideable so nobody can lose their way back.
-export const NOT_HIDEABLE = new Set<string>(["/coo", "/account", "/admin/system-settings"]);
+export const NOT_HIDEABLE = new Set<string>(["/account", "/admin/system-settings"]);
 export function applyHiddenNav(items: NavItem[], hidden: readonly string[] | null | undefined): NavItem[] {
   if (!hidden || hidden.length === 0) return items;
   const h = new Set(hidden);
