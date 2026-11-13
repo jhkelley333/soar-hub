@@ -49,6 +49,7 @@ import { MobileHome } from "./MobileHome";
 // TodayQueue temporarily hidden from the dashboard (re-enable below when ready).
 // import { TodayQueue } from "./TodayQueue";
 import { WeatherWidget } from "./WeatherWidget";
+import { WeatherAlertBanner } from "./WeatherAlertBanner";
 import { MetricsThatMatter } from "./MetricsThatMatter";
 import { MessageBoard } from "@/modules/messages/MessageBoard";
 
@@ -220,6 +221,10 @@ export function DashboardPage() {
         storeCount={storeCount}
         showWalkActions={!!role && WALK_ROLES.has(role)}
       />
+
+      {/* NWS severe weather alerts — shown when active alerts affect the
+          user's visible stores. Renders nothing when there are no alerts. */}
+      <WeatherAlertBanner />
 
       {/* Metrics That Matter — the five pillar headlines up top, so the numbers
           are the first thing leadership sees. Board-eligible roles only. */}
