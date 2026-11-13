@@ -8,7 +8,7 @@ import {
   ArrowRight, Network, Users, MapPin, KeyRound, Globe, Flag, QrCode, Link2,
   CloudSun, BarChart3, LayoutGrid, Gauge, ScrollText, Layers, Upload,
   Settings, ClipboardCheck, ListChecks, BookMarked, Clock, AlarmClock, Star, TrendingDown, Building2,
-  Fingerprint, Send, Info, MapPinned, Sparkles, GraduationCap, Plane, Activity, Wrench, type LucideIcon,
+  Fingerprint, Send, Info, MapPinned, Sparkles, GraduationCap, Plane, Activity, Wrench, Compass, Flame, type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -89,6 +89,9 @@ const GROUPS: Group[] = [
     title: "Beta Test",
     tools: [
       { title: "Ask Tot", desc: "AI assistant — ask about stores, ranking, promos and more in plain language.", icon: Sparkles, roles: ["admin", "coo", "vp", "rvp"], to: "/admin/ask-tot", totCard: true },
+      { title: "Command Center", desc: "COO-focused hub: KPI board with market drill, Ranker, Labor, P&L, PAF responses, and reporting.", icon: Compass, roles: ["coo", "admin"], to: "/coo" },
+      { title: "Obsession Metric", desc: "Company-wide single metric chase — daily focus for all levels.", icon: Flame, roles: ["vp", "coo", "admin"], to: "/obsession" },
+      { title: "Daily Count", desc: "Inventory count scores (Daily / Completion / Accuracy) from the KPI feed.", icon: ClipboardCheck, roles: ["vp", "coo", "admin"], to: "/count" },
       { title: "KPI Dashboard", desc: "Execution KPI dashboard (in beta).", icon: BarChart3, roles: ["admin"], to: "/admin/kpi" },
       { title: "Metrics Board", desc: "Execution metrics board (in beta).", icon: LayoutGrid, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"], to: "/admin/metrics-board" },
       { title: "Store Visit", desc: "Mobile-first store walk + Top-3 gaps (in beta).", icon: ClipboardCheck, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"], to: "/visit" },
