@@ -14,10 +14,14 @@ type Msg = {
 };
 
 const SUGGESTIONS = [
-  { area: "Store Directory", prompt: "List stores in my region with their GMs" },
   { area: "Ranking", prompt: "Who are the top 5 ranked stores this period?" },
-  { area: "Ranking", prompt: "Which stores improved the most vs last year?" },
-  { area: "Resources", prompt: "What does the operations guide say about food safety?" },
+  { area: "Labor", prompt: "Which stores are over their labor chart this week?" },
+  { area: "Store Directory", prompt: "List stores in my region with their GMs" },
+  { area: "Roster", prompt: "Which stores have an open GM position?" },
+  { area: "PTO & Credits", prompt: "Any PTO requests coming up this week?" },
+  { area: "Policies", prompt: "What is the corrective action policy?" },
+  { area: "Resources", prompt: "What does the GM Binder say about food safety?" },
+  { area: "Training", prompt: "How much training credit bank does store 4541 have left?" },
 ];
 
 function TotMark({ size = 30 }: { size?: number }) {
@@ -138,7 +142,7 @@ export function RankingAskTotView() {
           <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider" style={{ color: "#BFD6EE" }}>
             Ask about
           </div>
-          {["Store directory", "Ranking & scores", "Resource docs"].map((item) => (
+          {["Store directory", "Ranking & labor", "PTO & credits", "Policies & guides", "PAF queue (RVP+)"].map((item) => (
             <div
               key={item}
               className="rounded-lg px-2 py-1.5 text-[13px] font-medium"
@@ -169,7 +173,7 @@ export function RankingAskTotView() {
             <span className="h-2 w-2 rounded-full bg-emerald-400" />
             Connected to SOAR Hub
           </div>
-          <div className="mt-1 opacity-70">Stores · Ranking · Promos</div>
+          <div className="mt-1 opacity-70">Stores · Ranking · Labor · Resources</div>
         </div>
       </div>
 
@@ -181,7 +185,7 @@ export function RankingAskTotView() {
             <TotMark size={28} />
           </div>
           <div className="text-[15px] font-bold text-midnight">
-            {isEmpty ? "Ask Tot · SOAR Hub" : (messages[0]?.text?.slice(0, 44) ?? "Ask Tot")}
+            {isEmpty ? "Ask Tot" : (messages[0]?.text?.slice(0, 44) ?? "Ask Tot")}
             {!isEmpty && messages[0]?.text?.length > 44 ? "…" : ""}
           </div>
           <div
@@ -242,7 +246,7 @@ export function RankingAskTotView() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKey}
-                placeholder="Ask about stores, ranking, promos…"
+                placeholder="Ask about stores, ranking, labor, policies, PTO…"
                 className="flex-1 resize-none bg-transparent text-[15px] text-midnight outline-none placeholder:text-zinc-400"
                 style={{ maxHeight: "120px" }}
               />
@@ -274,7 +278,7 @@ function EmptyState({ onSuggest }: { onSuggest: (p: string) => void }) {
       </div>
       <h2 className="mb-2 text-3xl font-black tracking-tight text-midnight">What do you need?</h2>
       <p className="mb-8 text-[15px]" style={{ color: "#4A5B70" }}>
-        Ask about stores, ranking scores, promos, and more.
+        Ask about stores, ranking, labor, PTO, policies, work orders, and more — all from SOAR Hub data.
       </p>
       <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 200px), 1fr))" }}>
         {SUGGESTIONS.map((s) => (

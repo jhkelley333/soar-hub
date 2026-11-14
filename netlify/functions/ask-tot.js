@@ -767,7 +767,9 @@ async function retrieveDriveDocuments(message) {
   if (keywords.length === 0) return [];
 
   const nameQuery = keywords.map((k) => `name contains '${k}'`).join(" or ");
-  const q = `(${nameQuery}) and '${RESOURCES_ROOT}' in parents and trashed=false and mimeType='application/vnd.google-apps.document'`;
+  // Use 'in ancestors' (not 'in parents') to search all subfolders recursively —
+  // Policies, GM Binder, Training Guides, etc. are nested inside the root.
+  const q = `(${nameQuery}) and '${RESOURCES_ROOT}' in ancestors and trashed=false and mimeType='application/vnd.google-apps.document'`;
 
   const res = await drive.files.list({ q, fields: "files(id,name,mimeType)", pageSize: 3, orderBy: "modifiedTime desc" });
   const docs = [];
