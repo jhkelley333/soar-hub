@@ -79,6 +79,17 @@ kpi_pull_log(id UUID PK, created_at, source, ok BOOL, business_date DATE,
   store_rows INT, error TEXT, duration_ms INT)
   source: 'cron' | 'refresh' | 'self-heal' | 'manual-correction'
 
+kpi_snapshots(id UUID PK, captured_at TIMESTAMPTZ, central_date DATE, central_hour INT,
+  payload JSONB)
+  payload.rapData.day[store_number_padded] → per-store drive-through metrics:
+    rapTickets INT (orders), rapNetSales NUMERIC, rapTicketsLy, rapNetSalesLy,
+    onTimeAll NUMERIC (fraction), onTimeDt NUMERIC, onTimeStall NUMERIC,
+    avgTimeAll INT (seconds), avgTimeDt INT, avgTimeStall INT,
+    critLateAll NUMERIC (fraction), critLateDt NUMERIC, critLateStall NUMERIC,
+    l2r NUMERIC, osat NUMERIC, complaints INT
+  NOTE: store keys in payload are zero-padded 5-digit strings (e.g. "01056" = store 1056)
+  Use the kpi_snapshot tool (not run_sql) for this table — it handles the padding and scoping.
+
 labor_data_revisions(id UUID PK, source, store_number, business_date DATE,
   field TEXT, old_value NUMERIC, new_value NUMERIC, pull_source, detected_at)
 
@@ -332,8 +343,20 @@ const BASE_TOOLS = [
     input_schema: { type: "object", properties: {} },
   },
   {
+    name: "kpi_snapshot",
+    description: "Get today's drive-through KPI metrics from the latest Skunkworks snapshot: on-time %, average service time (seconds), critical late %, net sales, and orders vs prior year. Use for speed-of-service questions, on-time performance, drive-through complaints, or any KPI comparison. Optionally filter to a single store.",
+    input_schema: {
+      type: "object",
+      properties: {
+        store_number: { type: "string", description: "Filter to a specific store number. Omit to return all stores in scope." },
+        bottom:       { type: "integer", description: "Return bottom N stores by on_time_all (worst performers). E.g. bottom: 10 for the 10 slowest stores." },
+        top:          { type: "integer", description: "Return top N stores by on_time_all (best performers)." },
+      },
+    },
+  },
+  {
     name: "run_sql",
-    description: "Run a read-only SELECT query against the SOAR Hub Supabase database. Use this for any question the specific tools can't answer: ad-hoc analysis, cross-table joins, trend queries, counting, averages, or anything beyond the pre-built tools. Always call describe_schema first if unsure of column names. For non-admin users a _my_stores(store_number) CTE is auto-injected — use it in WHERE clauses to scope results to the caller's region.",
+    description: "Run a read-only SELECT query against the SOAR Hub Supabase database. Use this for any question the specific tools can't answer: ad-hoc analysis, cross-table joins, trend queries, counting, averages, or anything beyond the pre-built tools. Always call describe_schema first if unsure of column names. For non-admin users a _my_stores(store_number) CTE is auto-injected — use it in WHERE clauses to scope results to the caller's region. Do NOT use run_sql for kpi_snapshots — use the kpi_snapshot tool instead.",
     input_schema: {
       type: "object",
       properties: {
@@ -921,6 +944,68 @@ async function handlePafDetail({ paf_id }, db, scope) {
   };
 }
 
+// ── KPI snapshot handler ──────────────────────────────────────────────────────
+
+async function handleKpiSnapshot({ store_number, top, bottom }, db, scope) {
+  const { data: snap } = await db
+    .from("kpi_snapshots")
+    .select("captured_at, central_date, payload")
+    .order("captured_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  if (!snap) return { error: "No KPI snapshot available." };
+
+  const rapDay = snap.payload?.rapData?.day ?? {};
+  const results = [];
+
+  for (const [key, m] of Object.entries(rapDay)) {
+    const num = key.replace(/^0+/, "");
+    if (store_number && num !== String(store_number)) continue;
+    if (!inScope(scope, num)) continue;
+
+    results.push({
+      store_number: num,
+      orders: m.rapTickets ?? null,
+      orders_ly: m.rapTicketsLy ?? null,
+      net_sales: m.rapNetSales ?? null,
+      net_sales_ly: m.rapNetSalesLy ?? null,
+      on_time_all_pct: m.onTimeAll != null ? `${(m.onTimeAll * 100).toFixed(1)}%` : null,
+      on_time_all_raw: m.onTimeAll ?? null,
+      avg_time_all_sec: m.avgTimeAll ?? null,
+      on_time_dt_pct: m.onTimeDt != null ? `${(m.onTimeDt * 100).toFixed(1)}%` : null,
+      avg_time_dt_sec: m.avgTimeDt ?? null,
+      on_time_stall_pct: m.onTimeStall != null ? `${(m.onTimeStall * 100).toFixed(1)}%` : null,
+      avg_time_stall_sec: m.avgTimeStall ?? null,
+      crit_late_all_pct: m.critLateAll != null ? `${(m.critLateAll * 100).toFixed(1)}%` : null,
+      l2r: m.l2r ?? null,
+      osat: m.osat ?? null,
+      complaints: m.complaints ?? null,
+    });
+  }
+
+  if (!results.length) {
+    return store_number
+      ? { error: `No KPI data for store ${store_number} in the latest snapshot.` }
+      : { error: "No KPI data found in the latest snapshot." };
+  }
+
+  // Sort by on_time_all_raw for top/bottom requests
+  if (top || bottom) {
+    results.sort((a, b) => (b.on_time_all_raw ?? 0) - (a.on_time_all_raw ?? 0));
+    const slice = top ? results.slice(0, top) : results.slice(-bottom).reverse();
+    return { snapshot_date: snap.central_date, captured_at: snap.captured_at, stores: slice, total_in_scope: results.length };
+  }
+
+  return {
+    snapshot_date: snap.central_date,
+    captured_at: snap.captured_at,
+    stores: results.slice(0, 100),
+    total_in_scope: results.length,
+    note: results.length > 100 ? "Showing first 100 stores. Use store_number or top/bottom to narrow." : undefined,
+  };
+}
+
 // ── Tool dispatcher ───────────────────────────────────────────────────────────
 
 async function dispatchTool(name, input, db, scope) {
@@ -935,6 +1020,7 @@ async function dispatchTool(name, input, db, scope) {
     case "roster_gaps":       return handleRosterGaps(input, db, scope);
     case "hub_help":          return handleHubHelp(input, scope);
     case "search_resources":  return handleSearchResources(input);
+    case "kpi_snapshot":      return handleKpiSnapshot(input, db, scope);
     case "describe_schema":   return handleDescribeSchema(input, scope);
     case "run_sql":           return handleRunSql(input, db, scope);
     case "paf_pending":       return handlePafPending(input, db, scope);
@@ -1078,32 +1164,56 @@ export const handler = async (event) => {
 
     const today = new Date().toISOString().slice(0, 10);
 
-    const systemPrompt = `You are Ask Tot, the AI assistant inside SOAR Hub (Sonic QSR, ~272 stores).
-User: ${user.full_name ?? user.email}, role ${user.role}. Scope: ${scopeSummary}.
+    const systemPrompt = `You are Ask Tot — the operations coach inside SOAR Hub for Sonic QSR (~272 stores).
+User: ${user.full_name ?? user.email}, role: ${user.role}. Scope: ${scopeSummary}.
 Today: ${today}.
 
-You have direct read access to the SOAR Hub Supabase database via two power tools:
-  • describe_schema — returns every table and column; call this whenever unsure of a name
-  • run_sql — runs any read-only SELECT query; use it for analysis the specific tools can't do
+IDENTITY: You are a Sonic ops coach, not just a data reporter. When you surface a problem, you tell the operator exactly what to do about it today — not just what it is. Be direct, specific, and action-oriented.
 
-Workflow for data questions:
-  1. Check if a specific tool covers it (ranking_week, labor_credits, pto_requests, etc.) — prefer those for speed.
-  2. For anything else (trends, cross-table joins, aggregations, ad-hoc counts, period comparisons): call describe_schema first if needed, then write a SELECT with run_sql.
-  3. For scoped (non-admin) users, a _my_stores(store_number) CTE is auto-injected — use it in WHERE clauses when the query touches store data: WHERE store_number IN (SELECT store_number FROM _my_stores).
+TOOLS:
+Named tools (use these first — they're fast and pre-scoped):
+  • find_store — store address, GM, DO, SDO, RVP
+  • org_lookup — find stores or leaders by name
+  • ranking_week — PTD/WTD rankings, % vs LY, labor, on-time
+  • labor_store_week — labor % vs chart for a store/week (Ranker WTD source)
+  • labor_credits — training, GM PTO, No-GM credits active for a store/week
+  • pto_requests — employee PTO requests by store/status/date
+  • training_credits — training bank: budget, used, remaining, all requests
+  • roster_gaps — open GM positions across scope
+  • kpi_snapshot — TODAY's drive-through KPI snapshot: on-time %, avg service time (seconds), critical late %, sales, orders vs LY; supports top/bottom N filtering
+  • hub_help — SOAR Hub features, navigation, business rules, workflows
+  • search_resources — Google Drive resource library: operations guides, SOPs, training materials, policies, GM Binder, corrective action docs
+${hasPafAccess ? "  • paf_pending — PAF submission queue\n  • paf_detail — full PAF record\n" : ""}
+Power tools (for anything named tools can't cover):
+  • describe_schema — full table/column listing; call before run_sql when unsure of names
+  • run_sql — any read-only SELECT; use for trends, cross-table joins, period comparisons, aggregations
 
-Rules:
+WORKFLOW:
+  1. Use the most specific named tool first.
+  2. Chain multiple tools in one turn when you need data from several sources.
+  3. For scoped users, a _my_stores(store_number) CTE is auto-injected — use WHERE store_number IN (SELECT store_number FROM _my_stores) for all store-level run_sql queries.
+  4. Do NOT use run_sql for kpi_snapshots — use the kpi_snapshot tool instead.
+
+RESPONSE FORMAT:
+Lead with the direct answer and key numbers. When you identify a problem, always close with:
+
+**What to do:**
+1. [Specific action] — [Hub screen or who owns it]
+2. [Specific action] — [Hub screen or who owns it]
+(2–3 steps, concrete, actionable today)
+
+RULES:
 1. Never answer data questions from memory — always call a tool first.
-2. If a tool returns no data or an error, say so and suggest the Hub page where the user can look.
+2. If a tool returns no data or an error, say so and name the Hub page where the user can look instead.
 3. Labor numbers come from the Ranker (Sunday WTD after credits). Always say which week.
 4. PAF topics: ${pafRule}
 5. Never reveal SSN digits, tokens, personal phone numbers, or birthdays even if data was returned.
 6. If the user asks about stores outside their scope, say you can't see those — don't confirm or deny their details.
-7. Be concise: lead with the answer, then key numbers, then where in Hub to act on it.
-8. When flagging a problem (stacked credits, missing labor, open GM slot), give store #, dates, $ and the Hub screen.
-
-Specific tools: find_store, org_lookup, ranking_week, labor_store_week, labor_credits,
-  pto_requests, training_credits, roster_gaps, hub_help, search_resources,
-  describe_schema, run_sql${hasPafAccess ? ", paf_pending, paf_detail" : ""}.`;
+7. Always give store #, specific dates, dollar amounts, and the exact Hub screen when flagging a problem.
+8. Drive-through thresholds worth flagging: on-time all < 55%, avg time all > 300 seconds, crit late all > 15%.
+9. Labor threshold: flag stores where labor_pct − target_labor_pct > 0.015 (more than 1.5 pts over chart). Check labor_credits before concluding a store is truly over.
+10. Open GM threshold: flag projected fill dates more than 4 weeks out or still_interviewing = true.
+11. For resource/policy/how-to questions, use search_resources AND hub_help — they complement each other.`;
 
     const messages = [
       ...history,
@@ -1127,6 +1237,7 @@ Specific tools: find_store, org_lookup, ranking_week, labor_store_week, labor_cr
         roster_gaps:      "GM Roster",
         hub_help:         "Hub Help",
         search_resources: "Resource Library",
+        kpi_snapshot:     "KPI Snapshot",
         paf_pending:      "PAF Queue",
         paf_detail:       "PAF Detail",
         describe_schema:  "Schema",

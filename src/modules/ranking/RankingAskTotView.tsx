@@ -16,12 +16,12 @@ type Msg = {
 const SUGGESTIONS = [
   { area: "Ranking", prompt: "Who are the top 5 ranked stores this period?" },
   { area: "Labor", prompt: "Which stores are over their labor chart this week?" },
+  { area: "Drive-Through Speed", prompt: "Which stores have the worst on-time % today?" },
   { area: "Store Directory", prompt: "List stores in my region with their GMs" },
   { area: "Roster", prompt: "Which stores have an open GM position?" },
   { area: "PTO & Credits", prompt: "Any PTO requests coming up this week?" },
   { area: "Policies", prompt: "What is the corrective action policy?" },
   { area: "Resources", prompt: "What does the GM Binder say about food safety?" },
-  { area: "Training", prompt: "How much training credit bank does store 4541 have left?" },
 ];
 
 function TotMark({ size = 30 }: { size?: number }) {
@@ -142,7 +142,7 @@ export function RankingAskTotView() {
           <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider" style={{ color: "#BFD6EE" }}>
             Ask about
           </div>
-          {["Store directory", "Ranking & labor", "PTO & credits", "Policies & guides", "PAF queue (RVP+)"].map((item) => (
+          {["Store directory", "Ranking & labor", "Drive-through KPI", "PTO & credits", "Policies & guides", "PAF queue (RVP+)"].map((item) => (
             <div
               key={item}
               className="rounded-lg px-2 py-1.5 text-[13px] font-medium"
@@ -173,7 +173,7 @@ export function RankingAskTotView() {
             <span className="h-2 w-2 rounded-full bg-emerald-400" />
             Connected to SOAR Hub
           </div>
-          <div className="mt-1 opacity-70">Stores · Ranking · Labor · Resources</div>
+          <div className="mt-1 opacity-70">Stores · Ranking · Labor · KPI · Resources</div>
         </div>
       </div>
 
@@ -299,6 +299,64 @@ function EmptyState({ onSuggest }: { onSuggest: (p: string) => void }) {
   );
 }
 
+function BotMessage({ text }: { text: string }) {
+  // Simple inline markdown: **bold**, numbered/bullet lists, line breaks
+  const lines = text.split("\n");
+  const elements: React.ReactNode[] = [];
+  let listItems: React.ReactNode[] = [];
+  let listType: "ol" | "ul" | null = null;
+
+  function flushList() {
+    if (!listItems.length) return;
+    const Tag = listType!;
+    elements.push(
+      <Tag key={elements.length} className={Tag === "ol" ? "ml-4 list-decimal space-y-0.5" : "ml-4 list-disc space-y-0.5"}>
+        {listItems}
+      </Tag>
+    );
+    listItems = [];
+    listType = null;
+  }
+
+  function renderInline(raw: string) {
+    // Replace **text** with <strong>
+    const parts = raw.split(/(\*\*[^*]+\*\*)/g);
+    return parts.map((part, i) =>
+      part.startsWith("**") && part.endsWith("**")
+        ? <strong key={i}>{part.slice(2, -2)}</strong>
+        : part
+    );
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const olMatch = line.match(/^(\d+)\.\s+(.*)/);
+    const ulMatch = line.match(/^[-•]\s+(.*)/);
+
+    if (olMatch) {
+      if (listType !== "ol") { flushList(); listType = "ol"; }
+      listItems.push(<li key={listItems.length} className="text-[15px] leading-relaxed text-midnight">{renderInline(olMatch[2])}</li>);
+    } else if (ulMatch) {
+      if (listType !== "ul") { flushList(); listType = "ul"; }
+      listItems.push(<li key={listItems.length} className="text-[15px] leading-relaxed text-midnight">{renderInline(ulMatch[1])}</li>);
+    } else {
+      flushList();
+      if (line.trim() === "") {
+        if (i > 0) elements.push(<div key={elements.length} className="h-2" />);
+      } else {
+        elements.push(
+          <p key={elements.length} className="text-[15px] leading-relaxed text-midnight">
+            {renderInline(line)}
+          </p>
+        );
+      }
+    }
+  }
+  flushList();
+
+  return <div className="space-y-1">{elements}</div>;
+}
+
 function MessageRow({ msg, onRetry }: { msg: Msg; onRetry: () => void }) {
   if (msg.from === "user") {
     return (
@@ -331,7 +389,7 @@ function MessageRow({ msg, onRetry }: { msg: Msg; onRetry: () => void }) {
             </button>
           </div>
         ) : (
-          <div className="text-[15px] leading-relaxed text-midnight whitespace-pre-wrap">{msg.text}</div>
+          <BotMessage text={msg.text} />
         )}
 
         {msg.sources && msg.sources.length > 0 && !msg.error && (

@@ -6,7 +6,7 @@ export function AskTotPage() {
     <>
       <PageHeader
         title="Ask Tot"
-        description="AI assistant for SOAR Hub — ask about stores, ranking, promos, and more."
+        description="AI assistant for SOAR Hub — ask about stores, ranking, labor, drive-through KPI, policies, and more."
       />
       <RankingAskTotView />
     </>
