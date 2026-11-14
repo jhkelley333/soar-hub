@@ -1,7 +1,7 @@
 // Ask Tot — SOAR Hub AI assistant (beta).
 // Variant A styling: navy sidebar (#16365A), primary blue (#0B7BD6), bg #EEF3F8.
 // Only shown to admin, coo, vp, rvp roles.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Send, AlertCircle, RefreshCw, Sparkles } from "lucide-react";
 import { askTot } from "./api";
 
@@ -25,15 +25,83 @@ const SUGGESTIONS = [
 ];
 
 function TotMark({ size = 30 }: { size?: number }) {
+  const uid = useId().replace(/:/g, "t");
+  const bg = `bg${uid}`;
+  const arm = `arm${uid}`;
+  const h = Math.round(size * 1.1);
   return (
-    <svg width={size} height={size} viewBox="0 0 60 60" fill="none" aria-label="Tot">
-      <ellipse cx="30" cy="38" rx="20" ry="17" fill="#FFD100" />
-      <ellipse cx="30" cy="22" rx="16" ry="16" fill="#FFD100" />
-      <ellipse cx="23" cy="20" rx="4" ry="5" fill="white" />
-      <ellipse cx="37" cy="20" rx="4" ry="5" fill="white" />
-      <circle cx="23" cy="21" r="2.5" fill="#1F6FE0" />
-      <circle cx="37" cy="21" r="2.5" fill="#1F6FE0" />
-      <path d="M25 29 Q30 33 35 29" stroke="#A07820" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+    <svg width={size} height={h} viewBox="0 0 80 88" fill="none" aria-label="Tot">
+      <defs>
+        <radialGradient id={bg} cx="38%" cy="28%" r="68%">
+          <stop offset="0%" stopColor="#B0E848" />
+          <stop offset="100%" stopColor="#6BBE20" />
+        </radialGradient>
+        <radialGradient id={arm} cx="30%" cy="22%" r="72%">
+          <stop offset="0%" stopColor="#96D030" />
+          <stop offset="100%" stopColor="#5AAE18" />
+        </radialGradient>
+      </defs>
+
+      {/* ── Body ── */}
+      <ellipse cx="40" cy="43" rx="36" ry="38" fill={`url(#${bg})`} />
+      {/* subtle sheen on upper-left of body */}
+      <ellipse cx="26" cy="22" rx="14" ry="11" fill="rgba(255,255,255,0.12)" />
+
+      {/* ── Blue ninja headband ── */}
+      <rect x="6" y="19" width="68" height="23" rx="9" fill="#4E80CC" />
+      {/* headband highlight strip */}
+      <rect x="6" y="19" width="68" height="6" rx="9" fill="rgba(255,255,255,0.20)" />
+      {/* mask tie knot hints at sides */}
+      <path d="M6,30 C1,26 0,35 5,36 C2,33 2,28 6,30 Z" fill="#3660A8" />
+      <path d="M74,30 C79,26 80,35 75,36 C78,33 78,28 74,30 Z" fill="#3660A8" />
+
+      {/* ── Eyes (black + gleam, sitting on the headband) ── */}
+      <ellipse cx="27" cy="31" rx="9.5" ry="10.5" fill="#111" />
+      <ellipse cx="53" cy="31" rx="9.5" ry="10.5" fill="#111" />
+      {/* primary gleam */}
+      <circle cx="23" cy="27" r="3.5" fill="white" />
+      <circle cx="49" cy="27" r="3.5" fill="white" />
+      {/* secondary smaller gleam */}
+      <circle cx="25.5" cy="30" r="1.4" fill="white" opacity="0.5" />
+      <circle cx="51.5" cy="30" r="1.4" fill="white" opacity="0.5" />
+
+      {/* ── Smile ── */}
+      <path d="M30,58 Q40,71 50,58" stroke="#1A1A1A" strokeWidth="2.2" strokeLinecap="round" fill="none" />
+
+      {/* ── Belt — embroidered two-tone with gold buckle ── */}
+      {/* pink/magenta outer band */}
+      <rect x="14" y="63" width="52" height="10" rx="4" fill="#C44D7A" />
+      <rect x="14" y="63" width="52" height="3.5" rx="4" fill="rgba(255,255,255,0.14)" />
+      {/* orange/amber inner band */}
+      <rect x="16" y="71" width="48" height="9" rx="3" fill="#F09A20" />
+      <rect x="16" y="71" width="48" height="2.5" rx="3" fill="rgba(255,255,255,0.12)" />
+      {/* horizontal stitch lines on pink band */}
+      <line x1="18" y1="66.5" x2="34" y2="66.5" stroke="rgba(255,255,255,0.18)" strokeWidth="0.8" />
+      <line x1="46" y1="66.5" x2="62" y2="66.5" stroke="rgba(255,255,255,0.18)" strokeWidth="0.8" />
+      {/* gold buckle plate */}
+      <rect x="34" y="62" width="12" height="14" rx="2.5" fill="#F5C228" />
+      <rect x="34" y="62" width="12" height="4.5" rx="2.5" fill="rgba(255,255,255,0.22)" />
+      {/* buckle ring */}
+      <rect x="36.5" y="65" width="7" height="8" rx="1.5" fill="none" stroke="#C89000" strokeWidth="1.6" />
+      {/* buckle pin */}
+      <line x1="40" y1="65" x2="40" y2="73" stroke="#C89000" strokeWidth="1.4" />
+
+      {/* ── Arms ── */}
+      <ellipse cx="10" cy="74" rx="10" ry="13" fill={`url(#${arm})`} />
+      <ellipse cx="70" cy="74" rx="10" ry="13" fill={`url(#${arm})`} />
+      {/* arm highlight */}
+      <ellipse cx="7" cy="69" rx="4.5" ry="5" fill="rgba(176,232,72,0.35)" />
+      <ellipse cx="67" cy="69" rx="4.5" ry="5" fill="rgba(176,232,72,0.35)" />
+
+      {/* ── Wrist wraps ── */}
+      <rect x="2" y="81" width="16" height="6.5" rx="3" fill="#EDE8DF" />
+      <line x1="2" y1="84.2" x2="18" y2="84.2" stroke="#C4BDB0" strokeWidth="0.9" />
+      <rect x="62" y="81" width="16" height="6.5" rx="3" fill="#EDE8DF" />
+      <line x1="62" y1="84.2" x2="78" y2="84.2" stroke="#C4BDB0" strokeWidth="0.9" />
+
+      {/* ── Fists ── */}
+      <ellipse cx="10" cy="88" rx="8" ry="6" fill={`url(#${arm})`} />
+      <ellipse cx="70" cy="88" rx="8" ry="6" fill={`url(#${arm})`} />
     </svg>
   );
 }
