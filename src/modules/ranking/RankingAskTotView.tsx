@@ -45,10 +45,10 @@ function TotMark({ size = 30 }: { size?: number }) {
         </radialGradient>
       </defs>
 
-      {/* ── Tot body — rounded-rect cylinder shape ── */}
-      {/* rx=30 on a 70-wide rect gives the classic tater-tot silhouette:
-          very rounded dome top/bottom, short straight sides in between */}
-      <rect x="5" y="2" width="70" height="80" rx="30" fill={`url(#${bg})`} />
+      {/* ── Tot body — cylinder shape ── */}
+      {/* rx=20 keeps enough straight side + top/bottom to read as a cylinder
+          at small sizes; rx=30 collapses to an oval below ~36px */}
+      <rect x="5" y="2" width="70" height="80" rx="20" fill={`url(#${bg})`} />
       {/* upper-left body sheen */}
       <ellipse cx="26" cy="20" rx="16" ry="10" fill="rgba(255,255,255,0.13)" />
 
