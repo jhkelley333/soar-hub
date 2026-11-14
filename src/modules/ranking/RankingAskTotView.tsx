@@ -27,21 +27,15 @@ const SUGGESTIONS = [
 function TotMark({ size = 30 }: { size?: number }) {
   const uid = useId().replace(/:/g, "t");
   const bg = `bg${uid}`;
-  const arm = `arm${uid}`;
-  // viewBox 80×100 → height is 1.25× width
-  const h = Math.round(size * 1.25);
+  // viewBox 80×86 → height is 1.075× width
+  const h = Math.round(size * 1.075);
   return (
-    <svg width={size} height={h} viewBox="0 0 80 100" fill="none" aria-label="Ninja Tot">
+    <svg width={size} height={h} viewBox="0 0 80 86" fill="none" aria-label="Ninja Tot">
       <defs>
         {/* Body: bright lime highlight top-left → deeper green bottom-right */}
         <radialGradient id={bg} cx="36%" cy="22%" r="70%">
           <stop offset="0%" stopColor="#B8EC50" />
           <stop offset="100%" stopColor="#62B418" />
-        </radialGradient>
-        {/* Arms: slightly darker than body */}
-        <radialGradient id={arm} cx="28%" cy="20%" r="75%">
-          <stop offset="0%" stopColor="#92CC2A" />
-          <stop offset="100%" stop-color="#52A010" />
         </radialGradient>
       </defs>
 
@@ -91,26 +85,6 @@ function TotMark({ size = 30 }: { size?: number }) {
       {/* buckle pin */}
       <line x1="40" y1="66" x2="40" y2="73" stroke="#C89000" strokeWidth="1.3" />
 
-      {/* ── Arms — drawn over lower body so they read as front appendages ── */}
-      {/* arm shadow/separation outline drawn first */}
-      <ellipse cx="9" cy="80" rx="10.5" ry="13" fill="rgba(80,140,20,0.35)" />
-      <ellipse cx="71" cy="80" rx="10.5" ry="13" fill="rgba(80,140,20,0.35)" />
-      {/* arm fill */}
-      <ellipse cx="9" cy="79" rx="9.5" ry="12" fill={`url(#${bg})`} />
-      <ellipse cx="71" cy="79" rx="9.5" ry="12" fill={`url(#${bg})`} />
-      {/* arm highlight */}
-      <ellipse cx="6" cy="74" rx="4" ry="5" fill="rgba(200,245,100,0.28)" />
-      <ellipse cx="68" cy="74" rx="4" ry="5" fill="rgba(200,245,100,0.28)" />
-
-      {/* ── Wrist wraps ── */}
-      <rect x="1" y="85" width="16" height="6.5" rx="3" fill="#EDE8DF" />
-      <line x1="1" y1="88.2" x2="17" y2="88.2" stroke="#C4BDB0" strokeWidth="0.9" />
-      <rect x="63" y="85" width="16" height="6.5" rx="3" fill="#EDE8DF" />
-      <line x1="63" y1="88.2" x2="79" y2="88.2" stroke="#C4BDB0" strokeWidth="0.9" />
-
-      {/* ── Fists ── */}
-      <ellipse cx="9" cy="95" rx="8" ry="5.5" fill={`url(#${bg})`} />
-      <ellipse cx="71" cy="95" rx="8" ry="5.5" fill={`url(#${bg})`} />
     </svg>
   );
 }
