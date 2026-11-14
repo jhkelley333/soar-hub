@@ -1,4 +1,4 @@
-// Ask Tot — SOAR Hub AI assistant (beta).
+// Ask Ninja Tot — SOAR Hub AI assistant (beta).
 // Variant A styling: navy sidebar (#16365A), primary blue (#0B7BD6), bg #EEF3F8.
 // Only shown to admin, coo, vp, rvp roles.
 import { useEffect, useId, useRef, useState } from "react";
@@ -31,7 +31,7 @@ function TotMark({ size = 30 }: { size?: number }) {
   // viewBox 80×100 → height is 1.25× width
   const h = Math.round(size * 1.25);
   return (
-    <svg width={size} height={h} viewBox="0 0 80 100" fill="none" aria-label="Tot">
+    <svg width={size} height={h} viewBox="0 0 80 100" fill="none" aria-label="Ninja Tot">
       <defs>
         {/* Body: bright lime highlight top-left → deeper green bottom-right */}
         <radialGradient id={bg} cx="36%" cy="22%" r="70%">
@@ -153,7 +153,7 @@ export function RankingAskTotView() {
       const errorMsg: Msg = {
         id: `e-${Date.now()}`,
         from: "bot",
-        text: err instanceof Error ? err.message : "Tot couldn't reach the Hub. Try again.",
+        text: err instanceof Error ? err.message : "Ninja Tot couldn't reach the Hub. Try again.",
         error: true,
       };
       setMessages((prev) => [...prev, errorMsg]);
@@ -181,7 +181,7 @@ export function RankingAskTotView() {
       >
         <TotMark size={34} />
         <div>
-          <div className="text-[15px] font-bold leading-tight text-white">Ask Tot</div>
+          <div className="text-[15px] font-bold leading-tight text-white">Ask Ninja Tot</div>
           <div className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: "#BFD6EE" }}>
             SOAR Hub AI Assistant · Beta
           </div>
@@ -199,7 +199,7 @@ export function RankingAskTotView() {
         <div className="flex items-center gap-2.5">
           <TotMark size={36} />
           <div>
-            <div className="text-[15px] font-bold leading-tight">Ask Tot</div>
+            <div className="text-[15px] font-bold leading-tight">Ask Ninja Tot</div>
             <div className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: "#BFD6EE" }}>
               SOAR Hub Assistant
             </div>
@@ -262,7 +262,7 @@ export function RankingAskTotView() {
             <TotMark size={28} />
           </div>
           <div className="text-[15px] font-bold text-midnight">
-            {isEmpty ? "Ask Tot" : (messages[0]?.text?.slice(0, 44) ?? "Ask Tot")}
+            {isEmpty ? "Ask Ninja Tot" : (messages[0]?.text?.slice(0, 44) ?? "Ask Ninja Tot")}
             {!isEmpty && messages[0]?.text?.length > 44 ? "…" : ""}
           </div>
           <div
@@ -287,7 +287,7 @@ export function RankingAskTotView() {
                   <TotMark size={28} />
                 </div>
                 <div className="text-[13px] italic" style={{ color: "#5A6B80" }}>
-                  Tot is checking the Hub…
+                  Ninja Tot is checking the Hub…
                 </div>
               </div>
             )}
@@ -337,7 +337,7 @@ export function RankingAskTotView() {
               </button>
             </div>
             <p className="mt-1.5 text-center text-[11px]" style={{ color: "#5A6B80" }}>
-              Tot answers only from SOAR Hub data you have access to.
+              Ninja Tot answers only from SOAR Hub data you have access to.
             </p>
           </div>
         </div>
@@ -351,7 +351,7 @@ function EmptyState({ onSuggest }: { onSuggest: (p: string) => void }) {
   return (
     <div className="pt-6 text-center">
       <div className="mb-1 text-[12px] font-bold uppercase tracking-widest" style={{ color: "#0B7BD6" }}>
-        Ask Tot · SOAR Hub
+        Ninja Tot · SOAR Hub
       </div>
       <h2 className="mb-2 text-3xl font-black tracking-tight text-midnight">What do you need?</h2>
       <p className="mb-8 text-[15px]" style={{ color: "#4A5B70" }}>
