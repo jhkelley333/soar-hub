@@ -29,8 +29,6 @@ import {
   Fingerprint,
   LifeBuoy,
   Activity,
-  Flame,
-  Compass,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
