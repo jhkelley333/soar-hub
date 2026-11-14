@@ -28,80 +28,89 @@ function TotMark({ size = 30 }: { size?: number }) {
   const uid = useId().replace(/:/g, "t");
   const bg = `bg${uid}`;
   const arm = `arm${uid}`;
-  const h = Math.round(size * 1.1);
+  // viewBox 80×100 → height is 1.25× width
+  const h = Math.round(size * 1.25);
   return (
-    <svg width={size} height={h} viewBox="0 0 80 88" fill="none" aria-label="Tot">
+    <svg width={size} height={h} viewBox="0 0 80 100" fill="none" aria-label="Tot">
       <defs>
-        <radialGradient id={bg} cx="38%" cy="28%" r="68%">
-          <stop offset="0%" stopColor="#B0E848" />
-          <stop offset="100%" stopColor="#6BBE20" />
+        {/* Body: bright lime highlight top-left → deeper green bottom-right */}
+        <radialGradient id={bg} cx="36%" cy="22%" r="70%">
+          <stop offset="0%" stopColor="#B8EC50" />
+          <stop offset="100%" stopColor="#62B418" />
         </radialGradient>
-        <radialGradient id={arm} cx="30%" cy="22%" r="72%">
-          <stop offset="0%" stopColor="#96D030" />
-          <stop offset="100%" stopColor="#5AAE18" />
+        {/* Arms: slightly darker than body */}
+        <radialGradient id={arm} cx="28%" cy="20%" r="75%">
+          <stop offset="0%" stopColor="#92CC2A" />
+          <stop offset="100%" stop-color="#52A010" />
         </radialGradient>
       </defs>
 
-      {/* ── Body ── */}
-      <ellipse cx="40" cy="43" rx="36" ry="38" fill={`url(#${bg})`} />
-      {/* subtle sheen on upper-left of body */}
-      <ellipse cx="26" cy="22" rx="14" ry="11" fill="rgba(255,255,255,0.12)" />
+      {/* ── Tot body — rounded-rect cylinder shape ── */}
+      {/* rx=30 on a 70-wide rect gives the classic tater-tot silhouette:
+          very rounded dome top/bottom, short straight sides in between */}
+      <rect x="5" y="2" width="70" height="80" rx="30" fill={`url(#${bg})`} />
+      {/* upper-left body sheen */}
+      <ellipse cx="26" cy="20" rx="16" ry="10" fill="rgba(255,255,255,0.13)" />
 
       {/* ── Blue ninja headband ── */}
-      <rect x="6" y="19" width="68" height="23" rx="9" fill="#4E80CC" />
-      {/* headband highlight strip */}
-      <rect x="6" y="19" width="68" height="6" rx="9" fill="rgba(255,255,255,0.20)" />
-      {/* mask tie knot hints at sides */}
-      <path d="M6,30 C1,26 0,35 5,36 C2,33 2,28 6,30 Z" fill="#3660A8" />
-      <path d="M74,30 C79,26 80,35 75,36 C78,33 78,28 74,30 Z" fill="#3660A8" />
+      <rect x="5" y="22" width="70" height="22" rx="8" fill="#4E80CC" />
+      {/* headband top highlight */}
+      <rect x="5" y="22" width="70" height="6" rx="8" fill="rgba(255,255,255,0.22)" />
+      {/* tie-knot hints on each side */}
+      <path d="M5,33 C0,29 -1,38 4,39 C1,36 1,31 5,33 Z" fill="#3660A8" />
+      <path d="M75,33 C80,29 81,38 76,39 C79,36 79,31 75,33 Z" fill="#3660A8" />
 
-      {/* ── Eyes (black + gleam, sitting on the headband) ── */}
-      <ellipse cx="27" cy="31" rx="9.5" ry="10.5" fill="#111" />
-      <ellipse cx="53" cy="31" rx="9.5" ry="10.5" fill="#111" />
+      {/* ── Eyes — big round black with gleam, inside headband ── */}
+      <ellipse cx="25" cy="33" rx="9.5" ry="10.5" fill="#111" />
+      <ellipse cx="55" cy="33" rx="9.5" ry="10.5" fill="#111" />
       {/* primary gleam */}
-      <circle cx="23" cy="27" r="3.5" fill="white" />
-      <circle cx="49" cy="27" r="3.5" fill="white" />
-      {/* secondary smaller gleam */}
-      <circle cx="25.5" cy="30" r="1.4" fill="white" opacity="0.5" />
-      <circle cx="51.5" cy="30" r="1.4" fill="white" opacity="0.5" />
+      <circle cx="21" cy="29" r="3.5" fill="white" />
+      <circle cx="51" cy="29" r="3.5" fill="white" />
+      {/* secondary sparkle */}
+      <circle cx="24" cy="32" r="1.4" fill="white" opacity="0.5" />
+      <circle cx="54" cy="32" r="1.4" fill="white" opacity="0.5" />
 
       {/* ── Smile ── */}
-      <path d="M30,58 Q40,71 50,58" stroke="#1A1A1A" strokeWidth="2.2" strokeLinecap="round" fill="none" />
+      <path d="M28,57 Q40,70 52,57" stroke="#1A1A1A" strokeWidth="2.2" strokeLinecap="round" fill="none" />
 
-      {/* ── Belt — embroidered two-tone with gold buckle ── */}
+      {/* ── Belt — two-tone embroidered with gold buckle ── */}
       {/* pink/magenta outer band */}
-      <rect x="14" y="63" width="52" height="10" rx="4" fill="#C44D7A" />
-      <rect x="14" y="63" width="52" height="3.5" rx="4" fill="rgba(255,255,255,0.14)" />
-      {/* orange/amber inner band */}
-      <rect x="16" y="71" width="48" height="9" rx="3" fill="#F09A20" />
-      <rect x="16" y="71" width="48" height="2.5" rx="3" fill="rgba(255,255,255,0.12)" />
-      {/* horizontal stitch lines on pink band */}
-      <line x1="18" y1="66.5" x2="34" y2="66.5" stroke="rgba(255,255,255,0.18)" strokeWidth="0.8" />
-      <line x1="46" y1="66.5" x2="62" y2="66.5" stroke="rgba(255,255,255,0.18)" strokeWidth="0.8" />
+      <rect x="12" y="64" width="56" height="10" rx="4" fill="#C44D7A" />
+      <rect x="12" y="64" width="56" height="3.5" rx="4" fill="rgba(255,255,255,0.15)" />
+      {/* stitch details on pink */}
+      <line x1="16" y1="67.5" x2="32" y2="67.5" stroke="rgba(255,255,255,0.20)" strokeWidth="0.8" />
+      <line x1="48" y1="67.5" x2="64" y2="67.5" stroke="rgba(255,255,255,0.20)" strokeWidth="0.8" />
+      {/* orange/amber lower band */}
+      <rect x="14" y="72" width="52" height="8" rx="3" fill="#F09A20" />
+      <rect x="14" y="72" width="52" height="2.5" rx="3" fill="rgba(255,255,255,0.13)" />
       {/* gold buckle plate */}
-      <rect x="34" y="62" width="12" height="14" rx="2.5" fill="#F5C228" />
-      <rect x="34" y="62" width="12" height="4.5" rx="2.5" fill="rgba(255,255,255,0.22)" />
+      <rect x="36" y="63" width="8" height="13" rx="2" fill="#F5C228" />
+      <rect x="36" y="63" width="8" height="4" rx="2" fill="rgba(255,255,255,0.25)" />
       {/* buckle ring */}
-      <rect x="36.5" y="65" width="7" height="8" rx="1.5" fill="none" stroke="#C89000" strokeWidth="1.6" />
+      <rect x="37.5" y="66" width="5" height="7" rx="1.2" fill="none" stroke="#C89000" strokeWidth="1.5" />
       {/* buckle pin */}
-      <line x1="40" y1="65" x2="40" y2="73" stroke="#C89000" strokeWidth="1.4" />
+      <line x1="40" y1="66" x2="40" y2="73" stroke="#C89000" strokeWidth="1.3" />
 
-      {/* ── Arms ── */}
-      <ellipse cx="10" cy="74" rx="10" ry="13" fill={`url(#${arm})`} />
-      <ellipse cx="70" cy="74" rx="10" ry="13" fill={`url(#${arm})`} />
+      {/* ── Arms — drawn over lower body so they read as front appendages ── */}
+      {/* arm shadow/separation outline drawn first */}
+      <ellipse cx="9" cy="80" rx="10.5" ry="13" fill="rgba(80,140,20,0.35)" />
+      <ellipse cx="71" cy="80" rx="10.5" ry="13" fill="rgba(80,140,20,0.35)" />
+      {/* arm fill */}
+      <ellipse cx="9" cy="79" rx="9.5" ry="12" fill={`url(#${bg})`} />
+      <ellipse cx="71" cy="79" rx="9.5" ry="12" fill={`url(#${bg})`} />
       {/* arm highlight */}
-      <ellipse cx="7" cy="69" rx="4.5" ry="5" fill="rgba(176,232,72,0.35)" />
-      <ellipse cx="67" cy="69" rx="4.5" ry="5" fill="rgba(176,232,72,0.35)" />
+      <ellipse cx="6" cy="74" rx="4" ry="5" fill="rgba(200,245,100,0.28)" />
+      <ellipse cx="68" cy="74" rx="4" ry="5" fill="rgba(200,245,100,0.28)" />
 
       {/* ── Wrist wraps ── */}
-      <rect x="2" y="81" width="16" height="6.5" rx="3" fill="#EDE8DF" />
-      <line x1="2" y1="84.2" x2="18" y2="84.2" stroke="#C4BDB0" strokeWidth="0.9" />
-      <rect x="62" y="81" width="16" height="6.5" rx="3" fill="#EDE8DF" />
-      <line x1="62" y1="84.2" x2="78" y2="84.2" stroke="#C4BDB0" strokeWidth="0.9" />
+      <rect x="1" y="85" width="16" height="6.5" rx="3" fill="#EDE8DF" />
+      <line x1="1" y1="88.2" x2="17" y2="88.2" stroke="#C4BDB0" strokeWidth="0.9" />
+      <rect x="63" y="85" width="16" height="6.5" rx="3" fill="#EDE8DF" />
+      <line x1="63" y1="88.2" x2="79" y2="88.2" stroke="#C4BDB0" strokeWidth="0.9" />
 
       {/* ── Fists ── */}
-      <ellipse cx="10" cy="88" rx="8" ry="6" fill={`url(#${arm})`} />
-      <ellipse cx="70" cy="88" rx="8" ry="6" fill={`url(#${arm})`} />
+      <ellipse cx="9" cy="95" rx="8" ry="5.5" fill={`url(#${bg})`} />
+      <ellipse cx="71" cy="95" rx="8" ry="5.5" fill={`url(#${bg})`} />
     </svg>
   );
 }
