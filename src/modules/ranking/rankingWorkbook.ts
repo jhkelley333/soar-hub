@@ -101,6 +101,8 @@ function cellVal(r: RankingResultRow, c: Col): unknown {
   if (c.key === "__store") return r.entity_key;
   const v = r.metrics[c.key];
   if (c.key === "ecosure" && v == null) return "No Audit";
+  if (c.key === "vog" && v == null) return "No Shop";
+  if (c.key === "vogScore" && r.metrics.vog == null) return null;
   return v ?? null;
 }
 
