@@ -141,7 +141,7 @@ const LEADER_COLS: Col[] = [
 ];
 
 // WTD hides the sources the engine's WTD contract excludes.
-const WTD_HIDE = new Set(["ecosure", "ecosureScore", "totalTrainingPct", "totalTrainingScore", "vogResponses", "msCount", "msScore"]);
+const WTD_HIDE = new Set(["ecosure", "ecosureScore", "vogResponses", "msCount", "msScore"]);
 
 const TIER_TABS: { id: RankTier; label: string }[] = [
   { id: "store", label: "Stores" }, { id: "do", label: "DOs" }, { id: "sdo", label: "SDOs" },
