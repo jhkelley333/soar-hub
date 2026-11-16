@@ -95,7 +95,7 @@ const GROUP_FILL: Record<string, string> = {
   "Financial": "FF0F766E", "Operations": "FF475569", "Info Only": "FF64748B",
 };
 
-const WTD_COL_HIDE = new Set(["msScore"]);
+const WTD_COL_HIDE = new Set(["ecosure", "ecosureScore", "msScore"]);
 function scopedCols(cols: Col[], scope: "ptd" | "wtd"): Col[] {
   return scope === "wtd" ? cols.filter((c) => !WTD_COL_HIDE.has(c.key)) : cols;
 }
