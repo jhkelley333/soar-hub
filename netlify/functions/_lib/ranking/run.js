@@ -287,6 +287,23 @@ export async function runRankingNow(supa, user, opts = {}) {
     issues.push({ level: "warn", msg: "Couldn't compute company avg wage from Labor v2 — fell back to 12.84." });
   }
   const weeksInPeriod = Math.round(((Date.parse(fi.periodEnd) - Date.parse(fi.periodStart)) / 86400000 + 1) / 7);
+  // Min-hours floor for WTD and PTD bands. weekEnding is always a fiscal Saturday
+  // (Mon=1 … Sat=6), so wtdDays = 6 for every row. ptdDays scales by weeksInPeriod.
+  {
+    const { data: mhSetting } = await supa.from("store_portal_settings").select("value").eq("key", "labor_min_daily_hours").single();
+    const minDH = mhSetting?.value ? Number(mhSetting.value) : 0;
+    if (minDH > 0) {
+      const wtdDays = 6;
+      const ptdDays = (weeksInPeriod - 1) * 7 + 6;
+      for (const r of rows) {
+        const wtdS = Number(r.wtd_net_sales) || 0, wtdC = Number(r.wtd_labor_cost) || 0, wtdH = Number(r.wtd_labor_hours) || 0, wtdT = Number(r.wtd_target_labor_pct) || 0;
+        if (wtdS > 0 && wtdH > 0 && wtdT > 0) { const w = wtdC / wtdH; if ((wtdS * wtdT) / w < minDH * wtdDays) r.wtd_target_labor_pct = Math.max(wtdT, (minDH * wtdDays * w) / wtdS); }
+        // PTD: daily target_labor_pct is the proxy (no ptd_target_labor_pct in DB)
+        const ptdS = Number(r.ptd_net_sales) || 0, ptdC = Number(r.ptd_labor_cost) || 0, ptdH = Number(r.ptd_labor_hours) || 0, ptdT = Number(r.target_labor_pct) || 0;
+        if (ptdS > 0 && ptdH > 0 && ptdT > 0) { const w = ptdC / ptdH; if ((ptdS * ptdT) / w < minDH * ptdDays) r.ptd_target_labor_pct = Math.max(ptdT, (minDH * ptdDays * w) / ptdS); }
+      }
+    }
+  }
   issues.push({ level: "info", msg: `Food cost miss measured against ${(rc.fcTargetEfficiency * 100).toFixed(1)}% target efficiency (adjustable in System Settings).` });
 
   // 5. Engine inputs (IX food cost + TotZone training join here when ingested).
