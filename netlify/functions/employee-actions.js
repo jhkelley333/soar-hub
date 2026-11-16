@@ -311,11 +311,15 @@ async function logAudit(supa, entry) {
   }
 }
 
-// Notify the store's DO + RVP (and the submitter if they asked for a copy).
-async function notifyLeadership(supa, { storeNumber, sendCopy, submitterEmail, subject, text }) {
+// Notify the right approver tier for a Training Credit (and the submitter if
+// they asked for a copy). Within-bank requests route to the DO; over-bank
+// requests route to the RVP. Sending to both confused RVPs who received an
+// email but had nothing in their approval queue.
+async function notifyLeadership(supa, { storeNumber, sendCopy, submitterEmail, subject, text, overBank = false }) {
   const { dos, rvps } = await resolveStoreLeadership(supa, storeNumber);
+  const approvers = overBank ? rvps : dos;
   const recipients = new Set();
-  for (const p of [...dos, ...rvps]) if (p.email) recipients.add(p.email);
+  for (const p of approvers) if (p.email) recipients.add(p.email);
   if (sendCopy && submitterEmail) recipients.add(submitterEmail);
   await sendEmailViaResend({ to: Array.from(recipients), subject, text });
   return { dos, rvps, notified: Array.from(recipients) };
@@ -730,6 +734,7 @@ async function submitTraining(supa, user, body) {
     subject: `Training Credit Request — ${built.meta.employeeName} (Store ${storeNumber})`,
     text: trainingEmailText(user, storeNumber, built.fields, built.meta, link, "submitted")
       + (overBank ? `\n\n⚠ Over the store's training bank ($${bal.remaining.toFixed(2)} left of $${bal.budget.toFixed(2)}) — this needs RVP approval.` : ""),
+    overBank,
   });
 
   // 2D — event report: an APPROVED credit (auto-completed because the submitter
@@ -850,6 +855,7 @@ async function updateTraining(supa, user, body) {
     submitterEmail: user.email,
     subject: `Training Credit Resubmitted — ${built.meta.employeeName} (Store ${storeNumber})`,
     text: trainingEmailText(user, storeNumber, built.fields, built.meta, link, "resubmitted after changes"),
+    overBank,
   });
 
   return { ok: true, id, status: wf.status || "Submitted" };
