@@ -229,13 +229,16 @@ export async function downloadRankingWorkbook(
       const ptdM = ptdMap.get(key);
       if (!ptdM) return r;
       const patch: M = {};
-      if (typeof (r.metrics as M).bscTrainingPct !== "number" && typeof ptdM.bscTrainingPct === "number") {
-        patch.bscTrainingPct = ptdM.bscTrainingPct;
-        patch.bscScore = ptdM.bscScore;
+      const wtdM = r.metrics as M;
+      if (typeof ptdM.bscTrainingPct === "number") {
+        if (typeof wtdM.bscTrainingPct !== "number") patch.bscTrainingPct = ptdM.bscTrainingPct;
+        if (typeof wtdM.bscScore !== "number") patch.bscScore = ptdM.bscScore;
       }
-      if (typeof (r.metrics as M).totalTrainingPct !== "number" && typeof ptdM.totalTrainingPct === "number") {
-        patch.totalTrainingPct = ptdM.totalTrainingPct;
-        patch.totalTrainingScore = ptdM.totalTrainingScore;
+      if (typeof ptdM.totalTrainingPct === "number") {
+        if (typeof wtdM.totalTrainingPct !== "number") patch.totalTrainingPct = ptdM.totalTrainingPct;
+        // Fill score whenever missing — covers cached WTD runs computed before the
+        // engine started writing totalTrainingScore (even when pct is already set).
+        if (typeof wtdM.totalTrainingScore !== "number") patch.totalTrainingScore = ptdM.totalTrainingScore;
       }
       return Object.keys(patch).length ? { ...r, metrics: { ...r.metrics, ...patch } } : r;
     });
