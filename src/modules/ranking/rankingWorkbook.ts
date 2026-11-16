@@ -209,19 +209,35 @@ export async function downloadRankingWorkbook(
   const wb = new ExcelJS.Workbook();
   wb.creator = "SOAR Hub";
 
-  // BSC training is a period metric (same value on PTD and WTD). When a run was
-  // computed before the BSC file was uploaded, WTD store rows have '-' while the
-  // PTD rows may also have '-'. If PTD has a numeric value, mirror it to WTD so
-  // the Weekly tab shows the correct training % instead of a dash.
-  const ptdByStore = new Map(
-    (scopes.ptd?.store ?? []).map((r) => [String(r.entity_key), r.metrics]),
-  );
-  function bscFilled(rows: RankingResultRow[]): RankingResultRow[] {
+  // BSC training and total training are period metrics (not in the WTD feed).
+  // Mirror PTD values to WTD rows that are missing them so both columns appear.
+  type M = Record<string, unknown>;
+  function mkPtdMap(rows: RankingResultRow[]): Map<string, M> {
+    return new Map(rows.map((r) => [String(r.entity_key ?? (r.metrics as M).name ?? ""), r.metrics as M]));
+  }
+  const ptdByStore = mkPtdMap(scopes.ptd?.store ?? []);
+  const ptdByTier: Record<string, Map<string, M>> = {
+    do: mkPtdMap(scopes.ptd?.do ?? []),
+    sdo: mkPtdMap(scopes.ptd?.sdo ?? []),
+    rvp: mkPtdMap(scopes.ptd?.rvp ?? []),
+    entity: mkPtdMap(scopes.ptd?.entity ?? []),
+    company: mkPtdMap(scopes.ptd?.company ?? []),
+  };
+  function wtdFill(rows: RankingResultRow[], ptdMap: Map<string, M>): RankingResultRow[] {
     return rows.map((r) => {
-      if (typeof r.metrics.bscTrainingPct === "number") return r;
-      const ptdM = ptdByStore.get(String(r.entity_key));
-      if (!ptdM || typeof ptdM.bscTrainingPct !== "number") return r;
-      return { ...r, metrics: { ...r.metrics, bscTrainingPct: ptdM.bscTrainingPct, bscScore: ptdM.bscScore } };
+      const key = String(r.entity_key ?? (r.metrics as M).name ?? "");
+      const ptdM = ptdMap.get(key);
+      if (!ptdM) return r;
+      const patch: M = {};
+      if (typeof (r.metrics as M).bscTrainingPct !== "number" && typeof ptdM.bscTrainingPct === "number") {
+        patch.bscTrainingPct = ptdM.bscTrainingPct;
+        patch.bscScore = ptdM.bscScore;
+      }
+      if (typeof (r.metrics as M).totalTrainingPct !== "number" && typeof ptdM.totalTrainingPct === "number") {
+        patch.totalTrainingPct = ptdM.totalTrainingPct;
+        patch.totalTrainingScore = ptdM.totalTrainingScore;
+      }
+      return Object.keys(patch).length ? { ...r, metrics: { ...r.metrics, ...patch } } : r;
     });
   }
 
@@ -252,7 +268,7 @@ export async function downloadRankingWorkbook(
     }
 
     let row = 3;
-    const storeSection = scope === "wtd" ? bscFilled(data.store ?? []) : (data.store ?? []);
+    const storeSection = scope === "wtd" ? wtdFill(data.store ?? [], ptdByStore) : (data.store ?? []);
     addSection(ws, row, null, scopedCols(STORE_COLS, scope), storeSection);
     row += 2 + storeSection.length + 1; // group hdr + col hdr + rows + gap
 
@@ -266,9 +282,10 @@ export async function downloadRankingWorkbook(
     for (const [tier, label] of leaderTiers) {
       const rows = data[tier as keyof FullRunScope];
       if (!rows || !rows.length) continue;
+      const filledRows = scope === "wtd" ? wtdFill(rows, ptdByTier[tier] ?? new Map()) : rows;
       row += 1;
-      addSection(ws, row, label, scopedCols(LEADER_COLS, scope), rows);
-      row += 1 + 2 + rows.length; // title + group hdr + col hdr + rows
+      addSection(ws, row, label, scopedCols(LEADER_COLS, scope), filledRows);
+      row += 1 + 2 + filledRows.length; // title + group hdr + col hdr + rows
     }
 
     // Column widths.
@@ -312,11 +329,14 @@ export async function downloadRankingWorkbook(
       for (const scope of ["ptd", "wtd"] as const) {
         const data = scopes[scope];
         if (!data) continue;
-        const self = (data[tier] ?? []).filter((r) => leaderName(r).toLowerCase() === key);
-        const sdos = tier === "rvp" ? (data.sdo ?? []).filter((r) => String(r.metrics.rvpName ?? "").toLowerCase() === key) : [];
-        const dos = (data.do ?? []).filter(belongs);
+        const selfRaw = (data[tier] ?? []).filter((r) => leaderName(r).toLowerCase() === key);
+        const sdosRaw = tier === "rvp" ? (data.sdo ?? []).filter((r) => String(r.metrics.rvpName ?? "").toLowerCase() === key) : [];
+        const dosRaw = (data.do ?? []).filter(belongs);
         const storesRaw = (data.store ?? []).filter(belongs);
-        const stores = scope === "wtd" ? bscFilled(storesRaw) : storesRaw;
+        const self = scope === "wtd" ? wtdFill(selfRaw, ptdByTier[tier] ?? new Map()) : selfRaw;
+        const sdos = scope === "wtd" ? wtdFill(sdosRaw, ptdByTier.sdo) : sdosRaw;
+        const dos = scope === "wtd" ? wtdFill(dosRaw, ptdByTier.do) : dosRaw;
+        const stores = scope === "wtd" ? wtdFill(storesRaw, ptdByStore) : storesRaw;
         if (!self.length && !sdos.length && !dos.length && !stores.length) continue;
         any = true;
         row = stack(ws, row, scope === "wtd" ? "Week to Date" : "Period to Date", scopedCols(LEADER_COLS, scope), self);
