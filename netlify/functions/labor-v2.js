@@ -258,6 +258,55 @@ function applyMinHoursFloor(rows, minHours) {
   }
 }
 
+// Fiscal day-of-week from an ISO date: Mon=1 … Sat=6, Sun=7.
+function fiscalDow(isoDate) {
+  const d = parseIso(isoDate);
+  if (!d) return null;
+  const dow = d.getUTCDay();
+  return dow === 0 ? 7 : dow;
+}
+
+// WTD floor: raises wtd_target_labor_pct so a low-sales store isn't penalised
+// for scheduling the daily min across the days elapsed so far this week.
+// daysArg: a fixed number, or a function(row)→number for per-row day counts.
+function applyMinHoursFloorWtd(rows, minDailyHours, daysArg) {
+  if (!minDailyHours || minDailyHours <= 0) return;
+  for (const r of rows) {
+    const days = typeof daysArg === "function" ? daysArg(r) : daysArg;
+    if (!days) continue;
+    const minHours = minDailyHours * days;
+    const sales  = numv(r.wtd_net_sales);
+    const cost   = numv(r.wtd_labor_cost);
+    const hours  = numv(r.wtd_labor_hours);
+    const target = numv(r.wtd_target_labor_pct);
+    if (!sales || !cost || !hours || !target) continue;
+    const avgWage = cost / hours;
+    if ((sales * target) / avgWage >= minHours) continue;
+    r.wtd_target_labor_pct = Math.max(target, (minHours * avgWage) / sales);
+  }
+}
+
+// PTD floor: raises ptd_target_labor_pct (synthetic on-the-fly field) using the
+// daily target_labor_pct as a proxy for the period target (B1 / DEVIATIONS).
+// ptdDaysArg: a fixed number, or a function(row)→number for per-row day counts.
+function applyMinHoursFloorPtd(rows, minDailyHours, ptdDaysArg) {
+  if (!minDailyHours || minDailyHours <= 0) return;
+  for (const r of rows) {
+    const ptdDays = typeof ptdDaysArg === "function" ? ptdDaysArg(r) : ptdDaysArg;
+    if (!ptdDays) continue;
+    const minHours = minDailyHours * ptdDays;
+    const sales  = numv(r.ptd_net_sales);
+    const cost   = numv(r.ptd_labor_cost);
+    const hours  = numv(r.ptd_labor_hours);
+    // daily target_labor_pct as proxy; already potentially floored by daily pass
+    const target = numv(r.target_labor_pct);
+    if (!sales || !cost || !hours || !target) continue;
+    const avgWage = cost / hours;
+    if ((sales * target) / avgWage >= minHours) continue;
+    r.ptd_target_labor_pct = Math.max(target, (minHours * avgWage) / sales);
+  }
+}
+
 // Aggregate one band (prefix "" = daily, "wtd_", "ptd_") across a set of store
 // rows, weighting from $ and hours (never averaging percentages). $ over chart =
 // cost − sales×target; hours over chart = $ over ÷ blended avg wage (cost÷hours).
@@ -737,7 +786,11 @@ async function gmView(supa, user, params) {
     supa.from("labor_reviews").select("*").eq("store_number", storeNumber).gte("business_date", week[0]).lte("business_date", week[6]),
   ]);
   applyCreditsToRows(rows ?? [], await loadLaborCredits(supa, [storeNumber]));
-  applyMinHoursFloor(rows ?? [], await getMinDailyHours(supa));
+  const _storeMinHr = await getMinDailyHours(supa);
+  applyMinHoursFloor(rows ?? [], _storeMinHr);
+  const _storeWeeksIP = fiscalForDate(anchorIso)?.weekInPeriod ?? 1;
+  applyMinHoursFloorWtd(rows ?? [], _storeMinHr, (r) => fiscalDow(r.business_date));
+  applyMinHoursFloorPtd(rows ?? [], _storeMinHr, (r) => { const d = fiscalDow(r.business_date); return d ? (_storeWeeksIP - 1) * 7 + d : null; });
   const rowByDate = new Map((rows ?? []).map((r) => [r.business_date, r]));
   const reviewByDate = new Map((reviews ?? []).map((r) => [r.business_date, r]));
 
@@ -2149,6 +2202,10 @@ async function teamView(supa, user, params) {
   for (const src of [tcMap, ptoMap, noGmMap, gmSupMap, corpMap]) for (const [sn, arr] of src) mergedCredits.set(sn, (mergedCredits.get(sn) || []).concat(arr));
   applyCreditsToRows(rows || [], mergedCredits);
   applyMinHoursFloor(rows || [], minDailyHours);
+  const _teamWtdDays = fiscalDow(anchor);
+  const _teamPtdDays = (_teamWtdDays && weeksInPeriod) ? (weeksInPeriod - 1) * 7 + _teamWtdDays : null;
+  applyMinHoursFloorWtd(rows || [], minDailyHours, _teamWtdDays);
+  applyMinHoursFloorPtd(rows || [], minDailyHours, _teamPtdDays);
   // Period-to-date credit $ per store (periodStart → anchor), summed per node.
   const periodStart = fiscalForDate(anchor)?.periodStart ?? anchor;
   const creditPtd = (map, sn) => (map.get(sn) || []).reduce((a, c) => (c.date >= periodStart && c.date <= anchor ? a + numv(c.amount) : a), 0);
