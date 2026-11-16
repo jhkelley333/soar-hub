@@ -94,6 +94,11 @@ const GROUP_FILL: Record<string, string> = {
   "Financial": "FF0F766E", "Operations": "FF475569", "Info Only": "FF64748B",
 };
 
+const WTD_COL_HIDE = new Set(["msScore"]);
+function scopedCols(cols: Col[], scope: "ptd" | "wtd"): Col[] {
+  return scope === "wtd" ? cols.filter((c) => !WTD_COL_HIDE.has(c.key)) : cols;
+}
+
 function cellVal(r: RankingResultRow, c: Col): unknown {
   if (c.key === "rank") return r.rank ?? null;
   if (c.key === "totalPoints") return r.total_points ?? null;
@@ -247,7 +252,7 @@ export async function downloadRankingWorkbook(
 
     let row = 3;
     const storeSection = scope === "wtd" ? bscFilled(data.store ?? []) : (data.store ?? []);
-    addSection(ws, row, null, STORE_COLS, storeSection);
+    addSection(ws, row, null, scopedCols(STORE_COLS, scope), storeSection);
     row += 2 + storeSection.length + 1; // group hdr + col hdr + rows + gap
 
     const leaderTiers: [string, string][] = [
@@ -261,7 +266,7 @@ export async function downloadRankingWorkbook(
       const rows = data[tier as keyof FullRunScope];
       if (!rows || !rows.length) continue;
       row += 1;
-      addSection(ws, row, label, LEADER_COLS, rows);
+      addSection(ws, row, label, scopedCols(LEADER_COLS, scope), rows);
       row += 1 + 2 + rows.length; // title + group hdr + col hdr + rows
     }
 
@@ -313,10 +318,10 @@ export async function downloadRankingWorkbook(
         const stores = scope === "wtd" ? bscFilled(storesRaw) : storesRaw;
         if (!self.length && !sdos.length && !dos.length && !stores.length) continue;
         any = true;
-        row = stack(ws, row, scope === "wtd" ? "Week to Date" : "Period to Date", LEADER_COLS, self);
-        if (sdos.length) row = stack(ws, row, "SDOs", LEADER_COLS, sdos);
-        if (dos.length) row = stack(ws, row, "Directors of Operations", LEADER_COLS, dos);
-        if (stores.length) row = stack(ws, row, "Stores", STORE_COLS, stores);
+        row = stack(ws, row, scope === "wtd" ? "Week to Date" : "Period to Date", scopedCols(LEADER_COLS, scope), self);
+        if (sdos.length) row = stack(ws, row, "SDOs", scopedCols(LEADER_COLS, scope), sdos);
+        if (dos.length) row = stack(ws, row, "Directors of Operations", scopedCols(LEADER_COLS, scope), dos);
+        if (stores.length) row = stack(ws, row, "Stores", scopedCols(STORE_COLS, scope), stores);
         row += 1; // gap between scope blocks
       }
       if (!any) {
