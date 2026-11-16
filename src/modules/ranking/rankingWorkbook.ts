@@ -99,7 +99,9 @@ function cellVal(r: RankingResultRow, c: Col): unknown {
   if (c.key === "rank") return r.rank ?? null;
   if (c.key === "totalPoints") return r.total_points ?? null;
   if (c.key === "__store") return r.entity_key;
-  return r.metrics[c.key] ?? null;
+  const v = r.metrics[c.key];
+  if (c.key === "ecosure" && v == null) return "No Audit";
+  return v ?? null;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -198,6 +200,22 @@ export async function downloadRankingWorkbook(
   const wb = new ExcelJS.Workbook();
   wb.creator = "SOAR Hub";
 
+  // BSC training is a period metric (same value on PTD and WTD). When a run was
+  // computed before the BSC file was uploaded, WTD store rows have '-' while the
+  // PTD rows may also have '-'. If PTD has a numeric value, mirror it to WTD so
+  // the Weekly tab shows the correct training % instead of a dash.
+  const ptdByStore = new Map(
+    (scopes.ptd?.store ?? []).map((r) => [String(r.entity_key), r.metrics]),
+  );
+  function bscFilled(rows: RankingResultRow[]): RankingResultRow[] {
+    return rows.map((r) => {
+      if (typeof r.metrics.bscTrainingPct === "number") return r;
+      const ptdM = ptdByStore.get(String(r.entity_key));
+      if (!ptdM || typeof ptdM.bscTrainingPct !== "number") return r;
+      return { ...r, metrics: { ...r.metrics, bscTrainingPct: ptdM.bscTrainingPct, bscScore: ptdM.bscScore } };
+    });
+  }
+
   // Stamp the RUN identity (not the export time) so a workbook can be matched
   // to the board's run bar. run.id short-hash is the definitive key.
   const runStamp = run.completed_at ? new Date(run.completed_at).toLocaleString("en-US") : "?";
@@ -225,8 +243,9 @@ export async function downloadRankingWorkbook(
     }
 
     let row = 3;
-    addSection(ws, row, null, STORE_COLS, data.store);
-    row += 2 + data.store.length + 1; // group hdr + col hdr + rows + gap
+    const storeSection = scope === "wtd" ? bscFilled(data.store ?? []) : (data.store ?? []);
+    addSection(ws, row, null, STORE_COLS, storeSection);
+    row += 2 + storeSection.length + 1; // group hdr + col hdr + rows + gap
 
     const leaderTiers: [string, string][] = [
       ["do", "Directors of Operations"],
@@ -287,7 +306,8 @@ export async function downloadRankingWorkbook(
         const self = (data[tier] ?? []).filter((r) => leaderName(r).toLowerCase() === key);
         const sdos = tier === "rvp" ? (data.sdo ?? []).filter((r) => String(r.metrics.rvpName ?? "").toLowerCase() === key) : [];
         const dos = (data.do ?? []).filter(belongs);
-        const stores = (data.store ?? []).filter(belongs);
+        const storesRaw = (data.store ?? []).filter(belongs);
+        const stores = scope === "wtd" ? bscFilled(storesRaw) : storesRaw;
         if (!self.length && !sdos.length && !dos.length && !stores.length) continue;
         any = true;
         row = stack(ws, row, scope === "wtd" ? "Week to Date" : "Period to Date", LEADER_COLS, self);
