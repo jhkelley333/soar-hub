@@ -2423,7 +2423,7 @@ async function laborSharePayload(supa, { scopeKind, regionName, label, numbers: 
     // Include business_date so applyCreditsToRows can window last week's own
     // WTD credits (its weekStart → that day) — otherwise last week's WTD hours
     // over is uncredited while this week's is, skewing the Improving flag.
-    supa.from("labor_v2_daily").select("business_date, store_number, net_sales, labor_cost, labor_hours, wtd_net_sales, wtd_labor_cost, wtd_labor_hours, wtd_target_labor_pct, ptd_net_sales, ptd_labor_cost, ptd_labor_hours")
+    supa.from("labor_v2_daily").select("business_date, store_number, net_sales, labor_cost, labor_hours, target_labor_pct, wtd_net_sales, wtd_labor_cost, wtd_labor_hours, wtd_target_labor_pct, ptd_net_sales, ptd_labor_cost, ptd_labor_hours")
       .eq("business_date", lastWeekDate).in("store_number", numbers),
     loadTrainingCreditDates(supa, numbers),
     loadGmPtoCreditDates(supa, numbers),
@@ -2439,6 +2439,15 @@ async function laborSharePayload(supa, { scopeKind, regionName, label, numbers: 
   // Credit last week's rows the same way, so the WoW comparison is like-for-like.
   applyCreditsToRows(lastWk || [], mergedCredits);
   applyMinHoursFloor(lastWk || [], minDailyHours);
+  // WTD/PTD floor — applied to both weeks so the WoW comparison is like-for-like.
+  const _cwIP = fiscalForDate(anchor)?.weekInPeriod ?? 1;
+  const _cwDow = fiscalDow(anchor);
+  const _lwIP = fiscalForDate(lastWeekDate)?.weekInPeriod ?? 1;
+  const _lwDow = _cwDow; // same weekday, one week back
+  applyMinHoursFloorWtd(daily || [], minDailyHours, _cwDow);
+  applyMinHoursFloorPtd(daily || [], minDailyHours, (_cwDow && _cwIP) ? (_cwIP - 1) * 7 + _cwDow : null);
+  applyMinHoursFloorWtd(lastWk || [], minDailyHours, _lwDow);
+  applyMinHoursFloorPtd(lastWk || [], minDailyHours, (_lwDow && _lwIP) ? (_lwIP - 1) * 7 + _lwDow : null);
   const dailyByStore = new Map((daily || []).map((r) => [String(r.store_number), r]));
   const lastWkByStore = new Map((lastWk || []).map((r) => [String(r.store_number), r]));
 
