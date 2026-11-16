@@ -106,8 +106,12 @@ function laborMetrics(rows, p) {
     // headline stays all-store true revenue so "sales" is the same number on
     // the ranker, the board, and the feed's netSales/previousYearNetSales.
     sales_vs_ly: hasComp ? ((compSales - compLy) / compLy) * 100 : (lyS ? ((sales - lyS) / lyS) * 100 : null),
-    sales_dollars: rows.length ? sales : null,
-    ly_dollars: rows.length ? lyS : null,
+    // Guard against null-as-zero: when WTD/PTD columns aren't populated (e.g.
+    // start of a new week before data lands), numv(null)=0 makes sales sum to 0
+    // while rows.length>0, producing a misleading $0 tile. Treat 0 as null here
+    // so the tile shows "—" consistently with labor_pct (which uses `sales ?`).
+    sales_dollars: (rows.length && sales) ? sales : null,
+    ly_dollars: (rows.length && lyS) ? lyS : null,
     labor_pct: sales ? (cost / sales) * 100 : null,
     labor_target: laborTarget,
     splh: div(sales, hours),
