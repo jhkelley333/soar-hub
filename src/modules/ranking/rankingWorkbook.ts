@@ -55,7 +55,6 @@ const STORE_COLS: Col[] = [
   { group: "Operations", header: "VOG Score", key: "vogScore", fmt: "score" },
   { group: "Operations", header: "Training %", key: "totalTrainingPct", fmt: "pct" },
   { group: "Operations", header: "Training Score", key: "totalTrainingScore", fmt: "score" },
-  { group: "Operations", header: "Shops", key: "msCount", fmt: "int" },
   { group: "Operations", header: "Shop Avg", key: "msScore", fmt: "pct" },
   { group: "Operations", header: "Ops Score", key: "opsScore", fmt: "tot" },
   { group: "Info Only", header: "Voids $", key: "voids", fmt: "money" },
