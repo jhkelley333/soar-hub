@@ -77,7 +77,7 @@ async function fetchFeed({ attempts, timeoutMs, backoffMs }) {
 // opts.runRanker (default true) gates the week-end auto-advance; the sync path
 // can disable it to stay well under the HTTP wall.
 export async function runKpiCapture(supa, opts = {}) {
-  const {
+  let {
     wc = wallClockInTz(new Date(), TZ),
     source = "cron",
     fetch: fetchBudget = { attempts: 3, timeoutMs: 20000, backoffMs: 2000 },
@@ -91,15 +91,48 @@ export async function runKpiCapture(supa, opts = {}) {
     return { statusCode: 200, ok: false, body: "kpi-capture not configured (env vars missing)" };
   }
 
-  const { payload, error: feedErr } = await fetchFeed(fetchBudget);
+  let { payload, error: feedErr } = await fetchFeed(fetchBudget);
   if (!payload) {
-    // A slow / unavailable feed is expected during the morning fill-in window.
-    // Log it and return a clean 200 "not ready" — the next poll (5-min catch-up
-    // loop, or the 30-min puller) picks it up. Returning non-2xx here is what
-    // used to surface as a red workflow run for a transient feed hiccup.
-    console.log(`[kpi-capture:${source}] feed not ready: ${feedErr}`);
-    await logPull(supa, { source, ok: false, central_date: centralDate, central_hour: wc.hour, error: feedErr, duration_ms: Date.now() - started });
-    return { statusCode: 200, ok: false, feedNotReady: true, body: `feed not ready (${feedErr}) — will retry next poll` };
+    // ── Scrapekit backup fallback ────────────────────────────────────────────
+    // Before giving up, check kpi_backup_raw for a row covering the expected
+    // business_date (central_date − 1). Only fires when no live snapshot exists
+    // for today's central_date, so a good capture is never replaced.
+    const bd = new Date(centralDate + "T12:00:00Z");
+    bd.setUTCDate(bd.getUTCDate() - 1);
+    const expectedBd = bd.toISOString().slice(0, 10);
+
+    const { data: liveSnap } = await supa
+      .from("kpi_snapshots").select("id").eq("central_date", centralDate).limit(1);
+
+    if (!liveSnap?.length) {
+      const { data: backup } = await supa
+        .from("kpi_backup_raw")
+        .select("day_data, wtd_data, ptd_data")
+        .eq("business_date", expectedBd)
+        .maybeSingle();
+
+      if (backup?.day_data) {
+        console.log(`[kpi-capture:${source}] feed not ready (${feedErr}); using scrapekit backup for ${expectedBd}`);
+        payload = {
+          rawData: {
+            businessDateData: backup.day_data,
+            weekToDateData:   backup.wtd_data ?? [],
+            periodToDateData: backup.ptd_data ?? [],
+          },
+        };
+        source = source + "-backup";
+      }
+    }
+
+    if (!payload) {
+      // A slow / unavailable feed is expected during the morning fill-in window.
+      // Log it and return a clean 200 "not ready" — the next poll (5-min catch-up
+      // loop, or the 30-min puller) picks it up. Returning non-2xx here is what
+      // used to surface as a red workflow run for a transient feed hiccup.
+      console.log(`[kpi-capture:${source}] feed not ready: ${feedErr}`);
+      await logPull(supa, { source, ok: false, central_date: centralDate, central_hour: wc.hour, error: feedErr, duration_ms: Date.now() - started });
+      return { statusCode: 200, ok: false, feedNotReady: true, body: `feed not ready (${feedErr}) — will retry next poll` };
+    }
   }
 
   // Store the raw snapshot (retry a couple times for a transient Supabase blip).
