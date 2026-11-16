@@ -211,7 +211,7 @@ export async function downloadRankingWorkbook(
 
   // BSC training and total training are period metrics (not in the WTD feed).
   // Mirror PTD values to WTD rows that are missing them so both columns appear.
-  type M = Record<string, unknown>;
+  type M = Record<string, string | number | null>;
   function mkPtdMap(rows: RankingResultRow[]): Map<string, M> {
     return new Map(rows.map((r) => [String(r.entity_key ?? (r.metrics as M).name ?? ""), r.metrics as M]));
   }
