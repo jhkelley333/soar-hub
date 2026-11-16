@@ -356,7 +356,8 @@ function computeStoreWtd(st, cfg, issues) {
   // Operations
   r.bscTrainingPct = isNum(w.bscTrainingPct) ? w.bscTrainingPct : '-'; // AJ
   r.bscScore = bandScore(r.bscTrainingPct, cfg.bands.bsc_training, 1); // AK
-  r.totalTrainingPct = isNum(w.totalTrainingPct) ? w.totalTrainingPct : null; // info only (Comms Board); not scored on WTD
+  r.totalTrainingPct = isNum(w.totalTrainingPct) ? w.totalTrainingPct : null; // info only (Comms Board); not in ops WTD
+  r.totalTrainingScore = bandScore(r.totalTrainingPct, cfg.bands.total_training, 3); // BF (shown, not counted)
   r.onTimePct = isNum(w.onTimePct) ? w.onTimePct : null;               // AM
   r.onTimeScore = bandScore(r.onTimePct, cfg.bands.on_time, undefined); // AN: no IFERROR
   r.vog = isNum(w.vogScore) ? w.vogScore : null;                       // AP
@@ -701,6 +702,9 @@ function aggregateWtd(name, members, opts, cfg, inputs) {
   var custSum = sumBy(members, function (m) { return m.custCount; });   // WTD cust counts (Lists!Y)
   r.callsPer10k = (custSum !== 0) ? r.complaints / (custSum / 10000) : null; // AT
   r.complaintsScore = bandScore(r.callsPer10k, cfg.bands.complaints, 3);     // AV
+  var avgTTWtd = avgBy(members, function (m) { return m.totalTrainingPct; });
+  r.totalTrainingPct = avgTTWtd === null ? null : avgTTWtd; // BE (info only)
+  r.totalTrainingScore = bandScore(r.totalTrainingPct, cfg.bands.total_training, 3); // BF
 
   r.opsScore = sumScores([r.complaintsScore, r.onTimeScore, r.bscScore]); // AX
   r.totalPoints = (isNum(r.finScore) && isNum(r.opsScore)) ? r.finScore + r.opsScore : null; // I
@@ -773,6 +777,8 @@ function companyWtd(sdoRows, storeRows, cfg, inputs) {
   var custSum = sumBy(storeRows, function (m) { return m.custCount; });
   r.callsPer10k = (custSum !== 0) ? r.complaints / (custSum / 10000) : null; // AT354
   r.complaintsScore = bandScore(r.callsPer10k, cfg.bands.complaints, 3);
+  r.totalTrainingPct = avgBy(storeRows, function (m) { return m.totalTrainingPct; }); // BE354 avg stores (info only)
+  r.totalTrainingScore = bandScore(r.totalTrainingPct, cfg.bands.total_training, 3);  // BF354
 
   r.opsScore = sumScores([r.complaintsScore, r.onTimeScore, r.bscScore]); // AX354
   r.totalPoints = (isNum(r.finScore) && isNum(r.opsScore)) ? r.finScore + r.opsScore : null;
