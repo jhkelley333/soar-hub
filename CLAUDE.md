@@ -79,6 +79,7 @@ When the patch fails because the user's tree drifted from sandbox, fall back to 
 | 0066 | reno_scoping_schema (Reno Scoping module) | ✓ |
 | 0067 | reno_scoping_seed (27 items, 18 photo slots) | ✓ |
 | 0068 | reno_storage_buckets (photos + 360 tours) | ✓ |
+| 0336 | kpi_backup_raw + load_kpi_backup_raw() — scrapekit staging table + SECURITY DEFINER loader for KPI backfill | ✓ |
 
 ## Currently in flight
 
