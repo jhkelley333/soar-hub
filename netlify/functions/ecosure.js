@@ -19,6 +19,7 @@ const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const ALLOWED_ROLES = new Set(["admin", "vp", "coo", "rvp", "sdo", "do", "gm", "fbc"]);
+const ORG_WIDE = new Set(["admin", "vp", "coo"]);
 
 function svc() {
   return createClient(SUPABASE_URL, SERVICE_KEY, {
@@ -41,13 +42,13 @@ async function sessionUser(supa, event) {
   if (!user) return null;
   const { data: p } = await supa
     .from("profiles")
-    .select("id, role, is_active, store_number, district, area, region")
+    .select("id, role, is_active")
     .eq("id", user.id)
     .maybeSingle();
   if (!p || !p.is_active) return null;
   const role = String(p.role || "").toLowerCase();
   if (!ALLOWED_ROLES.has(role)) return null;
-  return { id: p.id, role, store_number: p.store_number, district: p.district, area: p.area, region: p.region };
+  return { id: p.id, role };
 }
 
 // Build { store_number → { store_name, district, area, region } }
@@ -73,45 +74,44 @@ async function buildOrgMap(supa, storeNumbers) {
   return map;
 }
 
-// Scope filtering: returns a storeNumbers array, or null for no filter (all stores).
-async function scopedStoreNumbers(supa, user, params) {
-  const role = user.role;
+// Store numbers the caller may see; null = org-wide. Same user_visible_stores()
+// RPC the rest of the app scopes with, so an unmapped user sees nothing.
+async function visibleStoreNumbers(supa, user) {
+  if (ORG_WIDE.has(user.role)) return null;
+  const { data: visible } = await supa.rpc("user_visible_stores", { uid: user.id });
+  const ids = (visible ?? [])
+    .map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null))
+    .filter(Boolean);
+  if (!ids.length) return new Set();
+  const { data } = await supa.from("stores").select("number").in("id", ids);
+  return new Set((data ?? []).map((s) => String(s.number)));
+}
 
-  // Admin / VP / COO see everything — but still apply any explicit filters
-  const isWide = ["admin", "vp", "coo"].includes(role);
+// Caller's scope narrowed by the explicit region/area/district filters.
+// Returns a storeNumbers array, or null for no filter (all stores). Filters
+// only ever narrow: they are intersected with what the caller may see.
+export async function scopedStoreNumbers(supa, user, params) {
+  const visible = await visibleStoreNumbers(supa, user);
 
   const regionFilter   = params.get("region")   || null;
-  const areaFilter     = params.get("area")      || null;
-  const districtFilter = params.get("district")  || null;
+  const areaFilter     = params.get("area")     || null;
+  const districtFilter = params.get("district") || null;
 
-  // Build stores query
-  let q = supa
-    .from("stores")
-    .select("number, name, districts!inner ( name, areas!inner ( name, regions!inner ( name ) ) )")
-    .eq("is_active", true);
-
-  if (districtFilter) {
-    q = q.eq("districts.name", districtFilter);
-  } else if (areaFilter) {
-    q = q.eq("districts.areas.name", areaFilter);
-  } else if (regionFilter) {
-    q = q.eq("districts.areas.regions.name", regionFilter);
-  } else if (!isWide) {
-    // Scope non-wide roles to their org slice
-    if (role === "gm") {
-      return user.store_number ? [user.store_number] : [];
-    }
-    if (["do", "sdo"].includes(role) && user.district) {
-      q = q.eq("districts.name", user.district);
-    } else if (role === "rvp" && user.region) {
-      q = q.eq("districts.areas.regions.name", user.region);
-    } else {
-      return null; // FBC or unmapped — show all
-    }
+  if (!regionFilter && !areaFilter && !districtFilter) {
+    return visible ? Array.from(visible) : null;
   }
 
+  let q = supa
+    .from("stores")
+    .select("number, districts!inner ( name, areas!inner ( name, regions!inner ( name ) ) )")
+    .eq("is_active", true);
+  if (districtFilter) q = q.eq("districts.name", districtFilter);
+  if (areaFilter)     q = q.eq("districts.areas.name", areaFilter);
+  if (regionFilter)   q = q.eq("districts.areas.regions.name", regionFilter);
+
   const { data } = await q;
-  return (data || []).map((s) => s.number);
+  const filtered = (data || []).map((s) => String(s.number));
+  return visible ? filtered.filter((n) => visible.has(n)) : filtered;
 }
 
 // ── action=summary ────────────────────────────────────────────────────────────
@@ -207,9 +207,8 @@ async function getStore(supa, user, params) {
   const storeNumber = params.get("storeNumber");
   if (!storeNumber) return { error: "storeNumber required", status: 400 };
 
-  // Access check: non-wide roles must own the store
-  const storeNums = await scopedStoreNumbers(supa, user, params);
-  if (storeNums !== null && !storeNums.includes(storeNumber)) {
+  const visible = await visibleStoreNumbers(supa, user);
+  if (visible !== null && !visible.has(storeNumber)) {
     return { error: "forbidden", status: 403 };
   }
 
