@@ -205,31 +205,19 @@ async function getSummary(supa, user, params) {
   for (const s of stores) if (s.visit_rating) riskCounts[s.visit_rating] = (riskCounts[s.visit_rating] || 0) + 1;
   const overdueCount = stores.filter((s) => s.days_since_audit > 180).length;
 
-  // Top findings (across the period in scope)
-  const { data: findings, error: fErr } = await fetchAll(
-    () => supa
-      .from("ecosure_findings")
-      .select("question_number, standard_description")
-      .order("id"),
-    ...inArgs,
-  );
+  // Top findings in scope, counted in the database (migration 0338) so no
+  // finding rows are downloaded.
+  const { data: top, error: fErr } = await supa.rpc("ecosure_top_findings", {
+    p_store_numbers: storeNums,
+    p_limit: 20,
+  });
   if (fErr) return { error: fErr.message, status: 500 };
 
-  const qCounts = new Map();
-  const qDesc   = new Map();
-  for (const f of findings) {
-    const k = f.question_number;
-    qCounts.set(k, (qCounts.get(k) || 0) + 1);
-    if (!qDesc.has(k)) qDesc.set(k, f.standard_description);
-  }
-  const top_findings = Array.from(qCounts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 20)
-    .map(([question_number, count]) => ({
-      question_number,
-      standard_description: qDesc.get(question_number) ?? null,
-      count,
-    }));
+  const top_findings = (top || []).map((r) => ({
+    question_number:      r.question_number,
+    standard_description: r.standard_description ?? null,
+    count:                Number(r.finding_count),
+  }));
 
   const as_of = stores.length
     ? stores.reduce((a, b) => (a.pulled_at > b.pulled_at ? a : b)).pulled_at
