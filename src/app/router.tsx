@@ -142,6 +142,7 @@ import { ScheduleStatusPage } from "@/modules/schedule-status/ScheduleStatusPage
 import { DataHealthPage } from "@/modules/data-health/DataHealthPage";
 import ObsessionPage from "@/modules/obsession/ObsessionPage";
 import { RapDataPage } from "@/modules/rap-data/RapDataPage";
+import { EcosurePage } from "@/modules/ecosure/EcosurePage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -1166,6 +1167,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <RapDataPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "ecosure",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
+            <EcosurePage />
           </ProtectedRoute>
         ),
       },

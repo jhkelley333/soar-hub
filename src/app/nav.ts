@@ -21,6 +21,7 @@ import {
   GitBranch,
   BarChart3,
   AlertTriangle,
+  ShieldCheck,
   Trophy,
   Target,
   ListChecks,
@@ -183,6 +184,7 @@ export const NAV: NavItem[] = [
   // Google Reviews — ratings + reviews across stores (Places API).
   { to: "/admin/google-reviews", label: "Google Reviews", icon: Star, roles: ["sdo", "rvp"] },
   { to: "/rap-data", label: "Customer RAP Data", icon: Star, roles: ["admin"] },
+  { to: "/ecosure",  label: "Food Safety",       icon: ShieldCheck, roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
   // SOAR QSR Learning Platform — admin-only during the build. The qsr_platform
   // flag broadens access to a pilot cohort at launch (combined with role).
   { to: "/qsr",         label: "Soar MyLearning", icon: Sparkles,    roles: ["admin"], flagKey: "qsr_platform" },
@@ -327,6 +329,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/admin/weather-sync": "ADMIN",
   "/admin/data-health": "ADMIN",
   "/rap-data": "OPERATIONS",
+  "/ecosure": "OPERATIONS",
 };
 
 // Bucket already-filtered nav items into ordered, labelled groups. Empty
