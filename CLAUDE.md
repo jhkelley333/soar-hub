@@ -80,6 +80,9 @@ When the patch fails because the user's tree drifted from sandbox, fall back to 
 | 0067 | reno_scoping_seed (27 items, 18 photo slots) | ✓ |
 | 0068 | reno_storage_buckets (photos + 360 tours) | ✓ |
 | 0336 | kpi_backup_raw + load_kpi_backup_raw() — scrapekit staging table + SECURITY DEFINER loader for KPI backfill | ✓ |
+| 0337 | ecosure_schema — ecosure_assessments + ecosure_assessments_history + ecosure_findings (RLS on, no policies) + SECURITY DEFINER loaders scrapekit_ecosure_upsert_assessments() / scrapekit_ecosure_upsert_findings() | ✓ |
+| 0338 | ecosure_top_findings() — database-side top-findings count for the Food Safety page (SECURITY INVOKER, service_role only) | ✓ |
+| 0339 | lock_down_scrapekit_loaders — revoke execute on the 0336/0337 loaders from anon/authenticated (service_role only) | ✓ |
 
 ## Currently in flight
 
@@ -117,6 +120,7 @@ The user sees `Stop hook feedback: ...There are N unpushed commit(s)...` after a
 - PAF history on the member profile drawer is gated to viewers with role >= DO (do, sdo, rvp, vp, coo, admin, payroll). Two tabs: "Submitted" (exact match on submitter_id/email) and "Mentioned as employee" (fuzzy `ilike` on employee_name).
 - Confetti library: `canvas-confetti` (already in package.json).
 - Birthday widget grouping: by RVP, sorted by date asc then name. Uses `thisAndNextWeekRange()` from `dateRange.ts` (Mon of this week → Sun of next).
+- **Service-role-only functions: `revoke execute ... from public` is NOT enough.** On Soar Hub v2, new functions in `public` are also granted to `authenticated` by default, so any signed-in user can still call them. Always `revoke execute ... from public, anon, authenticated` and `grant execute ... to service_role`, then verify with `has_function_privilege('authenticated', oid, 'execute')` (0336/0337 got this wrong; 0339 fixed it).
 - `current_role()` from `0001_init.sql:175` silently never landed in `pg_proc` (reserved-keyword conflict). Don't depend on it; define a module-scoped helper with a safe name (see `reno_caller_role()` in `0066_reno_scoping_schema.sql`). Worth a one-line cleanup migration eventually.
 
 ## Pending decisions / open threads
