@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { ShieldCheck, ChevronUp, ChevronDown, Search, X } from "lucide-react";
 import { fetchEcosureSummary } from "./api";
 import { StoreDetail } from "./StoreDetail";

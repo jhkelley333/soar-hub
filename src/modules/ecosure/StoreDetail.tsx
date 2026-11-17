@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { X, ExternalLink, ChevronRight } from "lucide-react";
+import { useState, useEffect } from "react";
+import { X, ExternalLink } from "lucide-react";
 import { fetchEcosureStore } from "./api";
 import type { EcosureStoreResp, EcosureAssessment, EcosureFinding, RiskRating } from "./types";
 
