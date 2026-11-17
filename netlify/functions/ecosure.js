@@ -35,6 +35,33 @@ function respond(code, payload) {
   };
 }
 
+const PAGE = 1000;
+const IN_CHUNK = 200;
+
+// PostgREST caps a response at 1,000 rows and a long .in() list overflows the
+// URL, so page every read and split .in() lists into chunks. `make` must
+// return a fresh, deterministically ordered query each call.
+export async function fetchAll(make, inCol, inValues) {
+  const chunks = [];
+  if (inCol) {
+    const uniq = [...new Set(inValues)];
+    for (let i = 0; i < uniq.length; i += IN_CHUNK) chunks.push(uniq.slice(i, i + IN_CHUNK));
+  } else {
+    chunks.push(null);
+  }
+  const rows = [];
+  for (const chunk of chunks) {
+    for (let from = 0; ; from += PAGE) {
+      const q = chunk ? make().in(inCol, chunk) : make();
+      const { data, error } = await q.range(from, from + PAGE - 1);
+      if (error) return { data: null, error };
+      rows.push(...(data || []));
+      if (!data || data.length < PAGE) break;
+    }
+  }
+  return { data: rows, error: null };
+}
+
 async function sessionUser(supa, event) {
   const header = event.headers?.authorization || event.headers?.Authorization;
   if (!header?.startsWith("Bearer ")) return null;
@@ -54,11 +81,15 @@ async function sessionUser(supa, event) {
 // Build { store_number → { store_name, district, area, region } }
 async function buildOrgMap(supa, storeNumbers) {
   if (!storeNumbers.length) return {};
-  const { data: stores } = await supa
-    .from("stores")
-    .select("number, name, districts ( name, areas ( name, regions ( name ) ) )")
-    .in("number", storeNumbers)
-    .eq("is_active", true);
+  const { data: stores } = await fetchAll(
+    () => supa
+      .from("stores")
+      .select("number, name, districts ( name, areas ( name, regions ( name ) ) )")
+      .eq("is_active", true)
+      .order("number"),
+    "number",
+    storeNumbers,
+  );
   const map = {};
   for (const s of stores || []) {
     const dist   = s.districts;
@@ -83,7 +114,11 @@ async function visibleStoreNumbers(supa, user) {
     .map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null))
     .filter(Boolean);
   if (!ids.length) return new Set();
-  const { data } = await supa.from("stores").select("number").in("id", ids);
+  const { data } = await fetchAll(
+    () => supa.from("stores").select("number").order("number"),
+    "id",
+    ids,
+  );
   return new Set((data ?? []).map((s) => String(s.number)));
 }
 
@@ -101,15 +136,17 @@ export async function scopedStoreNumbers(supa, user, params) {
     return visible ? Array.from(visible) : null;
   }
 
-  let q = supa
-    .from("stores")
-    .select("number, districts!inner ( name, areas!inner ( name, regions!inner ( name ) ) )")
-    .eq("is_active", true);
-  if (districtFilter) q = q.eq("districts.name", districtFilter);
-  if (areaFilter)     q = q.eq("districts.areas.name", areaFilter);
-  if (regionFilter)   q = q.eq("districts.areas.regions.name", regionFilter);
-
-  const { data } = await q;
+  const { data } = await fetchAll(() => {
+    let q = supa
+      .from("stores")
+      .select("number, districts!inner ( name, areas!inner ( name, regions!inner ( name ) ) )")
+      .eq("is_active", true)
+      .order("number");
+    if (districtFilter) q = q.eq("districts.name", districtFilter);
+    if (areaFilter)     q = q.eq("districts.areas.name", areaFilter);
+    if (regionFilter)   q = q.eq("districts.areas.regions.name", regionFilter);
+    return q;
+  });
   const filtered = (data || []).map((s) => String(s.number));
   return visible ? filtered.filter((n) => visible.has(n)) : filtered;
 }
@@ -118,23 +155,26 @@ export async function scopedStoreNumbers(supa, user, params) {
 async function getSummary(supa, user, params) {
   const storeNums = await scopedStoreNumbers(supa, user, params);
 
-  // Latest assessment per store (most recent date)
-  let q = supa
-    .from("ecosure_assessments")
-    .select("store_number, assessment_date, visit_type, visit_score, visit_rating, total_findings, imminent_risk, critical_findings, major_findings, minor_findings, report_url, pulled_at");
-
-  if (storeNums !== null) {
-    if (!storeNums.length) return { ok: true, stores: [], summary: null, top_findings: [], as_of: null };
-    q = q.in("store_number", storeNums);
+  if (storeNums !== null && !storeNums.length) {
+    return { ok: true, stores: [], summary: null, top_findings: [], as_of: null };
   }
+  const inArgs = storeNums !== null ? ["store_number", storeNums] : [];
 
-  const { data: rows, error } = await q.order("assessment_date", { ascending: false });
+  const { data: rows, error } = await fetchAll(
+    () => supa
+      .from("ecosure_assessments")
+      .select("store_number, assessment_date, visit_type, visit_score, visit_rating, total_findings, imminent_risk, critical_findings, major_findings, minor_findings, report_url, pulled_at")
+      .order("assessment_date", { ascending: false })
+      .order("id"),
+    ...inArgs,
+  );
   if (error) return { error: error.message, status: 500 };
 
   // Keep latest per store
   const latest = new Map();
-  for (const r of rows || []) {
-    if (!latest.has(r.store_number)) latest.set(r.store_number, r);
+  for (const r of rows) {
+    const cur = latest.get(r.store_number);
+    if (!cur || r.assessment_date > cur.assessment_date) latest.set(r.store_number, r);
   }
   const latestRows = Array.from(latest.values());
 
@@ -166,16 +206,18 @@ async function getSummary(supa, user, params) {
   const overdueCount = stores.filter((s) => s.days_since_audit > 180).length;
 
   // Top findings (across the period in scope)
-  let fq = supa
-    .from("ecosure_findings")
-    .select("question_number, standard_description");
+  const { data: findings, error: fErr } = await fetchAll(
+    () => supa
+      .from("ecosure_findings")
+      .select("question_number, standard_description")
+      .order("id"),
+    ...inArgs,
+  );
+  if (fErr) return { error: fErr.message, status: 500 };
 
-  if (storeNums !== null && storeNums.length) fq = fq.in("store_number", storeNums);
-
-  const { data: findings } = await fq;
   const qCounts = new Map();
   const qDesc   = new Map();
-  for (const f of findings || []) {
+  for (const f of findings) {
     const k = f.question_number;
     qCounts.set(k, (qCounts.get(k) || 0) + 1);
     if (!qDesc.has(k)) qDesc.set(k, f.standard_description);
@@ -212,20 +254,23 @@ async function getStore(supa, user, params) {
     return { error: "forbidden", status: 403 };
   }
 
-  const [{ data: assessments }, { data: findings }, orgMap] = await Promise.all([
-    supa
+  const [{ data: assessments, error: aErr }, { data: findings, error: fErr }, orgMap] = await Promise.all([
+    fetchAll(() => supa
       .from("ecosure_assessments")
       .select("*")
       .eq("store_number", storeNumber)
-      .order("assessment_date", { ascending: false }),
-    supa
+      .order("assessment_date", { ascending: false })
+      .order("id")),
+    fetchAll(() => supa
       .from("ecosure_findings")
       .select("assessment_date, question_number, standard_description, primary_response, primary_comment, pdc_response, pdc_comment")
       .eq("store_number", storeNumber)
       .order("assessment_date", { ascending: false })
-      .order("question_number"),
+      .order("question_number")
+      .order("id")),
     buildOrgMap(supa, [storeNumber]),
   ]);
+  if (aErr || fErr) return { error: (aErr || fErr).message, status: 500 };
 
   // Group findings by assessment_date
   const findingsByDate = {};
@@ -256,23 +301,23 @@ async function getOverdue(supa, user, params) {
   const days = parseInt(params.get("days") || "180", 10);
   const storeNums = await scopedStoreNumbers(supa, user, params);
 
+  if (storeNums !== null && !storeNums.length) return { ok: true, overdue: [], as_of: null };
+
   // Latest assessment per store
-  let q = supa
-    .from("ecosure_assessments")
-    .select("store_number, assessment_date")
-    .order("assessment_date", { ascending: false });
-
-  if (storeNums !== null) {
-    if (!storeNums.length) return { ok: true, overdue: [], as_of: null };
-    q = q.in("store_number", storeNums);
-  }
-
-  const { data, error } = await q;
+  const { data, error } = await fetchAll(
+    () => supa
+      .from("ecosure_assessments")
+      .select("store_number, assessment_date")
+      .order("assessment_date", { ascending: false })
+      .order("id"),
+    ...(storeNums !== null ? ["store_number", storeNums] : []),
+  );
   if (error) return { error: error.message, status: 500 };
 
   const latest = new Map();
-  for (const r of data || []) {
-    if (!latest.has(r.store_number)) latest.set(r.store_number, r.assessment_date);
+  for (const r of data) {
+    const cur = latest.get(r.store_number);
+    if (!cur || r.assessment_date > cur) latest.set(r.store_number, r.assessment_date);
   }
 
   const cutoff = new Date();

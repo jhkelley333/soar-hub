@@ -24,6 +24,8 @@ function fakeSupa(visibleIds) {
       const f = {};
       const q = {
         select: () => q,
+        order: () => q,
+        range: () => q,
         eq: (col, val) => { f[col] = val; return q; },
         in: (_col, vals) => { f.ids = vals; return q; },
         then(resolve, reject) {
